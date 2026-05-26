@@ -14,10 +14,25 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoResult
+import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.WebExtension
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+data class ExtensionMenuActionState(
+    val guid: String,
+    val title: String,
+    val enabled: Boolean,
+    val badgeText: String?
+)
+
+data class ExtensionPopupState(
+    val guid: String,
+    val title: String,
+    val session: GeckoSession
+)
 
 class ExtensionRepository(
     private val context: Context
@@ -29,8 +44,85 @@ class ExtensionRepository(
         .build()
     private val storeFile = File(context.filesDir, "installed_extensions.json")
     private val installedState = MutableStateFlow(loadInstalled())
+    private val menuActionState = MutableStateFlow<Map<String, ExtensionMenuActionState>>(emptyMap())
+    private val popupState = MutableStateFlow<ExtensionPopupState?>(null)
+    private val menuActions = mutableMapOf<String, WebExtension.Action>()
+    private val delegatedExtensions = mutableSetOf<String>()
 
     fun observeInstalled(): StateFlow<List<InstalledExtensionState>> = installedState
+
+    fun observeMenuActions(): StateFlow<Map<String, ExtensionMenuActionState>> = menuActionState
+
+    fun observePopup(): StateFlow<ExtensionPopupState?> = popupState
+
+    fun closePopup() {
+        popupState.value?.session?.close()
+        popupState.value = null
+    }
+
+    suspend fun refreshMenuActions(activeSession: GeckoSession) {
+        withContext(Dispatchers.Main.immediate) {
+            GeckoRuntimeProvider.get(context).webExtensionController.setTabActive(activeSession, true)
+            listRuntimeExtensions().forEach { extension ->
+                val guid = extension.id
+                if (delegatedExtensions.add(guid)) {
+                    extension.setActionDelegate(
+                        object : WebExtension.ActionDelegate {
+                            override fun onBrowserAction(
+                                extension: WebExtension,
+                                session: GeckoSession?,
+                                action: WebExtension.Action
+                            ) {
+                                updateMenuAction(extension, action)
+                            }
+
+                            override fun onPageAction(
+                                extension: WebExtension,
+                                session: GeckoSession?,
+                                action: WebExtension.Action
+                            ) {
+                                if (action.enabled == true) {
+                                    updateMenuAction(extension, action)
+                                }
+                            }
+
+                            override fun onOpenPopup(
+                                extension: WebExtension,
+                                action: WebExtension.Action
+                            ): GeckoResult<GeckoSession> {
+                                val popupSession = GeckoSession()
+                                popupSession.open(GeckoRuntimeProvider.get(context))
+                                popupState.value = ExtensionPopupState(
+                                    guid = extension.id,
+                                    title = action.title?.takeIf { it.isNotBlank() }
+                                        ?: extension.metaData.name
+                                        ?: extension.id,
+                                    session = popupSession
+                                )
+                                return GeckoResult.fromValue(popupSession)
+                            }
+
+                            override fun onTogglePopup(
+                                extension: WebExtension,
+                                action: WebExtension.Action
+                            ): GeckoResult<GeckoSession> {
+                                closePopup()
+                                return onOpenPopup(extension, action)
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun clickMenuAction(guid: String) {
+        withContext(Dispatchers.Main.immediate) {
+            val action = menuActions[guid] ?: error("Extension action is not ready.")
+            if (action.enabled == false) error("Extension action is disabled on this page.")
+            action.click()
+        }
+    }
 
     suspend fun searchAndroidAddons(query: String): List<AmoAddonListing> = withContext(Dispatchers.IO) {
         val url = "https://addons.mozilla.org/api/v5/addons/search/?" +
@@ -117,13 +209,14 @@ class ExtensionRepository(
 
     private suspend fun findRuntimeExtension(guid: String): Any? {
         return withContext(Dispatchers.Main.immediate) {
-            val controller = GeckoRuntimeProvider.get(context).webExtensionController
-            val listMethod = controller.javaClass.methods.firstOrNull { it.name == "list" && it.parameterTypes.isEmpty() }
-                ?: return@withContext null
-            val result = listMethod.invoke(controller) as? GeckoResult<*> ?: return@withContext null
-            val extensions = result.await() as? List<*> ?: return@withContext null
+            val extensions = listRuntimeExtensions()
             extensions.firstOrNull { extensionGuid(it) == guid }
         }
+    }
+
+    private suspend fun listRuntimeExtensions(): List<WebExtension> {
+        val controller = GeckoRuntimeProvider.get(context).webExtensionController
+        return controller.list().await() as? List<WebExtension> ?: emptyList()
     }
 
     private suspend fun invokeWebExtensionMethod(methodName: String, extension: Any) {
@@ -144,6 +237,21 @@ class ExtensionRepository(
         val meta = extension.javaClass.methods.firstOrNull { it.name == "getMetaData" }?.invoke(extension)
             ?: return null
         return meta.javaClass.methods.firstOrNull { it.name == "getId" }?.invoke(meta) as? String
+    }
+
+    private fun updateMenuAction(extension: WebExtension, action: WebExtension.Action) {
+        val title = action.title?.takeIf { it.isNotBlank() }
+            ?: extension.metaData.name
+            ?: extension.id
+        menuActions[extension.id] = action
+        menuActionState.value = menuActionState.value + (
+            extension.id to ExtensionMenuActionState(
+                guid = extension.id,
+                title = title,
+                enabled = action.enabled != false,
+                badgeText = action.badgeText
+            )
+        )
     }
 
     private fun parseSearch(results: JSONArray): List<AmoAddonListing> =

@@ -70,9 +70,12 @@ import com.dadigua.hyperbrowser.browser.BrowserHistoryEntry
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
+import com.dadigua.hyperbrowser.extensions.ExtensionMenuActionState
+import com.dadigua.hyperbrowser.extensions.ExtensionPopupState
 import com.dadigua.hyperbrowser.gecko.GeckoBrowserView
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
+import com.dadigua.hyperbrowser.gecko.GeckoSessionView
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -119,6 +122,8 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     val history by profileStore.observeHistory().collectAsState()
     val bookmarks by profileStore.observeBookmarks().collectAsState()
     val installedExtensions by app.extensions.observeInstalled().collectAsState()
+    val extensionActions by app.extensions.observeMenuActions().collectAsState()
+    val extensionPopup by app.extensions.observePopup().collectAsState()
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
     var showSearch by remember { mutableStateOf(false) }
@@ -132,6 +137,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
 
     BackHandler {
         when {
+            extensionPopup != null -> app.extensions.closePopup()
             showSearch -> showSearch = false
             showBookmarks -> showBookmarks = false
             showHistory -> showHistory = false
@@ -145,6 +151,10 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
         if (pageState.url.isNotBlank()) {
             profileStore.recordVisit(pageState.url, pageState.title)
         }
+    }
+
+    LaunchedEffect(selectedTabId, installedExtensions) {
+        runCatching { app.extensions.refreshMenuActions(controller.session) }
     }
 
     DisposableEffect(Unit) {
@@ -273,6 +283,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 tabCount = tabs.size,
                 bookmarked = profileStore.isBookmarked(pageState.url.ifBlank { tab.input }),
                 installedExtensions = installedExtensions,
+                extensionActions = extensionActions,
                 onAddressClick = { showSearch = true },
                 onLoad = {
                     val target = GeckoSessionController.normalizeUrl(tab.input)
@@ -297,6 +308,12 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 onShowBookmarks = { showBookmarks = true },
                 onShowHistory = { showHistory = true },
                 onShowExtensions = { showExtensions = true },
+                onExtensionClick = { extension ->
+                    scope.launch {
+                        runCatching { app.extensions.clickMenuAction(extension.guid) }
+                            .onFailure { message = it.message ?: "Extension popup unavailable." }
+                    }
+                },
                 onInstall = {
                     scope.launch {
                         val title = pageState.title.ifBlank { tab.input }
@@ -307,8 +324,16 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                     }
                 }
             )
-            key(tab.id) {
-                GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())
+            Box(modifier = Modifier.fillMaxSize()) {
+                key(tab.id) {
+                    GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())
+                }
+                extensionPopup?.let { popup ->
+                    ExtensionPopupOverlay(
+                        popup = popup,
+                        onClose = app.extensions::closePopup
+                    )
+                }
             }
         }
     }
@@ -339,6 +364,7 @@ private fun BrowserToolbar(
     tabCount: Int,
     bookmarked: Boolean,
     installedExtensions: List<InstalledExtensionState>,
+    extensionActions: Map<String, ExtensionMenuActionState>,
     onAddressClick: () -> Unit,
     onLoad: () -> Unit,
     onBack: () -> Unit,
@@ -350,6 +376,7 @@ private fun BrowserToolbar(
     onShowBookmarks: () -> Unit,
     onShowHistory: () -> Unit,
     onShowExtensions: () -> Unit,
+    onExtensionClick: (InstalledExtensionState) -> Unit,
     onInstall: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -414,6 +441,7 @@ private fun BrowserToolbar(
                         bookmarked = bookmarked,
                         enabledExtensions = enabledExtensions,
                         installedExtensionCount = installedExtensions.size,
+                        extensionActions = extensionActions,
                         extensionsExpanded = extensionsExpanded,
                         onExtensionsExpandedChange = { extensionsExpanded = it },
                         onNewTab = { showMenu = false; onNewTab() },
@@ -424,6 +452,7 @@ private fun BrowserToolbar(
                         onShowBookmarks = { showMenu = false; onShowBookmarks() },
                         onShowHistory = { showMenu = false; onShowHistory() },
                         onShowExtensions = { showMenu = false; onShowExtensions() },
+                        onExtensionClick = { showMenu = false; onExtensionClick(it) },
                         onInstall = { showMenu = false; onInstall() }
                     )
                 }
@@ -439,6 +468,7 @@ private fun BrowserMenuPanel(
     bookmarked: Boolean,
     enabledExtensions: List<InstalledExtensionState>,
     installedExtensionCount: Int,
+    extensionActions: Map<String, ExtensionMenuActionState>,
     extensionsExpanded: Boolean,
     onExtensionsExpandedChange: (Boolean) -> Unit,
     onNewTab: () -> Unit,
@@ -449,6 +479,7 @@ private fun BrowserMenuPanel(
     onShowBookmarks: () -> Unit,
     onShowHistory: () -> Unit,
     onShowExtensions: () -> Unit,
+    onExtensionClick: (InstalledExtensionState) -> Unit,
     onInstall: () -> Unit
 ) {
     Column(
@@ -488,12 +519,15 @@ private fun BrowserMenuPanel(
                     )
                 } else {
                     enabledExtensions.forEach { extension ->
+                        val action = extensionActions[extension.guid]
                         BrowserMenuRow(
-                            label = extension.name,
+                            label = action?.title ?: extension.name,
                             leading = "E",
-                            description = extension.version,
-                            trailing = "Settings",
-                            onClick = onShowExtensions
+                            description = action?.badgeText?.takeIf { it.isNotBlank() }
+                                ?: extension.version,
+                            trailing = if (action?.enabled == false) "Disabled" else "Settings",
+                            onClick = { onExtensionClick(extension) },
+                            onTrailingClick = onShowExtensions
                         )
                     }
                     BrowserMenuRow(
@@ -586,6 +620,7 @@ private fun BrowserMenuRow(
     leading: String,
     description: String? = null,
     trailing: String? = null,
+    onTrailingClick: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     Row(
@@ -613,7 +648,69 @@ private fun BrowserMenuRow(
             }
         }
         trailing?.let {
-            Text(it, color = Color(0xFF5F6368), fontSize = 12.sp, maxLines = 1)
+            Text(
+                it,
+                color = Color(0xFF5F6368),
+                fontSize = 12.sp,
+                maxLines = 1,
+                modifier = if (onTrailingClick != null) {
+                    Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable(onClick = onTrailingClick)
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                } else {
+                    Modifier
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ExtensionPopupOverlay(
+    popup: ExtensionPopupState,
+    onClose: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0x66000000))
+            .clickable(onClick = onClose)
+            .padding(18.dp),
+        contentAlignment = Alignment.TopEnd
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(520.dp)
+                .clickable(onClick = {}),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        popup.title,
+                        modifier = Modifier.weight(1f),
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    TextButton(onClick = onClose) {
+                        Text("Close")
+                    }
+                }
+                HorizontalDivider(color = Color(0xFFE0E3EA))
+                GeckoSessionView(session = popup.session, modifier = Modifier.fillMaxSize())
+            }
         }
     }
 }
