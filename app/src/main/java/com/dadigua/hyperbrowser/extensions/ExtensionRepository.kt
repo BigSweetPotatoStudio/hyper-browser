@@ -14,13 +14,18 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoResult
 import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 class ExtensionRepository(
     private val context: Context
 ) {
-    private val http = OkHttpClient()
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
+        .build()
     private val storeFile = File(context.filesDir, "installed_extensions.json")
     private val installedState = MutableStateFlow(loadInstalled())
 
@@ -36,15 +41,20 @@ class ExtensionRepository(
         parseSearch(JSONObject(body).getJSONArray("results"))
     }
 
-    suspend fun downloadAndInstall(addon: AmoAddonListing): Unit = withContext(Dispatchers.IO) {
-        val extensionDir = File(context.filesDir, "extensions").apply { mkdirs() }
-        val target = File(extensionDir, "${addon.slug}-${addon.version}.xpi")
-        http.newCall(Request.Builder().url(addon.xpiUrl).build()).execute().use { response ->
-            if (!response.isSuccessful) error("XPI download failed: HTTP ${response.code}")
-            target.outputStream().use { output ->
-                response.body?.byteStream()?.copyTo(output) ?: error("XPI download was empty.")
+    suspend fun downloadAndInstall(addon: AmoAddonListing, onStage: (String) -> Unit = {}) {
+        onStage("Downloading ${addon.name}...")
+        val target = withContext(Dispatchers.IO) {
+            val extensionDir = File(context.filesDir, "extensions").apply { mkdirs() }
+            val target = File(extensionDir, "${addon.slug}-${addon.version}.xpi")
+            http.newCall(Request.Builder().url(addon.xpiUrl).build()).execute().use { response ->
+                if (!response.isSuccessful) error("XPI download failed: HTTP ${response.code}")
+                target.outputStream().use { output ->
+                    response.body?.byteStream()?.copyTo(output) ?: error("XPI download was empty.")
+                }
             }
+            target
         }
+        onStage("Installing ${addon.name}...")
         installXpi(target, addon)
         upsertInstalled(
             InstalledExtensionState(
@@ -65,10 +75,7 @@ class ExtensionRepository(
         runCatching {
             val extension = findRuntimeExtension(guid)
             if (extension != null) {
-                val controller = GeckoRuntimeProvider.get(context).webExtensionController
-                val methodName = if (enabled) "enable" else "disable"
-                val method = controller.javaClass.methods.firstOrNull { it.name == methodName && it.parameterTypes.isNotEmpty() }
-                method?.invoke(controller, extension)
+                invokeWebExtensionMethod(if (enabled) "enable" else "disable", extension)
             } else if (enabled && installed.xpiPath != null) {
                 installRaw(File(installed.xpiPath))
             }
@@ -80,9 +87,7 @@ class ExtensionRepository(
         runCatching {
             val extension = findRuntimeExtension(guid)
             if (extension != null) {
-                val controller = GeckoRuntimeProvider.get(context).webExtensionController
-                val method = controller.javaClass.methods.firstOrNull { it.name == "uninstall" && it.parameterTypes.isNotEmpty() }
-                method?.invoke(controller, extension)
+                invokeWebExtensionMethod("uninstall", extension)
             }
         }
         saveInstalled(installedState.value.filterNot { it.guid == guid })
@@ -100,18 +105,35 @@ class ExtensionRepository(
     }
 
     private suspend fun installRaw(file: File) {
-        val uri = file.toURI().toString()
-        val result = GeckoRuntimeProvider.get(context).webExtensionController.install(uri)
-        result.await()
+        withContext(Dispatchers.Main.immediate) {
+            val uri = file.toURI().toString()
+            val result = GeckoRuntimeProvider.get(context).webExtensionController.install(uri)
+            result.await()
+        }
     }
 
     private suspend fun findRuntimeExtension(guid: String): Any? {
-        val controller = GeckoRuntimeProvider.get(context).webExtensionController
-        val listMethod = controller.javaClass.methods.firstOrNull { it.name == "list" && it.parameterTypes.isEmpty() }
-            ?: return null
-        val result = listMethod.invoke(controller) as? GeckoResult<*> ?: return null
-        val extensions = result.await() as? List<*> ?: return null
-        return extensions.firstOrNull { extensionGuid(it) == guid }
+        return withContext(Dispatchers.Main.immediate) {
+            val controller = GeckoRuntimeProvider.get(context).webExtensionController
+            val listMethod = controller.javaClass.methods.firstOrNull { it.name == "list" && it.parameterTypes.isEmpty() }
+                ?: return@withContext null
+            val result = listMethod.invoke(controller) as? GeckoResult<*> ?: return@withContext null
+            val extensions = result.await() as? List<*> ?: return@withContext null
+            extensions.firstOrNull { extensionGuid(it) == guid }
+        }
+    }
+
+    private suspend fun invokeWebExtensionMethod(methodName: String, extension: Any) {
+        withContext(Dispatchers.Main.immediate) {
+            val controller = GeckoRuntimeProvider.get(context).webExtensionController
+            val method = controller.javaClass.methods.firstOrNull {
+                it.name == methodName && it.parameterTypes.isNotEmpty()
+            } ?: return@withContext
+            val result = method.invoke(controller, extension)
+            if (result is GeckoResult<*>) {
+                result.await()
+            }
+        }
     }
 
     private fun extensionGuid(extension: Any?): String? {

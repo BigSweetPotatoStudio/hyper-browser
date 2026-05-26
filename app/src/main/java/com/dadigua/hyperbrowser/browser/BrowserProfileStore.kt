@@ -50,6 +50,25 @@ class BrowserProfileStore(context: Context) {
 
     fun isBookmarked(url: String): Boolean = bookmarksState.value.any { it.url == url }
 
+    fun removeBookmark(url: String) {
+        if (url.isBlank()) return
+        val next = bookmarksState.value.filterNot { it.url == url }
+        bookmarksState.value = next
+        saveBookmarks(next)
+    }
+
+    fun removeHistoryEntry(url: String) {
+        if (url.isBlank()) return
+        val next = historyState.value.filterNot { it.url == url }
+        historyState.value = next
+        saveHistory(next)
+    }
+
+    fun clearHistory() {
+        historyState.value = emptyList()
+        saveHistory(emptyList())
+    }
+
     private fun loadHistory(): List<BrowserHistoryEntry> {
         if (!historyFile.exists()) return emptyList()
         return runCatching {

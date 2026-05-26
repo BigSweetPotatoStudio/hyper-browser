@@ -3,6 +3,7 @@ package com.dadigua.hyperbrowser.ui.browser
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -22,9 +23,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -43,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -64,11 +68,16 @@ import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.browser.BrowserBookmark
 import com.dadigua.hyperbrowser.browser.BrowserHistoryEntry
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
+import com.dadigua.hyperbrowser.data.InstalledExtensionState
+import com.dadigua.hyperbrowser.extensions.AmoAddonListing
 import com.dadigua.hyperbrowser.gecko.GeckoBrowserView
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 
 class BrowserActivity : ComponentActivity() {
@@ -109,9 +118,33 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     val profileStore = remember { BrowserProfileStore(app) }
     val history by profileStore.observeHistory().collectAsState()
     val bookmarks by profileStore.observeBookmarks().collectAsState()
+    val installedExtensions by app.extensions.observeInstalled().collectAsState()
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
     var showSearch by remember { mutableStateOf(false) }
+    var showBookmarks by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(false) }
+    var showExtensions by remember { mutableStateOf(false) }
+    var extensionQuery by remember { mutableStateOf("ublock") }
+    var extensionResults by remember { mutableStateOf<List<AmoAddonListing>>(emptyList()) }
+    var extensionMessage by remember { mutableStateOf<String?>(null) }
+
+    BackHandler {
+        when {
+            showSearch -> showSearch = false
+            showBookmarks -> showBookmarks = false
+            showHistory -> showHistory = false
+            showExtensions -> showExtensions = false
+            showTabs -> showTabs = false
+            else -> controller.goBack()
+        }
+    }
+
+    LaunchedEffect(pageState.url, pageState.title) {
+        if (pageState.url.isNotBlank()) {
+            profileStore.recordVisit(pageState.url, pageState.title)
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose { tabs.forEach { it.controller.close() } }
@@ -128,9 +161,76 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                     tab.input = value
                     val target = GeckoSessionController.normalizeUrl(value)
                     controller.load(target)
-                    profileStore.recordVisit(target, pageState.title)
                     showSearch = false
                     message = null
+                }
+            )
+        } else if (showBookmarks) {
+            BookmarksPage(
+                bookmarks = bookmarks,
+                onBack = { showBookmarks = false },
+                onOpen = { url ->
+                    tab.input = url
+                    controller.load(url)
+                    showBookmarks = false
+                    message = null
+                },
+                onRemove = profileStore::removeBookmark
+            )
+        } else if (showHistory) {
+            HistoryPage(
+                history = history,
+                onBack = { showHistory = false },
+                onOpen = { url ->
+                    tab.input = url
+                    controller.load(url)
+                    showHistory = false
+                    message = null
+                },
+                onRemove = profileStore::removeHistoryEntry,
+                onClear = profileStore::clearHistory
+            )
+        } else if (showExtensions) {
+            ExtensionsPage(
+                query = extensionQuery,
+                installed = installedExtensions,
+                results = extensionResults,
+                message = extensionMessage,
+                onQueryChange = { extensionQuery = it },
+                onBack = { showExtensions = false },
+                onSearch = {
+                    scope.launch {
+                        extensionMessage = "Searching AMO..."
+                        runCatching { app.extensions.searchAndroidAddons(extensionQuery) }
+                            .onSuccess {
+                                extensionResults = it
+                                extensionMessage = if (it.isEmpty()) "No Android add-ons found." else null
+                            }
+                            .onFailure { extensionMessage = it.message ?: "AMO search failed." }
+                    }
+                },
+                onInstall = { addon ->
+                    scope.launch {
+                        runCatching {
+                            app.extensions.downloadAndInstall(addon) { stage ->
+                                extensionMessage = stage
+                            }
+                        }
+                            .onSuccess { extensionMessage = "Installed ${addon.name}." }
+                            .onFailure { extensionMessage = it.message ?: "Extension install failed." }
+                    }
+                },
+                onToggleEnabled = { extension ->
+                    scope.launch {
+                        runCatching { app.extensions.setEnabled(extension.guid, !extension.enabled) }
+                            .onFailure { extensionMessage = it.message ?: "Unable to update extension." }
+                    }
+                },
+                onUninstall = { extension ->
+                    scope.launch {
+                        runCatching { app.extensions.uninstall(extension.guid) }
+                            .onFailure { extensionMessage = it.message ?: "Unable to uninstall extension." }
+                    }
                 }
             )
         } else if (showTabs) {
@@ -189,6 +289,9 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                     val url = pageState.url.ifBlank { tab.input }
                     profileStore.toggleBookmark(url, pageState.title)
                 },
+                onShowBookmarks = { showBookmarks = true },
+                onShowHistory = { showHistory = true },
+                onShowExtensions = { showExtensions = true },
                 onInstall = {
                     scope.launch {
                         val title = pageState.title.ifBlank { tab.input }
@@ -238,6 +341,9 @@ private fun BrowserToolbar(
     onShowTabs: () -> Unit,
     onNewTab: () -> Unit,
     onToggleBookmark: () -> Unit,
+    onShowBookmarks: () -> Unit,
+    onShowHistory: () -> Unit,
+    onShowExtensions: () -> Unit,
     onInstall: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -301,6 +407,9 @@ private fun BrowserToolbar(
                     DropdownMenuItem(text = { Text("Forward") }, onClick = { showMenu = false; onForward() })
                     DropdownMenuItem(text = { Text("Refresh") }, onClick = { showMenu = false; onReload() })
                     DropdownMenuItem(text = { Text(if (bookmarked) "Remove bookmark" else "Bookmark") }, onClick = { showMenu = false; onToggleBookmark() })
+                    DropdownMenuItem(text = { Text("Bookmarks") }, onClick = { showMenu = false; onShowBookmarks() })
+                    DropdownMenuItem(text = { Text("History") }, onClick = { showMenu = false; onShowHistory() })
+                    DropdownMenuItem(text = { Text("Extensions") }, onClick = { showMenu = false; onShowExtensions() })
                     DropdownMenuItem(text = { Text("Install as WebApp") }, onClick = { showMenu = false; onInstall() })
                 }
             }
@@ -453,6 +562,388 @@ private fun SuggestionRow(title: String, url: String, leading: String, chrome: B
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color(0xFF202124))
             Text(url, color = Color(0xFF5F6368), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
+private fun BookmarksPage(
+    bookmarks: List<BrowserBookmark>,
+    onBack: () -> Unit,
+    onOpen: (String) -> Unit,
+    onRemove: (String) -> Unit
+) {
+    BrowserLibraryPage(
+        title = "书签",
+        emptyTitle = "没有书签",
+        emptyBody = "打开网页后，从菜单里点 Bookmark，就会保存到这里。",
+        items = bookmarks,
+        onBack = onBack,
+        onOpen = { onOpen(it.url) },
+        onRemove = { onRemove(it.url) },
+        itemTitle = { it.title },
+        itemUrl = { it.url },
+        itemMeta = { "已保存" },
+        leading = "★",
+        action = null
+    )
+}
+
+@Composable
+private fun HistoryPage(
+    history: List<BrowserHistoryEntry>,
+    onBack: () -> Unit,
+    onOpen: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    onClear: () -> Unit
+) {
+    BrowserLibraryPage(
+        title = "历史记录",
+        emptyTitle = "没有历史记录",
+        emptyBody = "你访问过的页面会显示在这里，也会出现在地址栏建议里。",
+        items = history,
+        onBack = onBack,
+        onOpen = { onOpen(it.url) },
+        onRemove = { onRemove(it.url) },
+        itemTitle = { it.title },
+        itemUrl = { it.url },
+        itemMeta = { formatVisitTime(it.visitedAt) },
+        leading = "◷",
+        action = if (history.isEmpty()) null else "清空" to onClear
+    )
+}
+
+@Composable
+private fun <T> BrowserLibraryPage(
+    title: String,
+    emptyTitle: String,
+    emptyBody: String,
+    items: List<T>,
+    onBack: () -> Unit,
+    onOpen: (T) -> Unit,
+    onRemove: (T) -> Unit,
+    itemTitle: (T) -> String,
+    itemUrl: (T) -> String,
+    itemMeta: (T) -> String,
+    leading: String,
+    action: (Pair<String, () -> Unit>)?
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .background(Color(0xFFF7F8FC))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.size(52.dp)) {
+                Text("‹", fontSize = 42.sp, color = Color(0xFF202124))
+            }
+            Text(
+                title,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF202124)
+            )
+            action?.let { (label, callback) ->
+                TextButton(onClick = callback) { Text(label) }
+            }
+        }
+        HorizontalDivider(color = Color(0xFFDADCE3))
+
+        if (items.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(
+                    modifier = Modifier.padding(28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(74.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFE1E4EC)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(leading, fontSize = 36.sp, color = Color(0xFF5F6368))
+                    }
+                    Text(emptyTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(emptyBody, color = Color(0xFF5F6368))
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                items(items) { item ->
+                    LibraryRow(
+                        title = itemTitle(item),
+                        url = itemUrl(item),
+                        meta = itemMeta(item),
+                        leading = leading,
+                        onOpen = { onOpen(item) },
+                        onRemove = { onRemove(item) }
+                    )
+                }
+                item { Spacer(modifier = Modifier.height(36.dp)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryRow(
+    title: String,
+    url: String,
+    meta: String,
+    leading: String,
+    onOpen: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen)
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+                .background(Color(0xFFE8EAED)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(leading, color = Color(0xFF5F6368), fontSize = 20.sp)
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title.ifBlank { url },
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = Color(0xFF202124)
+            )
+            Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color(0xFF5F6368), fontSize = 13.sp)
+            Text(meta, color = Color(0xFF80868B), fontSize = 12.sp)
+        }
+        TextButton(onClick = onRemove, shape = RectangleShape) {
+            Text("×", fontSize = 30.sp, color = Color(0xFF5F6368))
+        }
+    }
+}
+
+private fun formatVisitTime(timestamp: Long): String {
+    if (timestamp <= 0L) return ""
+    val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    return formatter.format(Date(timestamp))
+}
+
+@Composable
+private fun ExtensionsPage(
+    query: String,
+    installed: List<InstalledExtensionState>,
+    results: List<AmoAddonListing>,
+    message: String?,
+    onQueryChange: (String) -> Unit,
+    onBack: () -> Unit,
+    onSearch: () -> Unit,
+    onInstall: (AmoAddonListing) -> Unit,
+    onToggleEnabled: (InstalledExtensionState) -> Unit,
+    onUninstall: (InstalledExtensionState) -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .background(Color(0xFFF7F8FC)),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack, modifier = Modifier.size(52.dp)) {
+                    Text("‹", fontSize = 42.sp, color = Color(0xFF202124))
+                }
+                Text(
+                    "扩展",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF202124)
+                )
+            }
+            HorizontalDivider(color = Color(0xFFDADCE3))
+        }
+        item {
+            Column(
+                modifier = Modifier.padding(horizontal = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("AMO Android 插件", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp)
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(Color(0xFFE7E9F1))
+                            .padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        BasicTextField(
+                            value = query,
+                            onValueChange = onQueryChange,
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.titleMedium.copy(color = Color(0xFF202124)),
+                            modifier = Modifier.weight(1f),
+                            decorationBox = { inner ->
+                                if (query.isBlank()) {
+                                    Text("搜索扩展", color = Color(0xFF6F737B), style = MaterialTheme.typography.titleMedium)
+                                }
+                                inner()
+                            }
+                        )
+                    }
+                    Button(onClick = onSearch) { Text("Search") }
+                }
+                message?.let { Text(it, color = Color(0xFF126D6A)) }
+            }
+        }
+        item {
+            Text(
+                "已安装",
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        if (installed.isEmpty()) {
+            item {
+                Text(
+                    "还没有安装扩展。",
+                    modifier = Modifier.padding(horizontal = 18.dp),
+                    color = Color(0xFF5F6368)
+                )
+            }
+        } else {
+            items(installed, key = { it.guid }) { extension ->
+                InstalledExtensionRow(
+                    extension = extension,
+                    onToggle = { onToggleEnabled(extension) },
+                    onUninstall = { onUninstall(extension) }
+                )
+            }
+        }
+        if (results.isNotEmpty()) {
+            item {
+                Text(
+                    "搜索结果",
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            items(results, key = { it.guid }) { addon ->
+                AddonResultRow(addon = addon, onInstall = { onInstall(addon) })
+            }
+        }
+        item { Spacer(modifier = Modifier.height(36.dp)) }
+    }
+}
+
+@Composable
+private fun InstalledExtensionRow(
+    extension: InstalledExtensionState,
+    onToggle: () -> Unit,
+    onUninstall: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFE8EAED)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("🧩", fontSize = 20.sp)
+                }
+                Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(extension.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${extension.version} · ${if (extension.enabled) "Enabled" else "Disabled"}", color = Color(0xFF5F6368))
+                }
+            }
+            if (extension.permissionsSnapshot.isNotBlank()) {
+                Text(
+                    extension.permissionsSnapshot.lines().take(3).joinToString(", "),
+                    color = Color(0xFF5F6368),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = onToggle) {
+                    Text(if (extension.enabled) "Disable" else "Enable")
+                }
+                TextButton(onClick = onUninstall) { Text("Uninstall") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddonResultRow(addon: AmoAddonListing, onInstall: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFE8EAED)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("🧩", fontSize = 20.sp)
+                }
+                Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(addon.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Version ${addon.version} · ${addon.userCount} users", color = Color(0xFF5F6368))
+                }
+            }
+            Text(
+                if (addon.permissions.isEmpty()) "No declared permissions" else addon.permissions.take(5).joinToString(", "),
+                color = Color(0xFF5F6368),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Button(onClick = onInstall) { Text("Install") }
         }
     }
 }
