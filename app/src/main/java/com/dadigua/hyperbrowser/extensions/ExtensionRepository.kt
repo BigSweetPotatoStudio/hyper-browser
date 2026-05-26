@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -108,7 +109,9 @@ class ExtensionRepository(
         withContext(Dispatchers.Main.immediate) {
             val uri = file.toURI().toString()
             val result = GeckoRuntimeProvider.get(context).webExtensionController.install(uri)
-            result.await()
+            withTimeout(30_000) {
+                result.await()
+            }
         }
     }
 

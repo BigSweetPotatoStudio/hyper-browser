@@ -128,6 +128,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     var extensionQuery by remember { mutableStateOf("ublock") }
     var extensionResults by remember { mutableStateOf<List<AmoAddonListing>>(emptyList()) }
     var extensionMessage by remember { mutableStateOf<String?>(null) }
+    var installingAddonGuid by remember { mutableStateOf<String?>(null) }
 
     BackHandler {
         when {
@@ -196,6 +197,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 installed = installedExtensions,
                 results = extensionResults,
                 message = extensionMessage,
+                installingAddonGuid = installingAddonGuid,
                 onQueryChange = { extensionQuery = it },
                 onBack = { showExtensions = false },
                 onSearch = {
@@ -211,6 +213,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 },
                 onInstall = { addon ->
                     scope.launch {
+                        installingAddonGuid = addon.guid
                         runCatching {
                             app.extensions.downloadAndInstall(addon) { stage ->
                                 extensionMessage = stage
@@ -218,6 +221,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                         }
                             .onSuccess { extensionMessage = "Installed ${addon.name}." }
                             .onFailure { extensionMessage = it.message ?: "Extension install failed." }
+                        installingAddonGuid = null
                     }
                 },
                 onToggleEnabled = { extension ->
@@ -268,6 +272,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 message = message,
                 tabCount = tabs.size,
                 bookmarked = profileStore.isBookmarked(pageState.url.ifBlank { tab.input }),
+                installedExtensions = installedExtensions,
                 onAddressClick = { showSearch = true },
                 onLoad = {
                     val target = GeckoSessionController.normalizeUrl(tab.input)
@@ -333,6 +338,7 @@ private fun BrowserToolbar(
     message: String?,
     tabCount: Int,
     bookmarked: Boolean,
+    installedExtensions: List<InstalledExtensionState>,
     onAddressClick: () -> Unit,
     onLoad: () -> Unit,
     onBack: () -> Unit,
@@ -347,6 +353,8 @@ private fun BrowserToolbar(
     onInstall: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    var extensionsExpanded by remember { mutableStateOf(false) }
+    val enabledExtensions = installedExtensions.filter { it.enabled }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -402,20 +410,211 @@ private fun BrowserToolbar(
                     Text("⋮", fontSize = 30.sp)
                 }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                    DropdownMenuItem(text = { Text("New tab") }, onClick = { showMenu = false; onNewTab() })
-                    DropdownMenuItem(text = { Text("Back") }, onClick = { showMenu = false; onBack() })
-                    DropdownMenuItem(text = { Text("Forward") }, onClick = { showMenu = false; onForward() })
-                    DropdownMenuItem(text = { Text("Refresh") }, onClick = { showMenu = false; onReload() })
-                    DropdownMenuItem(text = { Text(if (bookmarked) "Remove bookmark" else "Bookmark") }, onClick = { showMenu = false; onToggleBookmark() })
-                    DropdownMenuItem(text = { Text("Bookmarks") }, onClick = { showMenu = false; onShowBookmarks() })
-                    DropdownMenuItem(text = { Text("History") }, onClick = { showMenu = false; onShowHistory() })
-                    DropdownMenuItem(text = { Text("Extensions") }, onClick = { showMenu = false; onShowExtensions() })
-                    DropdownMenuItem(text = { Text("Install as WebApp") }, onClick = { showMenu = false; onInstall() })
+                    BrowserMenuPanel(
+                        bookmarked = bookmarked,
+                        enabledExtensions = enabledExtensions,
+                        installedExtensionCount = installedExtensions.size,
+                        extensionsExpanded = extensionsExpanded,
+                        onExtensionsExpandedChange = { extensionsExpanded = it },
+                        onNewTab = { showMenu = false; onNewTab() },
+                        onBack = { showMenu = false; onBack() },
+                        onForward = { showMenu = false; onForward() },
+                        onReload = { showMenu = false; onReload() },
+                        onToggleBookmark = { showMenu = false; onToggleBookmark() },
+                        onShowBookmarks = { showMenu = false; onShowBookmarks() },
+                        onShowHistory = { showMenu = false; onShowHistory() },
+                        onShowExtensions = { showMenu = false; onShowExtensions() },
+                        onInstall = { showMenu = false; onInstall() }
+                    )
                 }
             }
         }
         if (pageState.insecureHttp) Text("Insecure HTTP page", color = MaterialTheme.colorScheme.error)
         message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+    }
+}
+
+@Composable
+private fun BrowserMenuPanel(
+    bookmarked: Boolean,
+    enabledExtensions: List<InstalledExtensionState>,
+    installedExtensionCount: Int,
+    extensionsExpanded: Boolean,
+    onExtensionsExpandedChange: (Boolean) -> Unit,
+    onNewTab: () -> Unit,
+    onBack: () -> Unit,
+    onForward: () -> Unit,
+    onReload: () -> Unit,
+    onToggleBookmark: () -> Unit,
+    onShowBookmarks: () -> Unit,
+    onShowHistory: () -> Unit,
+    onShowExtensions: () -> Unit,
+    onInstall: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(304.dp)
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        MenuNavRow(
+            onBack = onBack,
+            onForward = onForward,
+            onReload = onReload
+        )
+        MenuGroupBox {
+            BrowserMenuRow(label = "New tab", leading = "+", onClick = onNewTab)
+            BrowserMenuRow(
+                label = if (bookmarked) "Edit bookmark" else "Bookmark this page",
+                leading = if (bookmarked) "*" else "☆",
+                onClick = onToggleBookmark
+            )
+            BrowserMenuRow(label = "Install as WebApp", leading = "A", onClick = onInstall)
+        }
+        MenuGroupBox {
+            ExtensionsMenuRow(
+                enabledCount = enabledExtensions.size,
+                installedCount = installedExtensionCount,
+                expanded = extensionsExpanded,
+                onClick = { onExtensionsExpandedChange(!extensionsExpanded) }
+            )
+            if (extensionsExpanded) {
+                if (enabledExtensions.isEmpty()) {
+                    BrowserMenuRow(
+                        label = "Discover more extensions",
+                        leading = "+",
+                        description = "Search Android add-ons",
+                        onClick = onShowExtensions
+                    )
+                } else {
+                    enabledExtensions.forEach { extension ->
+                        BrowserMenuRow(
+                            label = extension.name,
+                            leading = "E",
+                            description = extension.version,
+                            trailing = "Settings",
+                            onClick = onShowExtensions
+                        )
+                    }
+                    BrowserMenuRow(
+                        label = "Manage extensions",
+                        leading = ">",
+                        description = "$installedExtensionCount installed",
+                        onClick = onShowExtensions
+                    )
+                }
+            }
+        }
+        MenuGroupBox {
+            BrowserMenuRow(label = "History", leading = "H", onClick = onShowHistory)
+            BrowserMenuRow(label = "Bookmarks", leading = "B", onClick = onShowBookmarks)
+        }
+    }
+}
+
+@Composable
+private fun MenuGroupBox(content: @Composable () -> Unit) {
+    Column(
+        modifier = Modifier.clip(RoundedCornerShape(18.dp)),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun MenuNavRow(
+    onBack: () -> Unit,
+    onForward: () -> Unit,
+    onReload: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color(0xFFF1F3F8))
+            .padding(horizontal = 6.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        MenuNavButton(label = "Back", icon = "‹", onClick = onBack, modifier = Modifier.weight(1f))
+        MenuNavButton(label = "Forward", icon = "›", onClick = onForward, modifier = Modifier.weight(1f))
+        MenuNavButton(label = "Reload", icon = "↻", onClick = onReload, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun MenuNavButton(
+    label: String,
+    icon: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(icon, fontSize = 24.sp, color = Color(0xFF202124))
+        Text(label, fontSize = 11.sp, color = Color(0xFF5F6368), maxLines = 1)
+    }
+}
+
+@Composable
+private fun ExtensionsMenuRow(
+    enabledCount: Int,
+    installedCount: Int,
+    expanded: Boolean,
+    onClick: () -> Unit
+) {
+    BrowserMenuRow(
+        label = "Extensions",
+        leading = "E",
+        description = when {
+            enabledCount > 0 -> "$enabledCount enabled"
+            installedCount > 0 -> "$installedCount installed, none enabled"
+            else -> "No extensions enabled"
+        },
+        trailing = if (expanded) "⌃" else "$enabledCount  ˅",
+        onClick = onClick
+    )
+}
+
+@Composable
+private fun BrowserMenuRow(
+    label: String,
+    leading: String,
+    description: String? = null,
+    trailing: String? = null,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFF1F3F8))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(Color.White),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(leading, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF202124))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, color = Color(0xFF202124), fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            description?.let {
+                Text(it, color = Color(0xFF5F6368), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        trailing?.let {
+            Text(it, color = Color(0xFF5F6368), fontSize = 12.sp, maxLines = 1)
+        }
     }
 }
 
@@ -752,6 +951,7 @@ private fun ExtensionsPage(
     installed: List<InstalledExtensionState>,
     results: List<AmoAddonListing>,
     message: String?,
+    installingAddonGuid: String?,
     onQueryChange: (String) -> Unit,
     onBack: () -> Unit,
     onSearch: () -> Unit,
@@ -764,7 +964,7 @@ private fun ExtensionsPage(
             .fillMaxSize()
             .statusBarsPadding()
             .background(Color(0xFFF7F8FC)),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item {
             Row(
@@ -787,11 +987,18 @@ private fun ExtensionsPage(
             HorizontalDivider(color = Color(0xFFDADCE3))
         }
         item {
+            ExtensionSummaryCard(
+                installedCount = installed.size,
+                enabledCount = installed.count { it.enabled },
+                onSearch = onSearch
+            )
+        }
+        item {
             Column(
                 modifier = Modifier.padding(horizontal = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("AMO Android 插件", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("Find more add-ons", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier
@@ -823,7 +1030,7 @@ private fun ExtensionsPage(
         }
         item {
             Text(
-                "已安装",
+                "Installed add-ons",
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
@@ -849,17 +1056,73 @@ private fun ExtensionsPage(
         if (results.isNotEmpty()) {
             item {
                 Text(
-                    "搜索结果",
+                    "Recommended from AMO",
                     modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
             }
             items(results, key = { it.guid }) { addon ->
-                AddonResultRow(addon = addon, onInstall = { onInstall(addon) })
+                AddonResultRow(
+                    addon = addon,
+                    installing = installingAddonGuid == addon.guid,
+                    installed = installed.any { it.guid == addon.guid },
+                    onInstall = { onInstall(addon) }
+                )
             }
         }
+        item {
+            Text(
+                "Search uses the Android AMO catalog. Installed add-ons appear in the browser menu like Iceraven's extensions section.",
+                modifier = Modifier.padding(horizontal = 18.dp),
+                color = Color(0xFF5F6368),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
         item { Spacer(modifier = Modifier.height(36.dp)) }
+    }
+}
+
+@Composable
+private fun ExtensionSummaryCard(
+    installedCount: Int,
+    enabledCount: Int,
+    onSearch: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFE8EAED)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("E", fontWeight = FontWeight.Bold, fontSize = 22.sp, color = Color(0xFF202124))
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("Extensions", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "$enabledCount enabled · $installedCount installed",
+                    color = Color(0xFF5F6368),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            TextButton(onClick = onSearch) {
+                Text("Refresh")
+            }
+        }
     }
 }
 
@@ -912,7 +1175,12 @@ private fun InstalledExtensionRow(
 }
 
 @Composable
-private fun AddonResultRow(addon: AmoAddonListing, onInstall: () -> Unit) {
+private fun AddonResultRow(
+    addon: AmoAddonListing,
+    installing: Boolean,
+    installed: Boolean,
+    onInstall: () -> Unit
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -943,7 +1211,18 @@ private fun AddonResultRow(addon: AmoAddonListing, onInstall: () -> Unit) {
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
-            Button(onClick = onInstall) { Text("Install") }
+            Button(
+                onClick = onInstall,
+                enabled = !installing && !installed
+            ) {
+                Text(
+                    when {
+                        installed -> "Installed"
+                        installing -> "Installing..."
+                        else -> "Add"
+                    }
+                )
+            }
         }
     }
 }
