@@ -1,0 +1,26 @@
+.gradle/
+.gradle-bootstrap/
+.kotlin/
+.playwright-cli/
+build/
+local.properties
+captures/
+screenshots/
+.externalNativeBuild/
+.cxx/
+*.iml
+.idea/
+app/build/
+
+# Android Studio / IntelliJ local state
+*.ipr
+*.iws
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
