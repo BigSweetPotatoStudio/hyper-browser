@@ -39,7 +39,7 @@ class GeckoSessionController(
                 perms: MutableList<GeckoSession.PermissionDelegate.ContentPermission>,
                 hasUserGesture: Boolean
             ) {
-                val target = if (url == "about:blank") HOME_URL else url.orEmpty()
+                val target = if (isHomeDocumentUrl(url.orEmpty())) HOME_URL else url.orEmpty()
                 if (target.isBlank()) return
                 _state.value = _state.value.copy(
                     title = if (isHomeUrl(target)) "Hyper Browser" else _state.value.title,
@@ -71,7 +71,7 @@ class GeckoSessionController(
         val target = normalizeUrl(input)
         if (isHomeUrl(target)) {
             _state.value = GeckoPageState(title = "Hyper Browser", url = HOME_URL)
-            session.loadUri("about:blank")
+            session.loadUri(HOME_DATA_URL)
             return
         }
         _state.value = _state.value.copy(url = target, insecureHttp = target.startsWith("http://"))
@@ -96,9 +96,15 @@ class GeckoSessionController(
 
     companion object {
         const val HOME_URL = "hyper://home"
+        private const val HOME_DATA_URL =
+            "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3EHyper%20Browser%3C%2Ftitle%3E%3Cstyle%3Ehtml%2Cbody%7Bmargin%3A0%3Bmin-height%3A100%25%3Bbackground%3A%23f8f9fd%3B%7D%3C%2Fstyle%3E"
 
         fun isHomeUrl(url: String): Boolean = url == HOME_URL
-        fun isInternalUrl(url: String): Boolean = isHomeUrl(url)
+        fun isHomeDocumentUrl(url: String): Boolean =
+            url == HOME_DATA_URL ||
+                (url.startsWith("data:text/html") &&
+                    (url.contains("Hyper Browser") || url.contains("Hyper%20Browser")))
+        fun isInternalUrl(url: String): Boolean = isHomeUrl(url) || isHomeDocumentUrl(url)
         fun isBrowserLoadableUrl(url: String): Boolean =
             url.startsWith("http://") || url.startsWith("https://") || url.startsWith("moz-extension://")
 

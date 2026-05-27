@@ -155,10 +155,6 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             showExtensions -> showExtensions = false
             showTabs -> showTabs = false
             pageState.canGoBack -> controller.goBack()
-            !onHomePage && tab.hasHomeBackEntry -> {
-                tab.input = GeckoSessionController.HOME_URL
-                controller.load(GeckoSessionController.HOME_URL)
-            }
             else -> controller.goBack()
         }
     }
@@ -200,7 +196,6 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 bookmarks = bookmarks,
                 onCancel = { showSearch = false },
                 onGo = { value ->
-                    if (onHomePage) tab.hasHomeBackEntry = true
                     tab.input = value
                     val target = GeckoSessionController.normalizeUrl(value)
                     controller.load(target)
@@ -213,7 +208,6 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 bookmarks = bookmarks,
                 onBack = { showBookmarks = false },
                 onOpen = { url ->
-                    if (onHomePage) tab.hasHomeBackEntry = true
                     tab.input = url
                     controller.load(url)
                     showBookmarks = false
@@ -226,7 +220,6 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 history = history,
                 onBack = { showHistory = false },
                 onOpen = { url ->
-                    if (onHomePage) tab.hasHomeBackEntry = true
                     tab.input = url
                     controller.load(url)
                     showHistory = false
@@ -321,7 +314,6 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 extensionActions = extensionActions,
                 onAddressClick = { showSearch = true },
                 onLoad = {
-                    if (onHomePage) tab.hasHomeBackEntry = true
                     val target = GeckoSessionController.normalizeUrl(tab.input)
                     controller.load(target)
                     if (!GeckoSessionController.isInternalUrl(target)) {
@@ -340,7 +332,6 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                     message = null
                 },
                 onHome = {
-                    tab.hasHomeBackEntry = true
                     tab.input = GeckoSessionController.HOME_URL
                     controller.load(GeckoSessionController.HOME_URL)
                     message = null
@@ -379,7 +370,6 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                         bookmarks = bookmarks,
                         onSearch = { showSearch = true },
                         onOpen = { url ->
-                            tab.hasHomeBackEntry = true
                             tab.input = url
                             controller.load(url)
                             message = null
@@ -410,7 +400,6 @@ private class BrowserTabRuntime private constructor(
     input: String
 ) {
     var input by mutableStateOf(input)
-    var hasHomeBackEntry by mutableStateOf(GeckoSessionController.isHomeUrl(input))
 
     companion object {
         fun create(app: HyperBrowserApp, url: String): BrowserTabRuntime =
