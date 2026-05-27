@@ -1,13 +1,21 @@
 package com.dadigua.hyperbrowser.ui.browser
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.webkit.URLUtil
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -47,15 +55,18 @@ import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.BookmarkRemove
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
@@ -63,6 +74,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -107,7 +119,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.browser.BrowserBookmark
+import com.dadigua.hyperbrowser.browser.BrowserDownloadEntry
 import com.dadigua.hyperbrowser.browser.BrowserHistoryEntry
+import com.dadigua.hyperbrowser.browser.DownloadHandler
+import com.dadigua.hyperbrowser.browser.DownloadStatus
+import com.dadigua.hyperbrowser.browser.DownloadStore
 import com.dadigua.hyperbrowser.browser.FaviconRepository
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.browser.BrowserSettings
@@ -118,6 +134,7 @@ import com.dadigua.hyperbrowser.extensions.ExtensionMenuActionState
 import com.dadigua.hyperbrowser.extensions.ExtensionNewTabRequest
 import com.dadigua.hyperbrowser.extensions.ExtensionPopupState
 import com.dadigua.hyperbrowser.gecko.GeckoBrowserView
+import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.GeckoSessionView
@@ -126,6 +143,7 @@ import com.dadigua.hyperbrowser.gecko.HyperRoute
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
 import com.dadigua.hyperbrowser.ui.webapp.WebAppActivity
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -141,36 +159,116 @@ private val ChromeActionButtonSize = 44.dp
 private val ChromeActionIconSize = 28.sp
 
 class BrowserActivity : ComponentActivity() {
+    private val externalIntents = MutableSharedFlow<ExternalBrowserIntent>(extraBufferCapacity = 1)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val initialUrl = intent.getStringExtra(EXTRA_URL) ?: GeckoSessionController.HOME_URL
+        val initialIntent = intent.toExternalBrowserIntent()
+        val initialUrl = if (initialIntent?.download == false) {
+            initialIntent.url
+        } else {
+            GeckoSessionController.HOME_URL
+        }
         setContent {
             HyperBrowserTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     BrowserScreen(
                         app = application as HyperBrowserApp,
-                        initialUrl = initialUrl
+                        initialUrl = initialUrl,
+                        initialDownloadUrl = initialIntent?.url?.takeIf { initialIntent.download },
+                        externalIntents = externalIntents
                     )
                 }
             }
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.toExternalBrowserIntent()?.let { externalIntents.tryEmit(it) }
+    }
+
     companion object {
-        private const val EXTRA_URL = "extra_url"
+        const val EXTRA_URL = "extra_url"
 
         fun intent(context: Context, url: String): Intent =
             Intent(context, BrowserActivity::class.java).putExtra(EXTRA_URL, url)
     }
 }
 
+private data class ExternalBrowserIntent(
+    val url: String,
+    val download: Boolean
+)
+
+private fun Intent.toExternalBrowserIntent(): ExternalBrowserIntent? {
+    getStringExtra(BrowserActivity.EXTRA_URL)?.takeIf { it.isNotBlank() }?.let {
+        return ExternalBrowserIntent(it, download = false)
+    }
+    if (action == Intent.ACTION_SEND && type?.startsWith("text/") == true) {
+        val text = getStringExtra(Intent.EXTRA_TEXT).orEmpty()
+        extractFirstHttpUrl(text)?.let {
+            return ExternalBrowserIntent(it, download = true)
+        }
+    }
+    if (action == Intent.ACTION_VIEW) {
+        dataString?.takeIf { URLUtil.isHttpUrl(it) || URLUtil.isHttpsUrl(it) }?.let {
+            return ExternalBrowserIntent(it, download = false)
+        }
+    }
+    return null
+}
+
+private fun extractFirstHttpUrl(text: String): String? =
+    Regex("""https?://\S+""")
+        .find(text)
+        ?.value
+        ?.trimEnd('.', ',', ';', ')', ']', '}', '"', '\'')
+
 @Composable
-private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
+private fun BrowserScreen(
+    app: HyperBrowserApp,
+    initialUrl: String,
+    initialDownloadUrl: String?,
+    externalIntents: MutableSharedFlow<ExternalBrowserIntent>
+) {
     var pendingHyperRoute by remember { mutableStateOf<HyperRoute?>(null) }
     var pendingHyperCommand by remember { mutableStateOf<HyperCommand?>(null) }
     val context = LocalContext.current
     val profileStore = remember { BrowserProfileStore(app) }
     val faviconStore = remember { FaviconRepository(app) }
+    val downloadStore = remember { DownloadStore(app) }
+    val downloadHandler = remember { DownloadHandler(app, downloadStore) }
+    val scope = rememberCoroutineScope()
+    var message by remember { mutableStateOf<String?>(null) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
+    fun requestDownloadNotificationsIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !downloadHandler.canPostNotifications()) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    fun enqueueUrlDownload(url: String) {
+        scope.launch {
+            message = "Downloading..."
+            runCatching { downloadHandler.enqueueUrlDownload(url) }
+                .onSuccess { message = "Download queued: ${it.name}" }
+                .onFailure { message = it.message ?: "Download failed." }
+        }
+    }
+    fun saveGeckoDownload(request: GeckoDownloadRequest) {
+        requestDownloadNotificationsIfNeeded()
+        scope.launch {
+            message = "Saving ${request.fileName}..."
+            runCatching { downloadHandler.saveResponse(request, downloadHandler.canPostNotifications()) }
+                .onSuccess { message = "Downloaded: ${it.name}" }
+                .onFailure { message = it.message ?: "Download failed." }
+        }
+    }
     fun handleHyperBridgeMessage(message: JSONObject): JSONObject {
         val payload = message.optJSONObject("payload") ?: JSONObject()
         return when (message.optString("type")) {
@@ -261,7 +359,8 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 app = app,
                 url = initialUrl,
                 onHyperRoute = { pendingHyperRoute = it },
-                onHyperBridgeMessage = ::handleHyperBridgeMessage
+                onHyperBridgeMessage = ::handleHyperBridgeMessage,
+                onDownload = ::saveGeckoDownload
             )
         )
     }
@@ -275,17 +374,17 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     val onSearchPage = GeckoSessionController.isSearchUrl(pageState.url)
     val history by profileStore.observeHistory().collectAsState()
     val bookmarks by profileStore.observeBookmarks().collectAsState()
+    val downloads by downloadStore.observeDownloads().collectAsState()
     val settings by profileStore.observeSettings().collectAsState()
     val webApps by app.webApps.observeAll().collectAsState()
     val installedExtensions by app.extensions.observeInstalled().collectAsState()
     val extensionActions by app.extensions.observeMenuActions().collectAsState()
     val extensionPopup by app.extensions.observePopup().collectAsState()
     val extensionNewTabRequest by app.extensions.observeNewTabRequests().collectAsState()
-    val scope = rememberCoroutineScope()
-    var message by remember { mutableStateOf<String?>(null) }
     var showSearch by remember { mutableStateOf(false) }
     var showBookmarks by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
+    var showDownloads by remember { mutableStateOf(false) }
     var showExtensions by remember { mutableStateOf(false) }
     var editingAddress by remember { mutableStateOf(false) }
     var extensionQuery by remember { mutableStateOf("ublock") }
@@ -293,6 +392,39 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     var extensionMessage by remember { mutableStateOf<String?>(null) }
     var installingAddonGuid by remember { mutableStateOf<String?>(null) }
     var currentIconPath by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(initialDownloadUrl) {
+        initialDownloadUrl?.let { enqueueUrlDownload(it) }
+    }
+
+    LaunchedEffect(externalIntents, selectedTabId, settings.searchUrlTemplate) {
+        externalIntents.collect { command ->
+            if (command.download) {
+                enqueueUrlDownload(command.url)
+            } else {
+                tab.input = command.url
+                controller.load(command.url, settings.searchUrlTemplate)
+                showSearch = false
+                showBookmarks = false
+                showHistory = false
+                showDownloads = false
+                showExtensions = false
+                showTabs = false
+                editingAddress = false
+                message = null
+            }
+        }
+    }
+
+    LaunchedEffect(showDownloads, downloads) {
+        while (showDownloads || downloads.any {
+                it.downloadManagerId != null && (it.status == DownloadStatus.Running || it.status == DownloadStatus.Queued)
+            }
+        ) {
+            downloadHandler.refreshSystemDownloads()
+            delay(1000)
+        }
+    }
 
     BackHandler {
         when {
@@ -304,6 +436,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             showSearch -> showSearch = false
             showBookmarks -> showBookmarks = false
             showHistory -> showHistory = false
+            showDownloads -> showDownloads = false
             showExtensions -> showExtensions = false
             showTabs -> showTabs = false
             pageState.canGoBack -> controller.goBack()
@@ -345,6 +478,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             showSearch = false
             showBookmarks = false
             showHistory = false
+            showDownloads = false
             showExtensions = false
             message = "Opened ${request.title}."
             app.extensions.consumeNewTabRequest()
@@ -494,6 +628,27 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                     onRemove = profileStore::removeHistoryEntry,
                     onClear = profileStore::clearHistory
                 )
+            } else if (showDownloads) {
+                DownloadsPage(
+                    downloads = downloads,
+                    onBack = { showDownloads = false },
+                    onOpen = { entry ->
+                        val openIntent = downloadHandler.openIntent(entry)
+                        if (openIntent == null) {
+                            message = "File is not ready."
+                        } else {
+                            runCatching { context.startActivity(openIntent) }
+                                .onFailure { message = it.message ?: "No app can open this file." }
+                        }
+                    },
+                    onRemove = { entry, deleteFile ->
+                        scope.launch {
+                            runCatching { downloadHandler.delete(entry, deleteFile) }
+                                .onSuccess { message = "Download removed." }
+                                .onFailure { message = it.message ?: "Unable to remove download." }
+                        }
+                    }
+                )
             } else if (showExtensions) {
                 ExtensionsPage(
                     query = extensionQuery,
@@ -569,7 +724,8 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                                 app = app,
                                 url = GeckoSessionController.HOME_URL,
                                 onHyperRoute = { pendingHyperRoute = it },
-                                onHyperBridgeMessage = ::handleHyperBridgeMessage
+                                onHyperBridgeMessage = ::handleHyperBridgeMessage,
+                                onDownload = ::saveGeckoDownload
                             )
                             tabs.add(replacement)
                             selectedTabId = replacement.id
@@ -582,7 +738,8 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                             app = app,
                             url = GeckoSessionController.HOME_URL,
                             onHyperRoute = { pendingHyperRoute = it },
-                            onHyperBridgeMessage = ::handleHyperBridgeMessage
+                            onHyperBridgeMessage = ::handleHyperBridgeMessage,
+                            onDownload = ::saveGeckoDownload
                         )
                         tabs.add(newTab)
                         selectedTabId = newTab.id
@@ -611,6 +768,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                         onEditingAddressChange = { editingAddress = it },
                         bookmarks = bookmarks,
                         history = history,
+                        downloads = downloads,
                         onSubmitAddress = { query ->
                             tab.input = query
                             controller.load(query, settings.searchUrlTemplate)
@@ -629,7 +787,8 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                                 app = app,
                                 url = GeckoSessionController.HOME_URL,
                                 onHyperRoute = { pendingHyperRoute = it },
-                                onHyperBridgeMessage = ::handleHyperBridgeMessage
+                                onHyperBridgeMessage = ::handleHyperBridgeMessage,
+                                onDownload = ::saveGeckoDownload
                             )
                             tabs.add(newTab)
                             selectedTabId = newTab.id
@@ -649,6 +808,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                             tab.input = GeckoSessionController.SETTINGS_URL
                             controller.loadSettings()
                         },
+                        onShowDownloads = { showDownloads = true },
                         onShowExtensions = { showExtensions = true },
                         onExtensionClick = { extension ->
                             scope.launch {
@@ -745,7 +905,8 @@ private class BrowserTabRuntime private constructor(
             app: HyperBrowserApp,
             url: String,
             onHyperRoute: (HyperRoute) -> Unit = {},
-            onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) }
+            onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
+            onDownload: (GeckoDownloadRequest) -> Unit = {}
         ): BrowserTabRuntime =
             BrowserTabRuntime(
                 id = UUID.randomUUID().toString(),
@@ -753,7 +914,8 @@ private class BrowserTabRuntime private constructor(
                     context = app,
                     initialUrl = url,
                     onHyperRoute = onHyperRoute,
-                    onHyperBridgeMessage = onHyperBridgeMessage
+                    onHyperBridgeMessage = onHyperBridgeMessage,
+                    onDownload = onDownload
                 ),
                 input = url
             )
@@ -1048,6 +1210,7 @@ private fun BrowserToolbar(
     onEditingAddressChange: (Boolean) -> Unit,
     bookmarks: List<BrowserBookmark>,
     history: List<BrowserHistoryEntry>,
+    downloads: List<BrowserDownloadEntry>,
     onSubmitAddress: (String) -> Unit,
     onBack: () -> Unit,
     onForward: () -> Unit,
@@ -1057,6 +1220,7 @@ private fun BrowserToolbar(
     onNewTab: () -> Unit,
     onToggleBookmark: () -> Unit,
     onShowSettings: () -> Unit,
+    onShowDownloads: () -> Unit,
     onShowExtensions: () -> Unit,
     onExtensionClick: (InstalledExtensionState) -> Unit,
     onInstall: () -> Unit
@@ -1261,6 +1425,7 @@ private fun BrowserToolbar(
                             bookmarked = bookmarked,
                             webAppInstalled = webAppInstalled,
                             enabledExtensions = enabledExtensions,
+                            downloads = downloads,
                         installedExtensionCount = installedExtensions.size,
                         extensionActions = extensionActions,
                         extensionsExpanded = extensionsExpanded,
@@ -1271,6 +1436,7 @@ private fun BrowserToolbar(
                         onReload = { showMenu = false; onReload() },
                         onToggleBookmark = { showMenu = false; onToggleBookmark() },
                         onShowSettings = { showMenu = false; onShowSettings() },
+                        onShowDownloads = { showMenu = false; onShowDownloads() },
                         onShowExtensions = { showMenu = false; onShowExtensions() },
                         onExtensionClick = { showMenu = false; onExtensionClick(it) },
                         onInstall = { showMenu = false; onInstall() }
@@ -1334,6 +1500,7 @@ private fun BrowserMenuPanel(
     bookmarked: Boolean,
     webAppInstalled: Boolean,
     enabledExtensions: List<InstalledExtensionState>,
+    downloads: List<BrowserDownloadEntry>,
     installedExtensionCount: Int,
     extensionActions: Map<String, ExtensionMenuActionState>,
     extensionsExpanded: Boolean,
@@ -1344,6 +1511,7 @@ private fun BrowserMenuPanel(
     onReload: () -> Unit,
     onToggleBookmark: () -> Unit,
     onShowSettings: () -> Unit,
+    onShowDownloads: () -> Unit,
     onShowExtensions: () -> Unit,
     onExtensionClick: (InstalledExtensionState) -> Unit,
     onInstall: () -> Unit
@@ -1414,6 +1582,17 @@ private fun BrowserMenuPanel(
             }
         }
         MenuGroupBox {
+            val activeDownloads = downloads.count { it.status == DownloadStatus.Running || it.status == DownloadStatus.Queued }
+            BrowserMenuRow(
+                label = "Downloads",
+                leadingIconVector = Icons.Outlined.Download,
+                description = if (activeDownloads > 0) {
+                    "$activeDownloads downloading"
+                } else {
+                    "${downloads.size} files"
+                },
+                onClick = onShowDownloads
+            )
             BrowserMenuRow(label = "Settings", leadingIconVector = Icons.Outlined.Settings, onClick = onShowSettings)
         }
     }
@@ -1853,6 +2032,178 @@ private fun HistoryPage(
 }
 
 @Composable
+private fun DownloadsPage(
+    downloads: List<BrowserDownloadEntry>,
+    onBack: () -> Unit,
+    onOpen: (BrowserDownloadEntry) -> Unit,
+    onRemove: (BrowserDownloadEntry, Boolean) -> Unit
+) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    var pendingDelete by remember { mutableStateOf<BrowserDownloadEntry?>(null) }
+    var deleteFile by remember { mutableStateOf(true) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF7F8FC))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(ChromeActionBarHeight)
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.size(ChromeActionButtonSize)) {
+                Text("‹", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
+            }
+            Text(
+                "下载内容",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF202124)
+            )
+        }
+        HorizontalDivider(color = Color(0xFFDADCE3))
+
+        if (downloads.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(
+                    modifier = Modifier.padding(28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(74.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFE1E4EC)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(34.dp), tint = Color(0xFF5F6368))
+                    }
+                    Text("还没有下载内容", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("下载过的文件会显示在这里。", color = Color(0xFF5F6368))
+                }
+            }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(downloads, key = { it.id }) { entry ->
+                    DownloadRow(
+                        entry = entry,
+                        onOpen = { onOpen(entry) },
+                        onCopyUrl = {
+                            clipboardManager.setText(AnnotatedString(entry.sourceUrl))
+                            Toast.makeText(context, "已复制下载地址", Toast.LENGTH_SHORT).show()
+                        },
+                        onRemove = {
+                            pendingDelete = entry
+                            deleteFile = true
+                        }
+                    )
+                    HorizontalDivider(color = Color(0xFFE8EAED))
+                }
+                item { Spacer(modifier = Modifier.height(36.dp)) }
+            }
+        }
+    }
+
+    pendingDelete?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("删除下载") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("是否删除 ${entry.name}？")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { deleteFile = !deleteFile },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Checkbox(checked = deleteFile, onCheckedChange = { deleteFile = it })
+                        Text("同时删除文件")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRemove(entry, deleteFile)
+                        pendingDelete = null
+                    }
+                ) {
+                    Text("删除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DownloadRow(
+    entry: BrowserDownloadEntry,
+    onOpen: () -> Unit,
+    onCopyUrl: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onOpen,
+                onLongClick = onCopyUrl
+            )
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+                .background(Color(0xFFE8EAED)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(22.dp), tint = Color(0xFF5F6368))
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(entry.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color(0xFF202124))
+            Text(entry.sourceUrl, color = Color(0xFF5F6368), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+            if (entry.status == DownloadStatus.Running || entry.status == DownloadStatus.Queued) {
+                if (entry.totalBytes > 0L) {
+                    LinearProgressIndicator(
+                        progress = (entry.bytesDownloaded.toFloat() / entry.totalBytes.toFloat()).coerceIn(0f, 1f),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+            Text(
+                text = downloadMeta(entry),
+                color = Color(0xFF6F737B),
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        IconButton(onClick = onRemove) {
+            Icon(Icons.Outlined.Delete, contentDescription = "Remove download")
+        }
+    }
+}
+
+@Composable
 private fun <T> BrowserLibraryPage(
     title: String,
     emptyTitle: String,
@@ -1983,6 +2334,39 @@ private fun formatVisitTime(timestamp: Long): String {
     if (timestamp <= 0L) return ""
     val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
     return formatter.format(Date(timestamp))
+}
+
+private fun downloadMeta(entry: BrowserDownloadEntry): String {
+    val status = when (entry.status) {
+        DownloadStatus.Queued -> "Queued"
+        DownloadStatus.Running -> "Downloading"
+        DownloadStatus.Completed -> "Complete"
+        DownloadStatus.Failed -> "Failed"
+    }
+    val size = when {
+        entry.totalBytes > 0L -> "${formatBytes(entry.bytesDownloaded)} / ${formatBytes(entry.totalBytes)}"
+        entry.bytesDownloaded > 0L -> formatBytes(entry.bytesDownloaded)
+        else -> "Unknown size"
+    }
+    val time = formatVisitTime(entry.completedAt ?: entry.createdAt)
+    val error = entry.error?.takeIf { it.isNotBlank() }
+    return listOfNotNull(status, size, time, error).joinToString(" · ")
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 0L) return "Unknown"
+    val units = listOf("B", "KB", "MB", "GB")
+    var value = bytes.toDouble()
+    var unitIndex = 0
+    while (value >= 1024.0 && unitIndex < units.lastIndex) {
+        value /= 1024.0
+        unitIndex += 1
+    }
+    return if (unitIndex == 0) {
+        "${bytes} B"
+    } else {
+        String.format(Locale.getDefault(), "%.1f %s", value, units[unitIndex])
+    }
 }
 
 @Composable

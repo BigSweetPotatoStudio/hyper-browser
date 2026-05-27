@@ -10,7 +10,10 @@ import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
+import org.mozilla.geckoview.WebResponse
 import java.net.URLEncoder
+import java.io.InputStream
+import com.dadigua.hyperbrowser.browser.DownloadHandler
 
 data class GeckoPageState(
     val title: String = "",
@@ -21,12 +24,21 @@ data class GeckoPageState(
     val isLoading: Boolean = false
 )
 
+data class GeckoDownloadRequest(
+    val url: String,
+    val fileName: String,
+    val contentType: String?,
+    val contentLength: Long,
+    val body: InputStream
+)
+
 class GeckoSessionController(
     context: Context,
     initialUrl: String,
     existingSession: GeckoSession? = null,
     private val onHyperRoute: (HyperRoute) -> Unit = {},
-    private val onHyperBridgeMessage: ((org.json.JSONObject) -> org.json.JSONObject)? = null
+    private val onHyperBridgeMessage: ((org.json.JSONObject) -> org.json.JSONObject)? = null,
+    private val onDownload: (GeckoDownloadRequest) -> Unit = {}
 ) {
     var session: GeckoSession = existingSession ?: GeckoSession()
         private set
@@ -65,6 +77,22 @@ class GeckoSessionController(
 
             override fun onKill(session: GeckoSession) {
                 recoverAfterContentLoss()
+            }
+
+            override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
+                val body = response.body ?: return
+                val contentDisposition = response.headerValue("Content-Disposition")
+                val contentType = response.headerValue("Content-Type")
+                val contentLength = response.headerValue("Content-Length")?.toLongOrNull() ?: -1L
+                onDownload(
+                    GeckoDownloadRequest(
+                        url = response.uri,
+                        fileName = DownloadHandler.fileNameFor(response.uri, contentDisposition, contentType),
+                        contentType = contentType,
+                        contentLength = contentLength,
+                        body = body
+                    )
+                )
             }
         }
         targetSession.progressDelegate = object : GeckoSession.ProgressDelegate {
@@ -394,6 +422,11 @@ class GeckoSessionController(
             return "$assetUrl#$encoded"
         }
     }
+}
+
+private fun WebResponse.headerValue(name: String): String? {
+    val wanted = name.lowercase()
+    return headers.entries.firstOrNull { it.key.lowercase() == wanted }?.value
 }
 
 sealed interface HyperRoute {
