@@ -107,13 +107,6 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-        if (current.startUrl.startsWith("http://")) {
-            Text(
-                "Insecure HTTP WebApp",
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(horizontal = 12.dp)
-            )
-        }
         GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())
     }
 }
