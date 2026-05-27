@@ -95,7 +95,7 @@ private val ChromeActionIconSize = 28.sp
 class BrowserActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val initialUrl = intent.getStringExtra(EXTRA_URL) ?: "https://example.com"
+        val initialUrl = intent.getStringExtra(EXTRA_URL) ?: GeckoSessionController.HOME_URL
         setContent {
             HyperBrowserTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -127,6 +127,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     val tab = tabs.getOrNull(selectedIndex) ?: tabs.first()
     val controller = tab.controller
     val pageState by controller.state.collectAsState()
+    val onHomePage = GeckoSessionController.isHomeUrl(pageState.url)
     val profileStore = remember { BrowserProfileStore(app) }
     val history by profileStore.observeHistory().collectAsState()
     val bookmarks by profileStore.observeBookmarks().collectAsState()
@@ -153,12 +154,17 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             showHistory -> showHistory = false
             showExtensions -> showExtensions = false
             showTabs -> showTabs = false
+            pageState.canGoBack -> controller.goBack()
+            !onHomePage && tab.hasHomeBackEntry -> {
+                tab.input = GeckoSessionController.HOME_URL
+                controller.load(GeckoSessionController.HOME_URL)
+            }
             else -> controller.goBack()
         }
     }
 
     LaunchedEffect(pageState.url, pageState.title) {
-        if (pageState.url.isNotBlank()) {
+        if (pageState.url.isNotBlank() && !GeckoSessionController.isInternalUrl(pageState.url)) {
             profileStore.recordVisit(pageState.url, pageState.title)
         }
     }
@@ -189,11 +195,12 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     Column(modifier = Modifier.fillMaxSize()) {
         if (showSearch) {
             SearchPage(
-                initialInput = tab.input,
+                initialInput = if (onHomePage) "" else tab.input,
                 history = history,
                 bookmarks = bookmarks,
                 onCancel = { showSearch = false },
                 onGo = { value ->
+                    if (onHomePage) tab.hasHomeBackEntry = true
                     tab.input = value
                     val target = GeckoSessionController.normalizeUrl(value)
                     controller.load(target)
@@ -206,6 +213,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 bookmarks = bookmarks,
                 onBack = { showBookmarks = false },
                 onOpen = { url ->
+                    if (onHomePage) tab.hasHomeBackEntry = true
                     tab.input = url
                     controller.load(url)
                     showBookmarks = false
@@ -218,6 +226,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 history = history,
                 onBack = { showHistory = false },
                 onOpen = { url ->
+                    if (onHomePage) tab.hasHomeBackEntry = true
                     tab.input = url
                     controller.load(url)
                     showHistory = false
@@ -286,7 +295,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                     closing.controller.close()
                     tabs.remove(closing)
                     if (tabs.isEmpty()) {
-                        val replacement = BrowserTabRuntime.create(app, "https://example.com")
+                        val replacement = BrowserTabRuntime.create(app, GeckoSessionController.HOME_URL)
                         tabs.add(replacement)
                         selectedTabId = replacement.id
                     } else if (selectedTabId == id) {
@@ -294,7 +303,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                     }
                 },
                 onNewTab = {
-                    val newTab = BrowserTabRuntime.create(app, "https://example.com")
+                    val newTab = BrowserTabRuntime.create(app, GeckoSessionController.HOME_URL)
                     tabs.add(newTab)
                     selectedTabId = newTab.id
                     showTabs = false
@@ -306,24 +315,34 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 pageState = pageState,
                 message = message,
                 tabCount = tabs.size,
-                bookmarked = profileStore.isBookmarked(pageState.url.ifBlank { tab.input }),
+                bookmarked = !GeckoSessionController.isInternalUrl(pageState.url) &&
+                    profileStore.isBookmarked(pageState.url.ifBlank { tab.input }),
                 installedExtensions = installedExtensions,
                 extensionActions = extensionActions,
                 onAddressClick = { showSearch = true },
                 onLoad = {
+                    if (onHomePage) tab.hasHomeBackEntry = true
                     val target = GeckoSessionController.normalizeUrl(tab.input)
                     controller.load(target)
-                    profileStore.recordVisit(target, pageState.title)
+                    if (!GeckoSessionController.isInternalUrl(target)) {
+                        profileStore.recordVisit(target, pageState.title)
+                    }
                 },
                 onBack = controller::goBack,
                 onForward = controller::goForward,
                 onReload = controller::reload,
                 onShowTabs = { showTabs = true },
                 onNewTab = {
-                    val newTab = BrowserTabRuntime.create(app, "https://example.com")
+                    val newTab = BrowserTabRuntime.create(app, GeckoSessionController.HOME_URL)
                     tabs.add(newTab)
                     selectedTabId = newTab.id
                     showTabs = false
+                    message = null
+                },
+                onHome = {
+                    tab.hasHomeBackEntry = true
+                    tab.input = GeckoSessionController.HOME_URL
+                    controller.load(GeckoSessionController.HOME_URL)
                     message = null
                 },
                 onToggleBookmark = {
@@ -339,7 +358,11 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                             .onFailure { message = it.message ?: "Extension popup unavailable." }
                     }
                 },
-                onInstall = {
+                onInstall = install@{
+                    if (GeckoSessionController.isInternalUrl(pageState.url)) {
+                        message = "Open a web page before installing it as a WebApp."
+                        return@install
+                    }
                     scope.launch {
                         val title = pageState.title.ifBlank { tab.input }
                         val url = pageState.url.ifBlank { tab.input }
@@ -350,8 +373,25 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 }
             )
             Box(modifier = Modifier.fillMaxSize()) {
-                key(tab.id) {
-                    GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())
+                if (onHomePage) {
+                    BrowserHomePage(
+                        history = history,
+                        bookmarks = bookmarks,
+                        onSearch = { showSearch = true },
+                        onOpen = { url ->
+                            tab.hasHomeBackEntry = true
+                            tab.input = url
+                            controller.load(url)
+                            message = null
+                        },
+                        onShowBookmarks = { showBookmarks = true },
+                        onShowHistory = { showHistory = true },
+                        onShowExtensions = { showExtensions = true }
+                    )
+                } else {
+                    key(tab.id) {
+                        GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())
+                    }
                 }
                 extensionPopup?.let { popup ->
                     ExtensionPopupOverlay(
@@ -370,6 +410,7 @@ private class BrowserTabRuntime private constructor(
     input: String
 ) {
     var input by mutableStateOf(input)
+    var hasHomeBackEntry by mutableStateOf(GeckoSessionController.isHomeUrl(input))
 
     companion object {
         fun create(app: HyperBrowserApp, url: String): BrowserTabRuntime =
@@ -388,6 +429,109 @@ private class BrowserTabRuntime private constructor(
     }
 }
 
+private fun browserAddressText(url: String, input: String): String {
+    if (GeckoSessionController.isHomeUrl(url)) return "搜索或输入网址"
+    return url.ifBlank { input.ifBlank { "搜索或输入网址" } }
+}
+
+@Composable
+private fun BrowserHomePage(
+    history: List<BrowserHistoryEntry>,
+    bookmarks: List<BrowserBookmark>,
+    onSearch: () -> Unit,
+    onOpen: (String) -> Unit,
+    onShowBookmarks: () -> Unit,
+    onShowHistory: () -> Unit,
+    onShowExtensions: () -> Unit
+) {
+    val recentItems = (bookmarks.map { it.title.ifBlank { it.url } to it.url } +
+        history.map { it.title.ifBlank { it.url } to it.url })
+        .distinctBy { it.second }
+        .filterNot { GeckoSessionController.isInternalUrl(it.second) }
+        .take(6)
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF8F9FD))
+            .padding(horizontal = 24.dp, vertical = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(
+                    text = "Hyper Browser",
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF202124)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(Color.White)
+                        .border(1.dp, Color(0xFFDADCE0), RoundedCornerShape(28.dp))
+                        .clickable(onClick = onSearch)
+                        .padding(horizontal = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("G", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4285F4))
+                    Text(
+                        text = "搜索或输入网址",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color(0xFF6F737B),
+                        modifier = Modifier.padding(start = 12.dp)
+                    )
+                }
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilledTonalButton(onClick = onShowBookmarks) { Text("Bookmarks") }
+                FilledTonalButton(onClick = onShowHistory) { Text("History") }
+                FilledTonalButton(onClick = onShowExtensions) { Text("Extensions") }
+            }
+        }
+        if (recentItems.isNotEmpty()) {
+            item {
+                Text(
+                    text = "Recent",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF202124)
+                )
+            }
+            items(recentItems) { (title, url) ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.White)
+                        .clickable { onOpen(url) }
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = Color(0xFF202124)
+                    )
+                    Text(
+                        text = url,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = Color(0xFF5F6368)
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun BrowserToolbar(
     input: String,
@@ -402,6 +546,7 @@ private fun BrowserToolbar(
     onBack: () -> Unit,
     onForward: () -> Unit,
     onReload: () -> Unit,
+    onHome: () -> Unit,
     onShowTabs: () -> Unit,
     onNewTab: () -> Unit,
     onToggleBookmark: () -> Unit,
@@ -427,7 +572,7 @@ private fun BrowserToolbar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            IconButton(onClick = { }, modifier = Modifier.size(ChromeActionButtonSize)) {
+            IconButton(onClick = onHome, modifier = Modifier.size(ChromeActionButtonSize)) {
                 Text("⌂", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
             }
             Row(
@@ -442,7 +587,7 @@ private fun BrowserToolbar(
             ) {
                 Text(if (pageState.insecureHttp) "!" else "G", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = if (pageState.insecureHttp) Color(0xFFC5221F) else Color(0xFF4285F4))
                 Text(
-                    text = pageState.url.ifBlank { input.ifBlank { "搜索或输入网址" } },
+                    text = browserAddressText(pageState.url, input),
                     style = MaterialTheme.typography.titleMedium,
                     color = if (pageState.url.isBlank() && input.isBlank()) Color(0xFF6F737B) else Color(0xFF202124),
                     maxLines = 1,
