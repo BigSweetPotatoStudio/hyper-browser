@@ -368,7 +368,11 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
         onDispose { tabs.forEach { it.controller.close() } }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+    ) {
         if (showSearch) {
             SearchPage(
                 initialInput = if (onHomePage) "" else tab.input,
@@ -592,9 +596,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                         tabId = tab.id,
                         extensionPopup = extensionPopup,
                         onClosePopup = app.extensions::closePopup,
-                        modifier = Modifier
-                            .weight(1f)
-                            .statusBarsPadding()
+                        modifier = Modifier.weight(1f)
                     )
                     toolbar()
                 } else {
@@ -942,7 +944,7 @@ private fun BrowserToolbar(
             .navigationBarsPadding()
             .then(if (editingAddress) Modifier.imePadding() else Modifier)
     } else {
-        Modifier.statusBarsPadding()
+        Modifier
     }
 
     fun submitAddress(value: String = addressDraft) {
@@ -1473,7 +1475,6 @@ private fun SearchPage(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding()
             .background(Color(0xFFF7F8FC))
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -1659,7 +1660,6 @@ private fun <T> BrowserLibraryPage(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding()
             .background(Color(0xFFF7F8FC))
     ) {
         Row(
@@ -1796,7 +1796,6 @@ private fun ExtensionsPage(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding()
             .background(Color(0xFFF7F8FC)),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -2160,9 +2159,7 @@ private fun ChromeTabHeader(
     onNewTab: () -> Unit
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
+        modifier = Modifier.fillMaxWidth()
     ) {
         Box(
             modifier = Modifier

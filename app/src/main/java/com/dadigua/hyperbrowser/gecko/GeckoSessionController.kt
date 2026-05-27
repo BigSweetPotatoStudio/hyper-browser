@@ -23,7 +23,7 @@ class GeckoSessionController(
     initialUrl: String,
     existingSession: GeckoSession? = null,
     private val onHyperRoute: (HyperRoute) -> Unit = {},
-    private val onHyperBridgeMessage: (org.json.JSONObject) -> org.json.JSONObject = { org.json.JSONObject().put("ok", false) }
+    private val onHyperBridgeMessage: ((org.json.JSONObject) -> org.json.JSONObject)? = null
 ) {
     val session: GeckoSession = existingSession ?: GeckoSession()
 
@@ -85,7 +85,7 @@ class GeckoSessionController(
                 return null
             }
         }
-        HyperBridge.register(session, onHyperBridgeMessage)
+        onHyperBridgeMessage?.let { HyperBridge.register(session, it) }
         if (existingSession == null) {
             session.open(runtime)
             load(initialUrl)
@@ -187,7 +187,7 @@ class GeckoSessionController(
     }
 
     fun close() {
-        HyperBridge.unregister(session)
+        onHyperBridgeMessage?.let { HyperBridge.unregister(session) }
         runCatching { session.close() }
     }
 

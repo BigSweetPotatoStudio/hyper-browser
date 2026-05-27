@@ -7,18 +7,15 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -86,22 +83,16 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
     }
 
     val controller = remember(current.id) { GeckoSessionController(app, current.startUrl) }
-    val state by controller.state.collectAsState()
 
     DisposableEffect(current.id) {
         onDispose { controller.close() }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-            Button(onClick = controller::goBack) { Text("<") }
-            Button(onClick = controller::reload, modifier = Modifier.padding(start = 8.dp)) { Text("Refresh") }
-            Text(
-                text = state.title.ifBlank { current.name },
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(start = 12.dp, top = 10.dp)
-            )
-        }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+    ) {
         if (current.startUrl.startsWith("http://")) {
             Text(
                 "Insecure HTTP WebApp",
