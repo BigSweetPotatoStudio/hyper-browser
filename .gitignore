@@ -11,6 +11,8 @@ screenshots/
 *.iml
 .idea/
 app/build/
+internal-pages/node_modules/
+internal-pages/dist/
 
 # Android Studio / IntelliJ local state
 *.ipr

@@ -4,6 +4,15 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+fun pnpmCommand(vararg args: String): List<String> {
+    val command = listOf("pnpm") + args
+    return if (System.getProperty("os.name").lowercase().contains("windows")) {
+        listOf("cmd", "/c") + command
+    } else {
+        command
+    }
+}
+
 android {
     namespace = "com.dadigua.hyperbrowser"
     compileSdk = 36
@@ -26,6 +35,34 @@ android {
     buildFeatures {
         compose = true
     }
+}
+
+val internalPagesDir = rootProject.layout.projectDirectory.dir("internal-pages")
+
+val pnpmInstallInternalPages = tasks.register<Exec>("pnpmInstallInternalPages") {
+    workingDir = internalPagesDir.asFile
+    inputs.file(internalPagesDir.file("package.json"))
+    inputs.file(internalPagesDir.file("pnpm-lock.yaml"))
+    outputs.dir(internalPagesDir.dir("node_modules"))
+    commandLine(pnpmCommand("install", "--frozen-lockfile"))
+}
+
+val buildInternalPages = tasks.register<Exec>("buildInternalPages") {
+    dependsOn(pnpmInstallInternalPages)
+    workingDir = internalPagesDir.asFile
+    inputs.dir(internalPagesDir.dir("src"))
+    inputs.dir(internalPagesDir.dir("public"))
+    inputs.file(internalPagesDir.file("home.html"))
+    inputs.file(internalPagesDir.file("bookmarks.html"))
+    inputs.file(internalPagesDir.file("history.html"))
+    inputs.file(internalPagesDir.file("vite.config.ts"))
+    inputs.file(internalPagesDir.file("tsconfig.json"))
+    outputs.dir(layout.projectDirectory.dir("src/main/assets"))
+    commandLine(pnpmCommand("build"))
+}
+
+tasks.named("preBuild") {
+    dependsOn(buildInternalPages)
 }
 
 kotlin {

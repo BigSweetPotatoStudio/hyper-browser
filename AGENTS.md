@@ -98,7 +98,9 @@ com.dadigua.hyperbrowser/.ui.browser.BrowserActivity
 - `app/src/main/java/com/dadigua/hyperbrowser/extensions/ExtensionRepository.kt`
   - AMO 搜索、XPI 下载、GeckoView WebExtension 安装/启停/卸载
 - `app/src/main/assets/`
-  - 内置 HTML 页面和 JS 包装：`home.html`、`bookmarks.html`、`history.html`、`hyper-browser.js`
+  - Vite 生成的内置页面产物：`home.html`、`bookmarks.html`、`history.html`、`internal/`
+- `internal-pages/`
+  - 内置页面源码：React + TypeScript/TSX、Vite、WebExtension bridge 包装
 
 ## 设计方向
 
@@ -136,7 +138,25 @@ Card/List 的展示行为必须分开：
 
 ## 内置 HTML 页面与 HyperCommand
 
-首页、书签页、历史页优先作为 GeckoView 内置 HTML 页面开发，而不是 Compose 面板：
+首页、书签页、历史页优先作为 GeckoView 内置页面开发，而不是 Compose 面板。源码使用 React + TypeScript/TSX，放在：
+
+```text
+internal-pages/
+```
+
+构建产物输出到：
+
+```text
+app/src/main/assets/
+```
+
+内置页源码修改后运行：
+
+```powershell
+pnpm --dir internal-pages build
+```
+
+Android 构建也会通过 Gradle 自动执行 `internal-pages` 的 pnpm install/build。
 
 - `hyper://home` -> `resource://android/assets/home.html`
 - `hyper://bookmarks` -> `resource://android/assets/bookmarks.html#data=...`
@@ -144,11 +164,13 @@ Card/List 的展示行为必须分开：
 
 地址栏必须显示语义 URL，例如 `hyper://home`、`hyper://bookmarks`、`hyper://history`，不要向用户暴露 `resource://android/assets/...`。
 
-内置页面中的浏览器操作通过 `window.hyperBrowser` 发出，JS 文件统一放在：
+内置页面中的浏览器操作通过 `window.hyperBrowser` 发出，bridge 源码统一放在：
 
 ```text
-app/src/main/assets/hyper-browser.js
+internal-pages/src/hyper-browser.ts
 ```
+
+不要手改 `app/src/main/assets/home.html`、`bookmarks.html`、`history.html` 或生成的 `internal/` bundle；这些文件由 Vite 生成。
 
 不要再使用 `hyper://api/...` 或 `hyper://command/...` 作为内置页面 API。内置页面必须作为内置 WebExtension 页面加载。页面 JS 只调用 `window.hyperBrowser`；包装层通过 `browser.runtime.sendMessage(...)` 发给 `background.js`，再由 `background.js` 调用 `browser.runtime.sendNativeMessage("hyperBrowser", ...)` 进入 Kotlin bridge。
 
@@ -165,14 +187,20 @@ Kotlin 侧要把页面路由和页面命令分开：
 - bridge 消息必须校验 sender：只接受 URL 属于内置 WebExtension baseUrl 的 sender
 - 普通网页、第三方扩展页、`https://`、`http://` 页面不能调用或伪造 `window.hyperBrowser` 的 native bridge
 - Kotlin bridge 返回给 WebExtension 的值优先用 JSON string；不要直接返回嵌套 `JSONObject` / `JSONArray`，避免 GeckoView 回调序列化失败
-- WebExtension 页面受 CSP 约束，不要写内联 `<script>`；页面逻辑放到 `home.js`、`bookmarks.js`、`history.js`
+- WebExtension 页面受 CSP 约束，不要写内联 `<script>`；页面逻辑放到 `internal-pages/src/pages/*.tsx`
 
 内置 HTML 页面必须由页面生命周期主动请求数据，不要依赖外层 Compose 猜时机预塞数据：
 
-- `home.html` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestHomeData()`
-- `bookmarks.html` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestBookmarksData()`
-- `history.html` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestHistoryData()`
+- `home.tsx` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestHomeData()`
+- `bookmarks.tsx` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestBookmarksData()`
+- `history.tsx` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestHistoryData()`
 - `request*Data()` 必须返回 Promise，并由 bridge 直接返回 JSON 数据；不要通过 URL 跳转、hash 二次加载或 fallback 到旧协议取数据
+
+移动端内置页要求：
+
+- HTML 模板必须设置 `viewport`：`width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover`
+- 表单控件字体不小于 16px，避免移动端聚焦时触发缩放
+- 页面 CSS 应禁用横向溢出，使用 safe-area padding，并保持触控目标尺寸接近原生控件
 
 书签和历史数据变化后不能通过重载页面刷新：
 

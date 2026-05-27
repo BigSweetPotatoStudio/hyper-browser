@@ -1,0 +1,128 @@
+type BridgeResponse = {
+  ok: boolean;
+  error?: string;
+  itemsJson?: string;
+};
+
+type BookmarkItem = {
+  title?: string;
+  url: string;
+};
+
+type HistoryItem = {
+  title?: string;
+  url: string;
+  visitedAt?: string;
+};
+
+declare global {
+  const browser: {
+    runtime?: {
+      sendMessage?: (message: unknown) => Promise<unknown>;
+    };
+  } | undefined;
+
+  interface Window {
+    hyperBrowser: HyperBrowserApi;
+  }
+}
+
+type HyperBrowserApi = {
+  open(input: string): void;
+  showBookmarks(): void;
+  showHistory(): void;
+  showExtensions(): void;
+  requestHomeData(): Promise<HistoryItem[]>;
+  requestBookmarksData(): Promise<BookmarkItem[]>;
+  requestHistoryData(): Promise<HistoryItem[]>;
+  openBookmark(url: string): void;
+  removeBookmark(url: string): void;
+  editBookmark(oldUrl: string, title: string, url: string): void;
+  openHistory(url: string): void;
+  removeHistory(url: string): void;
+  clearHistory(): void;
+};
+
+const nativeApp = "hyperBrowser";
+
+function canUseBridge(): boolean {
+  return typeof browser !== "undefined" &&
+    !!browser.runtime &&
+    typeof browser.runtime.sendMessage === "function";
+}
+
+function parseResponse(response: unknown): BridgeResponse {
+  if (typeof response === "string") {
+    return JSON.parse(response) as BridgeResponse;
+  }
+  return response as BridgeResponse;
+}
+
+function send(type: string, payload?: Record<string, string>): Promise<BridgeResponse> {
+  const sendMessage = browser?.runtime?.sendMessage;
+  if (!canUseBridge() || !sendMessage) return Promise.reject(new Error("Hyper bridge unavailable."));
+  return sendMessage({ nativeApp, type, payload: payload || {} })
+    .then(parseResponse)
+    .then((response) => {
+      if (!response || response.ok !== true) {
+        throw new Error(response?.error || "Hyper bridge request failed.");
+      }
+      return response;
+    });
+}
+
+function command(type: string, params?: Record<string, string>) {
+  send(type, params).catch((error) => console.error(error));
+}
+
+function requestData<T>(type: string): Promise<T[]> {
+  return send(type).then((response) => {
+    if (!response.itemsJson) return [];
+    const items = JSON.parse(response.itemsJson) as unknown;
+    return Array.isArray(items) ? items as T[] : [];
+  });
+}
+
+window.hyperBrowser = {
+  open(input) {
+    command("search.submit", { query: input });
+  },
+  showBookmarks() {
+    window.location.href = "hyper://bookmarks";
+  },
+  showHistory() {
+    window.location.href = "hyper://history";
+  },
+  showExtensions() {
+    command("panel.extensions");
+  },
+  requestHomeData() {
+    return requestData<HistoryItem>("data.home");
+  },
+  requestBookmarksData() {
+    return requestData<BookmarkItem>("data.bookmarks");
+  },
+  requestHistoryData() {
+    return requestData<HistoryItem>("data.history");
+  },
+  openBookmark(url) {
+    command("bookmarks.open", { url });
+  },
+  removeBookmark(url) {
+    command("bookmarks.remove", { url });
+  },
+  editBookmark(oldUrl, title, url) {
+    command("bookmarks.edit", { oldUrl, title, url });
+  },
+  openHistory(url) {
+    command("history.open", { url });
+  },
+  removeHistory(url) {
+    command("history.remove", { url });
+  },
+  clearHistory() {
+    command("history.clear");
+  }
+};
+
+export type { BookmarkItem, HistoryItem };
