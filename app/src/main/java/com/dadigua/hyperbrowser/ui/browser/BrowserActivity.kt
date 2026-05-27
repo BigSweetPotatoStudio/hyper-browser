@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.aspectRatio
@@ -674,16 +675,19 @@ private fun ExtensionPopupOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0x66000000))
-            .clickable(onClick = onClose)
-            .padding(18.dp),
-        contentAlignment = Alignment.TopEnd
+            .padding(18.dp)
     ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(Color(0x66000000))
+                .clickable(onClick = onClose)
+        )
         Card(
             modifier = Modifier
+                .align(Alignment.TopEnd)
                 .fillMaxWidth()
-                .height(520.dp)
-                .clickable(onClick = {}),
+                .fillMaxHeight(),
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = Color.White),
             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)

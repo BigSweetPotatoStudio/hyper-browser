@@ -185,6 +185,8 @@ adb shell run-as com.dadigua.hyperbrowser cat files/installed_extensions.json
 - `已连接的域名`
 - `Close`
 
+popup 容器高度必须覆盖 WebExtension 内容的可交互区域。不要让外层遮罩覆盖 GeckoView 的底部区域，否则会出现“能看到 popup 但点击内部按钮无效或直接关闭”的问题。
+
 ## 数据存储
 
 首版不用 Room，使用 app 私有目录 JSON 文件：
