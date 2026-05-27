@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>History</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f8f9fd;
+      color: #202124;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #f8f9fd;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: calc(env(safe-area-inset-top) + 16px) 18px 16px;
+      background: #f8f9fd;
+    }
+
+    .back {
+      display: grid;
+      width: 44px;
+      height: 44px;
+      place-items: center;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: #202124;
+      font-size: 34px;
+      line-height: 1;
+      text-decoration: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    h1 {
+      flex: 1;
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.2;
+      font-weight: 680;
+    }
+
+    .clear {
+      min-height: 40px;
+      border: 0;
+      border-radius: 999px;
+      padding: 0 14px;
+      background: #e8eaed;
+      color: #202124;
+      font: inherit;
+      font-weight: 650;
+    }
+
+    main {
+      padding: 8px 18px 34px;
+    }
+
+    .list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 52px;
+      align-items: center;
+      border-radius: 18px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .open {
+      min-width: 0;
+      padding: 18px;
+      color: inherit;
+      text-decoration: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .title,
+    .url,
+    .meta {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .title {
+      margin-bottom: 4px;
+      font-size: 18px;
+      font-weight: 650;
+    }
+
+    .url {
+      color: #666b73;
+      font-size: 14px;
+    }
+
+    .meta {
+      margin-top: 4px;
+      color: #8a9099;
+      font-size: 12px;
+    }
+
+    .remove {
+      width: 52px;
+      height: 100%;
+      border: 0;
+      background: transparent;
+      color: #5f6368;
+      font-size: 28px;
+    }
+
+    .empty {
+      margin-top: 18px;
+      padding: 20px;
+      border-radius: 18px;
+      background: #fff;
+      color: #666b73;
+      font-size: 16px;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="back" href="hyper://home" aria-label="Back">‹</a>
+    <h1>历史记录</h1>
+    <button class="clear" id="clear" type="button">清空</button>
+  </header>
+  <main id="content"></main>
+  <script src="hyper-browser.js"></script>
+  <script>
+    let historyItems = readHistory();
+
+    function readHistory() {
+      const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+      const params = new URLSearchParams(hash);
+      const raw = params.get("data");
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function formatVisitTime(timestamp) {
+      if (!timestamp) return "";
+      try {
+        return new Date(timestamp).toLocaleString();
+      } catch (error) {
+        return "";
+      }
+    }
+
+    function render() {
+      const content = document.getElementById("content");
+      const clear = document.getElementById("clear");
+      clear.hidden = !historyItems.length;
+      if (!historyItems.length) {
+        content.innerHTML = '<div class="empty">还没有历史记录。访问过的网页会显示在这里。</div>';
+        return;
+      }
+
+      const list = document.createElement("div");
+      list.className = "list";
+      historyItems.forEach((entry) => {
+        const item = document.createElement("div");
+        item.className = "item";
+
+        const open = document.createElement("a");
+        open.className = "open";
+        open.href = "#";
+        open.addEventListener("click", (event) => {
+          event.preventDefault();
+          window.hyperBrowser.openHistory(entry.url);
+        });
+
+        const title = document.createElement("div");
+        title.className = "title";
+        title.textContent = entry.title || entry.url;
+
+        const url = document.createElement("div");
+        url.className = "url";
+        url.textContent = entry.url;
+
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = formatVisitTime(entry.visitedAt);
+
+        const remove = document.createElement("button");
+        remove.className = "remove";
+        remove.type = "button";
+        remove.setAttribute("aria-label", "Remove history entry");
+        remove.textContent = "×";
+        remove.addEventListener("click", () => {
+          historyItems = historyItems.filter((item) => item.url !== entry.url);
+          render();
+          window.hyperBrowser.removeHistory(entry.url);
+        });
+
+        open.append(title, url, meta);
+        item.append(open, remove);
+        list.appendChild(item);
+      });
+      content.replaceChildren(list);
+    }
+
+    document.getElementById("clear").addEventListener("click", () => {
+      historyItems = [];
+      render();
+      window.hyperBrowser.clearHistory();
+    });
+
+    render();
+  </script>
+</body>
+</html>

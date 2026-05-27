@@ -57,6 +57,19 @@ class BrowserProfileStore(context: Context) {
         saveBookmarks(next)
     }
 
+    fun editBookmark(oldUrl: String, title: String, url: String) {
+        if (oldUrl.isBlank() || url.isBlank()) return
+        val next = bookmarksState.value.map { bookmark ->
+            if (bookmark.url == oldUrl) {
+                bookmark.copy(url = url, title = title.ifBlank { url })
+            } else {
+                bookmark
+            }
+        }
+        bookmarksState.value = next
+        saveBookmarks(next)
+    }
+
     fun removeHistoryEntry(url: String) {
         if (url.isBlank()) return
         val next = historyState.value.filterNot { it.url == url }

@@ -81,8 +81,12 @@ import com.dadigua.hyperbrowser.gecko.GeckoBrowserView
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.GeckoSessionView
+import com.dadigua.hyperbrowser.gecko.HyperCommand
+import com.dadigua.hyperbrowser.gecko.HyperRoute
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -118,8 +122,17 @@ class BrowserActivity : ComponentActivity() {
 
 @Composable
 private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
+    var pendingHyperRoute by remember { mutableStateOf<HyperRoute?>(null) }
+    var pendingHyperCommand by remember { mutableStateOf<HyperCommand?>(null) }
     val tabs = remember {
-        mutableStateListOf(BrowserTabRuntime.create(app, initialUrl))
+        mutableStateListOf(
+            BrowserTabRuntime.create(
+                app = app,
+                url = initialUrl,
+                onHyperRoute = { pendingHyperRoute = it },
+                onHyperCommand = { pendingHyperCommand = it }
+            )
+        )
     }
     var selectedTabId by remember { mutableStateOf(tabs.first().id) }
     var showTabs by remember { mutableStateOf(false) }
@@ -165,6 +178,12 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
         }
     }
 
+    LaunchedEffect(selectedTabId, pageState.url, history) {
+        if (GeckoSessionController.isHomeUrl(pageState.url)) {
+            controller.loadHome(history.toHistoryJsonString())
+        }
+    }
+
     LaunchedEffect(selectedTabId, installedExtensions) {
         runCatching { app.extensions.refreshMenuActions(controller.session) }
     }
@@ -182,6 +201,57 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             message = "Opened ${request.title}."
             app.extensions.consumeNewTabRequest()
         }
+    }
+
+    LaunchedEffect(pendingHyperRoute) {
+        when (pendingHyperRoute) {
+            null -> return@LaunchedEffect
+            HyperRoute.Home -> {
+                tab.input = GeckoSessionController.HOME_URL
+                controller.loadHome(history.toHistoryJsonString())
+            }
+            HyperRoute.Bookmarks -> {
+                tab.input = GeckoSessionController.BOOKMARKS_URL
+                controller.loadBookmarks(bookmarks.toBookmarksJsonString())
+            }
+            HyperRoute.History -> {
+                tab.input = GeckoSessionController.HISTORY_URL
+                controller.loadHistory(history.toHistoryJsonString())
+            }
+        }
+        pendingHyperRoute = null
+    }
+
+    LaunchedEffect(pendingHyperCommand) {
+        when (val command = pendingHyperCommand) {
+            null -> return@LaunchedEffect
+            is HyperCommand.Search.Submit -> {
+                tab.input = command.query
+                controller.load(command.query)
+            }
+            is HyperCommand.Bookmarks.Open -> {
+                tab.input = command.url
+                controller.load(command.url)
+            }
+            is HyperCommand.Bookmarks.Remove -> {
+                profileStore.removeBookmark(command.url)
+            }
+            is HyperCommand.Bookmarks.Edit -> {
+                profileStore.editBookmark(command.oldUrl, command.title, command.url)
+            }
+            is HyperCommand.History.Open -> {
+                tab.input = command.url
+                controller.load(command.url)
+            }
+            is HyperCommand.History.Remove -> {
+                profileStore.removeHistoryEntry(command.url)
+            }
+            HyperCommand.History.Clear -> {
+                profileStore.clearHistory()
+            }
+            HyperCommand.Panel.Extensions -> showExtensions = true
+        }
+        pendingHyperCommand = null
     }
 
     DisposableEffect(Unit) {
@@ -288,7 +358,12 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                     closing.controller.close()
                     tabs.remove(closing)
                     if (tabs.isEmpty()) {
-                        val replacement = BrowserTabRuntime.create(app, GeckoSessionController.HOME_URL)
+                        val replacement = BrowserTabRuntime.create(
+                            app = app,
+                            url = GeckoSessionController.HOME_URL,
+                            onHyperRoute = { pendingHyperRoute = it },
+                            onHyperCommand = { pendingHyperCommand = it }
+                        )
                         tabs.add(replacement)
                         selectedTabId = replacement.id
                     } else if (selectedTabId == id) {
@@ -296,7 +371,12 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                     }
                 },
                 onNewTab = {
-                    val newTab = BrowserTabRuntime.create(app, GeckoSessionController.HOME_URL)
+                    val newTab = BrowserTabRuntime.create(
+                        app = app,
+                        url = GeckoSessionController.HOME_URL,
+                        onHyperRoute = { pendingHyperRoute = it },
+                        onHyperCommand = { pendingHyperCommand = it }
+                    )
                     tabs.add(newTab)
                     selectedTabId = newTab.id
                     showTabs = false
@@ -325,7 +405,12 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 onReload = controller::reload,
                 onShowTabs = { showTabs = true },
                 onNewTab = {
-                    val newTab = BrowserTabRuntime.create(app, GeckoSessionController.HOME_URL)
+                    val newTab = BrowserTabRuntime.create(
+                        app = app,
+                        url = GeckoSessionController.HOME_URL,
+                        onHyperRoute = { pendingHyperRoute = it },
+                        onHyperCommand = { pendingHyperCommand = it }
+                    )
                     tabs.add(newTab)
                     selectedTabId = newTab.id
                     showTabs = false
@@ -333,15 +418,21 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 },
                 onHome = {
                     tab.input = GeckoSessionController.HOME_URL
-                    controller.load(GeckoSessionController.HOME_URL)
+                    controller.loadHome(history.toHistoryJsonString())
                     message = null
                 },
                 onToggleBookmark = {
                     val url = pageState.url.ifBlank { tab.input }
                     profileStore.toggleBookmark(url, pageState.title)
                 },
-                onShowBookmarks = { showBookmarks = true },
-                onShowHistory = { showHistory = true },
+                onShowBookmarks = {
+                    tab.input = GeckoSessionController.BOOKMARKS_URL
+                    controller.loadBookmarks(bookmarks.toBookmarksJsonString())
+                },
+                onShowHistory = {
+                    tab.input = GeckoSessionController.HISTORY_URL
+                    controller.loadHistory(history.toHistoryJsonString())
+                },
                 onShowExtensions = { showExtensions = true },
                 onExtensionClick = { extension ->
                     scope.launch {
@@ -364,24 +455,8 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 }
             )
             Box(modifier = Modifier.fillMaxSize()) {
-                if (onHomePage) {
-                    BrowserHomePage(
-                        history = history,
-                        bookmarks = bookmarks,
-                        onSearch = { showSearch = true },
-                        onOpen = { url ->
-                            tab.input = url
-                            controller.load(url)
-                            message = null
-                        },
-                        onShowBookmarks = { showBookmarks = true },
-                        onShowHistory = { showHistory = true },
-                        onShowExtensions = { showExtensions = true }
-                    )
-                } else {
-                    key(tab.id) {
-                        GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())
-                    }
+                key(tab.id) {
+                    GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())
                 }
                 extensionPopup?.let { popup ->
                     ExtensionPopupOverlay(
@@ -402,10 +477,20 @@ private class BrowserTabRuntime private constructor(
     var input by mutableStateOf(input)
 
     companion object {
-        fun create(app: HyperBrowserApp, url: String): BrowserTabRuntime =
+        fun create(
+            app: HyperBrowserApp,
+            url: String,
+            onHyperRoute: (HyperRoute) -> Unit = {},
+            onHyperCommand: (HyperCommand) -> Unit = {}
+        ): BrowserTabRuntime =
             BrowserTabRuntime(
                 id = UUID.randomUUID().toString(),
-                controller = GeckoSessionController(app, url),
+                controller = GeckoSessionController(
+                    context = app,
+                    initialUrl = url,
+                    onHyperRoute = onHyperRoute,
+                    onHyperCommand = onHyperCommand
+                ),
                 input = url
             )
 
@@ -423,102 +508,30 @@ private fun browserAddressText(url: String, input: String): String {
     return url.ifBlank { input.ifBlank { "搜索或输入网址" } }
 }
 
-@Composable
-private fun BrowserHomePage(
-    history: List<BrowserHistoryEntry>,
-    bookmarks: List<BrowserBookmark>,
-    onSearch: () -> Unit,
-    onOpen: (String) -> Unit,
-    onShowBookmarks: () -> Unit,
-    onShowHistory: () -> Unit,
-    onShowExtensions: () -> Unit
-) {
-    val recentItems = (bookmarks.map { it.title.ifBlank { it.url } to it.url } +
-        history.map { it.title.ifBlank { it.url } to it.url })
-        .distinctBy { it.second }
-        .filterNot { GeckoSessionController.isInternalUrl(it.second) }
-        .take(6)
-
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFFF8F9FD))
-            .padding(horizontal = 24.dp, vertical = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
-    ) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(
-                    text = "Hyper Browser",
-                    style = MaterialTheme.typography.headlineLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF202124)
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(54.dp)
-                        .clip(RoundedCornerShape(28.dp))
-                        .background(Color.White)
-                        .border(1.dp, Color(0xFFDADCE0), RoundedCornerShape(28.dp))
-                        .clickable(onClick = onSearch)
-                        .padding(horizontal = 18.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("G", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4285F4))
-                    Text(
-                        text = "搜索或输入网址",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color(0xFF6F737B),
-                        modifier = Modifier.padding(start = 12.dp)
-                    )
-                }
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                FilledTonalButton(onClick = onShowBookmarks) { Text("Bookmarks") }
-                FilledTonalButton(onClick = onShowHistory) { Text("History") }
-                FilledTonalButton(onClick = onShowExtensions) { Text("Extensions") }
-            }
-        }
-        if (recentItems.isNotEmpty()) {
-            item {
-                Text(
-                    text = "Recent",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF202124)
-                )
-            }
-            items(recentItems) { (title, url) ->
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color.White)
-                        .clickable { onOpen(url) }
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
-                ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = Color(0xFF202124)
-                    )
-                    Text(
-                        text = url,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = Color(0xFF5F6368)
-                    )
-                }
-            }
-        }
+private fun List<BrowserBookmark>.toBookmarksJsonString(): String {
+    val array = JSONArray()
+    forEach { bookmark ->
+        array.put(
+            JSONObject()
+                .put("title", bookmark.title)
+                .put("url", bookmark.url)
+                .put("createdAt", bookmark.createdAt)
+        )
     }
+    return array.toString()
+}
+
+private fun List<BrowserHistoryEntry>.toHistoryJsonString(): String {
+    val array = JSONArray()
+    filterNot { GeckoSessionController.isInternalUrl(it.url) }.forEach { entry ->
+        array.put(
+            JSONObject()
+                .put("title", entry.title)
+                .put("url", entry.url)
+                .put("visitedAt", entry.visitedAt)
+        )
+    }
+    return array.toString()
 }
 
 @Composable

@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Hyper Browser</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f8f9fd;
+      color: #202124;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #f8f9fd;
+    }
+
+    main {
+      width: min(100%, 760px);
+      margin: 0 auto;
+      padding: 88px 24px 40px;
+    }
+
+    h1 {
+      margin: 0 0 28px;
+      font-size: clamp(48px, 12vw, 76px);
+      line-height: 1.04;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    form {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      height: 64px;
+      margin: 0 0 28px;
+      padding: 0 20px;
+      border: 1px solid #dadce0;
+      border-radius: 999px;
+      background: #fff;
+    }
+
+    .mark {
+      flex: 0 0 auto;
+      color: #4285f4;
+      font-size: 30px;
+      font-weight: 760;
+    }
+
+    input {
+      min-width: 0;
+      flex: 1;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: #202124;
+      font: inherit;
+      font-size: 22px;
+    }
+
+    input::placeholder {
+      color: #7a7f87;
+    }
+
+    button[type="submit"] {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      border: 0;
+      padding: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 34px;
+    }
+
+    .action {
+      display: flex;
+      min-height: 58px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      background: #e8def8;
+      color: #202124;
+      font-size: 18px;
+      font-weight: 520;
+      text-decoration: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .section-title {
+      margin: 0 0 16px;
+      font-size: 22px;
+      font-weight: 720;
+    }
+
+    .empty {
+      padding: 18px;
+      border-radius: 18px;
+      background: #fff;
+      color: #666b73;
+      font-size: 16px;
+      line-height: 1.45;
+    }
+
+    .recent-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .recent-item {
+      display: block;
+      padding: 16px 18px;
+      border-radius: 18px;
+      background: #fff;
+      color: inherit;
+      text-decoration: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .recent-title,
+    .recent-url {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .recent-title {
+      margin-bottom: 4px;
+      font-size: 17px;
+      font-weight: 650;
+    }
+
+    .recent-url {
+      color: #666b73;
+      font-size: 14px;
+    }
+
+    @media (max-width: 520px) {
+      main {
+        padding-top: 64px;
+      }
+
+      h1 {
+        font-size: 48px;
+      }
+
+      .actions {
+        gap: 10px;
+      }
+
+      .action {
+        min-height: 54px;
+        font-size: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Hyper Browser</h1>
+    <form id="search-form" autocomplete="off">
+      <div class="mark" aria-hidden="true">G</div>
+      <input id="search-input" name="q" type="search" placeholder="搜索或输入网址" autofocus>
+      <button type="submit" aria-label="Search"></button>
+    </form>
+    <nav class="actions" aria-label="Browser shortcuts">
+      <a class="action" href="hyper://bookmarks">Bookmarks</a>
+      <a class="action" href="hyper://history">History</a>
+      <a class="action" href="#" id="extensions-link">Extensions</a>
+    </nav>
+    <p class="section-title">Recent</p>
+    <div id="recent"></div>
+  </main>
+  <script src="hyper-browser.js"></script>
+  <script>
+    const form = document.getElementById("search-form");
+    const input = document.getElementById("search-input");
+    const extensionsLink = document.getElementById("extensions-link");
+    const recent = document.getElementById("recent");
+
+    function readHistory() {
+      const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+      const params = new URLSearchParams(hash);
+      const raw = params.get("data");
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function renderRecent() {
+      const items = readHistory().slice(0, 10);
+      if (!items.length) {
+        recent.innerHTML = '<div class="empty">最近访问记录在历史页中管理。</div>';
+        return;
+      }
+
+      const list = document.createElement("div");
+      list.className = "recent-list";
+      items.forEach((entry) => {
+        const item = document.createElement("a");
+        item.className = "recent-item";
+        item.href = "#";
+        item.addEventListener("click", (event) => {
+          event.preventDefault();
+          window.hyperBrowser.openHistory(entry.url);
+        });
+
+        const title = document.createElement("div");
+        title.className = "recent-title";
+        title.textContent = entry.title || entry.url;
+
+        const url = document.createElement("div");
+        url.className = "recent-url";
+        url.textContent = entry.url;
+
+        item.append(title, url);
+        list.appendChild(item);
+      });
+      recent.replaceChildren(list);
+    }
+
+    function openInput() {
+      const value = input.value.trim();
+      if (value) {
+        window.hyperBrowser.open(value);
+      }
+    }
+
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      openInput();
+    });
+
+    extensionsLink.addEventListener("click", function (event) {
+      event.preventDefault();
+      window.hyperBrowser.showExtensions();
+    });
+
+    input.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        openInput();
+      }
+    });
+
+    renderRecent();
+  </script>
+</body>
+</html>
