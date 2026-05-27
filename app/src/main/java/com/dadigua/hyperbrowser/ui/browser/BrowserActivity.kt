@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -1065,7 +1064,6 @@ private fun BrowserToolbar(
     var showMenu by remember { mutableStateOf(false) }
     var extensionsExpanded by remember { mutableStateOf(false) }
     var addressDraft by remember { mutableStateOf(TextFieldValue(browserAddressText(pageState.url, input))) }
-    var addressEditSawIme by remember { mutableStateOf(false) }
     val currentAddress = browserAddressText(pageState.url, input)
     val addressDraftText = addressDraft.text
     val context = LocalContext.current
@@ -1073,7 +1071,7 @@ private fun BrowserToolbar(
     val addressFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val density = LocalDensity.current
-    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
     val enabledExtensions = installedExtensions.filter { it.enabled }
     val addressSuggestions = remember(addressDraftText, bookmarks, history, editingAddress) {
         if (!editingAddress) {
@@ -1096,9 +1094,12 @@ private fun BrowserToolbar(
         }
     }
     val toolbarPadding = if (toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) {
+        Modifier.navigationBarsPadding()
+    } else {
         Modifier
-            .navigationBarsPadding()
-            .then(if (editingAddress) Modifier.imePadding() else Modifier)
+    }
+    val toolbarImeOffset = if (toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM && editingAddress) {
+        Modifier.offset { IntOffset(0, -imeBottomPx) }
     } else {
         Modifier
     }
@@ -1113,13 +1114,11 @@ private fun BrowserToolbar(
 
     fun startAddressEdit() {
         onEditingAddressChange(true)
-        addressEditSawIme = false
         addressDraft = TextFieldValue("")
     }
 
     fun editCurrentAddress() {
         onEditingAddressChange(true)
-        addressEditSawIme = false
         addressDraft = TextFieldValue(currentAddress, selection = TextRange(currentAddress.length))
     }
 
@@ -1139,14 +1138,6 @@ private fun BrowserToolbar(
         if (editingAddress) {
             addressFocusRequester.requestFocus()
             keyboardController?.show()
-        }
-    }
-
-    LaunchedEffect(editingAddress, imeVisible) {
-        when {
-            !editingAddress -> addressEditSawIme = false
-            imeVisible -> addressEditSawIme = true
-            addressEditSawIme -> cancelAddressEdit()
         }
     }
 
@@ -1293,6 +1284,7 @@ private fun BrowserToolbar(
         modifier = Modifier
             .fillMaxWidth()
             .then(toolbarPadding)
+            .then(toolbarImeOffset)
             .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
