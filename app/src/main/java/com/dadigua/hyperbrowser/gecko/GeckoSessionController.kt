@@ -2,14 +2,12 @@ package com.dadigua.hyperbrowser.gecko
 
 import android.content.Context
 import android.graphics.Bitmap
-import androidx.core.view.drawToBitmap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
-import java.net.URLDecoder
 import java.net.URLEncoder
 
 data class GeckoPageState(
@@ -25,10 +23,11 @@ class GeckoSessionController(
     initialUrl: String,
     existingSession: GeckoSession? = null,
     private val onHyperRoute: (HyperRoute) -> Unit = {},
-    private val onHyperCommand: (HyperCommand) -> Unit = {}
+    private val onHyperBridgeMessage: (org.json.JSONObject) -> org.json.JSONObject = { org.json.JSONObject().put("ok", false) }
 ) {
     val session: GeckoSession = existingSession ?: GeckoSession()
 
+    private val appContext = context.applicationContext
     private val runtime = GeckoRuntimeProvider.get(context)
     private val _state = MutableStateFlow(GeckoPageState(url = initialUrl, insecureHttp = initialUrl.startsWith("http://")))
     private var currentRawUrl: String = initialUrl
@@ -80,14 +79,10 @@ class GeckoSessionController(
                     onHyperRoute(route)
                     return GeckoResult.fromValue(AllowOrDeny.DENY)
                 }
-                if (!request.uri.startsWith(COMMAND_PREFIX)) return null
-                if (!isTrustedInternalRawUrl(currentRawUrl)) {
-                    return GeckoResult.fromValue(AllowOrDeny.DENY)
-                }
-                commandFromUri(request.uri)?.let(onHyperCommand)
-                return GeckoResult.fromValue(AllowOrDeny.DENY)
+                return null
             }
         }
+        HyperBridge.register(session, onHyperBridgeMessage)
         if (existingSession == null) {
             session.open(runtime)
             load(initialUrl)
@@ -112,22 +107,16 @@ class GeckoSessionController(
         session.loadUri(target)
     }
 
-    fun loadHome(historyJson: String = "[]") {
-        val encoded = URLEncoder.encode(historyJson, "UTF-8").replace("+", "%20")
-        _state.value = GeckoPageState(title = "Hyper Browser", url = HOME_URL)
-        session.loadUri("$HOME_ASSET_URL#data=$encoded")
+    fun loadHome(historyJson: String? = null) {
+        loadInternalPage(HOME_URL, "Hyper Browser", "home.html", historyJson)
     }
 
-    fun loadBookmarks(bookmarksJson: String) {
-        val encoded = URLEncoder.encode(bookmarksJson, "UTF-8").replace("+", "%20")
-        _state.value = GeckoPageState(title = "Bookmarks", url = BOOKMARKS_URL)
-        session.loadUri("$BOOKMARKS_ASSET_URL#data=$encoded")
+    fun loadBookmarks(bookmarksJson: String? = null) {
+        loadInternalPage(BOOKMARKS_URL, "Bookmarks", "bookmarks.html", bookmarksJson)
     }
 
-    fun loadHistory(historyJson: String) {
-        val encoded = URLEncoder.encode(historyJson, "UTF-8").replace("+", "%20")
-        _state.value = GeckoPageState(title = "History", url = HISTORY_URL)
-        session.loadUri("$HISTORY_ASSET_URL#data=$encoded")
+    fun loadHistory(historyJson: String? = null) {
+        loadInternalPage(HISTORY_URL, "History", "history.html", historyJson)
     }
 
     fun goBack() {
@@ -146,25 +135,43 @@ class GeckoSessionController(
         this.view = view
     }
 
-    fun capturePixels(onCaptured: (Bitmap) -> Unit) {
-        val currentView = view ?: return
-        runCatching {
-            onCaptured(currentView.drawToBitmap())
+    fun capturePixels(onCaptured: (Bitmap?) -> Unit) {
+        val currentView = view
+        if (currentView == null) {
+            onCaptured(null)
+            return
         }
         currentView.capturePixels().accept({ bitmap ->
-            if (bitmap != null) onCaptured(bitmap)
-        }, {})
+            onCaptured(bitmap)
+        }, {
+            onCaptured(null)
+        })
     }
 
     fun close() {
+        HyperBridge.unregister(session)
         runCatching { session.close() }
+    }
+
+    private fun loadInternalPage(semanticUrl: String, title: String, page: String, bootstrapJson: String?) {
+        _state.value = GeckoPageState(title = title, url = semanticUrl)
+        val loadPage = {
+            HyperBridge.pageUrl(page)?.let { url ->
+                currentRawUrl = url
+                session.loadUri(assetUrlWithData(url, bootstrapJson))
+            }
+        }
+        if (HyperBridge.pageUrl(page) == null) {
+            HyperBridge.ensureInstalled(appContext) { loadPage() }
+        } else {
+            loadPage()
+        }
     }
 
     companion object {
         const val HOME_URL = "hyper://home"
         const val BOOKMARKS_URL = "hyper://bookmarks"
         const val HISTORY_URL = "hyper://history"
-        private const val COMMAND_PREFIX = "hyper://command/"
         private const val HOME_ASSET_URL = "resource://android/assets/home.html"
         private const val BOOKMARKS_ASSET_URL = "resource://android/assets/bookmarks.html"
         private const val HISTORY_ASSET_URL = "resource://android/assets/history.html"
@@ -172,9 +179,12 @@ class GeckoSessionController(
         fun isHomeUrl(url: String): Boolean = url == HOME_URL
         fun isBookmarksUrl(url: String): Boolean = url == BOOKMARKS_URL
         fun isHistoryUrl(url: String): Boolean = url == HISTORY_URL
-        fun isHomeDocumentUrl(url: String): Boolean = url.startsWith(HOME_ASSET_URL)
-        fun isBookmarksDocumentUrl(url: String): Boolean = url.startsWith(BOOKMARKS_ASSET_URL)
-        fun isHistoryDocumentUrl(url: String): Boolean = url.startsWith(HISTORY_ASSET_URL)
+        fun isHomeDocumentUrl(url: String): Boolean =
+            url.startsWith(HOME_ASSET_URL) || HyperBridge.isPageUrl(url, "home.html")
+        fun isBookmarksDocumentUrl(url: String): Boolean =
+            url.startsWith(BOOKMARKS_ASSET_URL) || HyperBridge.isPageUrl(url, "bookmarks.html")
+        fun isHistoryDocumentUrl(url: String): Boolean =
+            url.startsWith(HISTORY_ASSET_URL) || HyperBridge.isPageUrl(url, "history.html")
         fun isInternalUrl(url: String): Boolean =
             isHomeUrl(url) || isBookmarksUrl(url) || isHistoryUrl(url) ||
                 isHomeDocumentUrl(url) || isBookmarksDocumentUrl(url) || isHistoryDocumentUrl(url)
@@ -200,9 +210,6 @@ class GeckoSessionController(
                 else -> url
             }
 
-        private fun isTrustedInternalRawUrl(url: String): Boolean =
-            isHomeDocumentUrl(url) || isBookmarksDocumentUrl(url) || isHistoryDocumentUrl(url)
-
         private fun routeFromUri(uri: String): HyperRoute? {
             if (!uri.startsWith("hyper://")) return null
             return when {
@@ -213,45 +220,11 @@ class GeckoSessionController(
             }
         }
 
-        private fun commandFromUri(uri: String): HyperCommand? =
-            when {
-                uri.startsWith("${COMMAND_PREFIX}search/submit?") -> {
-                    val query = uri.substringAfter("query=", "")
-                    HyperCommand.Search.Submit(URLDecoder.decode(query, "UTF-8"))
-                }
-                uri.startsWith("${COMMAND_PREFIX}bookmarks/open?") -> {
-                    val url = uri.substringAfter("url=", "")
-                    HyperCommand.Bookmarks.Open(URLDecoder.decode(url, "UTF-8"))
-                }
-                uri.startsWith("${COMMAND_PREFIX}bookmarks/remove?") -> {
-                    val url = uri.substringAfter("url=", "")
-                    HyperCommand.Bookmarks.Remove(URLDecoder.decode(url, "UTF-8"))
-                }
-                uri.startsWith("${COMMAND_PREFIX}bookmarks/edit?") -> {
-                    val query = uri.substringAfter("?", "")
-                    val params = query.split("&").mapNotNull {
-                        val key = it.substringBefore("=", "")
-                        val value = it.substringAfter("=", "")
-                        if (key.isBlank()) null else key to URLDecoder.decode(value, "UTF-8")
-                    }.toMap()
-                    HyperCommand.Bookmarks.Edit(
-                        oldUrl = params["oldUrl"].orEmpty(),
-                        title = params["title"].orEmpty(),
-                        url = params["url"].orEmpty()
-                    )
-                }
-                uri.startsWith("${COMMAND_PREFIX}history/open?") -> {
-                    val url = uri.substringAfter("url=", "")
-                    HyperCommand.History.Open(URLDecoder.decode(url, "UTF-8"))
-                }
-                uri.startsWith("${COMMAND_PREFIX}history/remove?") -> {
-                    val url = uri.substringAfter("url=", "")
-                    HyperCommand.History.Remove(URLDecoder.decode(url, "UTF-8"))
-                }
-                uri == "${COMMAND_PREFIX}history/clear" -> HyperCommand.History.Clear
-                uri == "${COMMAND_PREFIX}panel/extensions" -> HyperCommand.Panel.Extensions
-                else -> null
-            }
+        private fun assetUrlWithData(assetUrl: String, json: String?): String {
+            if (json == null) return assetUrl
+            val encoded = URLEncoder.encode(json, "UTF-8").replace("+", "%20")
+            return "$assetUrl#data=$encoded"
+        }
     }
 }
 

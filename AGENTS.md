@@ -107,9 +107,32 @@ com.dadigua.hyperbrowser/.ui.browser.BrowserActivity
 - 顶部栏：Home、圆角地址栏、标签计数、三点菜单
 - 前进、后退、刷新、书签、历史、扩展、安装 WebApp 放进菜单
 - 点击地址栏进入独立 omnibox 输入页
-- 标签页使用 Chrome 风格两列卡片和顶部模式切换胶囊
+- 标签页使用 Chrome 风格顶部模式切换胶囊，支持 Card/List 两种查看方式
 
 不要把所有浏览器操作按钮堆在顶部工具栏。
+
+## 标签页页面约定
+
+标签页面板顶部按钮语义必须清晰：
+
+- 左侧按钮是返回/关闭标签页面板，不是新建标签
+- 右侧按钮是新建标签
+- 中间模式切换：
+  - Card 模式图标使用卡片语义，不要用标签数量当模式图标
+  - List 模式图标使用列表语义
+
+Card/List 的展示行为必须分开：
+
+- Card 模式：使用双列卡片布局，卡片内部显示网页截图缩略图
+- List 模式：使用紧凑列表行，只显示 favicon/标题/URL/关闭按钮，不显示大卡片
+- 标签数量仍显示在普通浏览器顶部栏的 tab count 入口里，不要混进 Card/List 模式图标
+
+网页截图缩略图必须来自 GeckoView 真实页面内容：
+
+- 进入标签页面板前，先等待当前 `GeckoView.capturePixels()` 回调，再切换到标签页 UI
+- 不要只用 `View.drawToBitmap()` 作为 GeckoView 页面截图来源；GeckoView 内容由 compositor/surface 渲染，普通 View 截图容易是空白
+- `capturePixels()` 失败时可以保留旧缩略图或显示 title/URL fallback，但不要用空白截图覆盖已有缩略图
+- Card 缩略图要顶端对齐显示页面内容，避免居中裁剪后只看到页面空白区域
 
 ## 内置 HTML 页面与 HyperCommand
 
@@ -127,18 +150,7 @@ com.dadigua.hyperbrowser/.ui.browser.BrowserActivity
 app/src/main/assets/hyper-browser.js
 ```
 
-不要再使用 `hyper://api/...`。内置页面发出的命令统一走：
-
-```text
-hyper://command/search/submit?query=...
-hyper://command/bookmarks/open?url=...
-hyper://command/bookmarks/remove?url=...
-hyper://command/bookmarks/edit?oldUrl=...&title=...&url=...
-hyper://command/history/open?url=...
-hyper://command/history/remove?url=...
-hyper://command/history/clear
-hyper://command/panel/extensions
-```
+不要再使用 `hyper://api/...` 或 `hyper://command/...` 作为内置页面 API。内置页面必须作为内置 WebExtension 页面加载。页面 JS 只调用 `window.hyperBrowser`；包装层通过 `browser.runtime.sendMessage(...)` 发给 `background.js`，再由 `background.js` 调用 `browser.runtime.sendNativeMessage("hyperBrowser", ...)` 进入 Kotlin bridge。
 
 Kotlin 侧要把页面路由和页面命令分开：
 
@@ -148,15 +160,25 @@ Kotlin 侧要把页面路由和页面命令分开：
 `GeckoSessionController` 只负责安全校验和解析：
 
 - `hyper://home`、`hyper://bookmarks`、`hyper://history` 解析为 `HyperRoute`
-- `hyper://command/...` 只有当前 raw URL 是白名单内置 asset 页面时才解析为 `HyperCommand`
-- 普通网页、`https://`、`http://`、`moz-extension://` 页面发出的 `hyper://command/...` 必须直接拒绝，不能执行业务动作
-- 不要新增全局 native bridge；`hyper-browser.js` 只是生成受控导航请求的 JS 包装
+- 内置页面加载真实 URL 时使用内置 WebExtension 的 `moz-extension://.../home.html`、`bookmarks.html`、`history.html`
+- 地址栏和历史语义仍映射为 `hyper://home`、`hyper://bookmarks`、`hyper://history`，不要把 `moz-extension://...` 暴露给用户
+- bridge 消息必须校验 sender：只接受 URL 属于内置 WebExtension baseUrl 的 sender
+- 普通网页、第三方扩展页、`https://`、`http://` 页面不能调用或伪造 `window.hyperBrowser` 的 native bridge
+- Kotlin bridge 返回给 WebExtension 的值优先用 JSON string；不要直接返回嵌套 `JSONObject` / `JSONArray`，避免 GeckoView 回调序列化失败
+- WebExtension 页面受 CSP 约束，不要写内联 `<script>`；页面逻辑放到 `home.js`、`bookmarks.js`、`history.js`
 
-书签和历史数据的 HTML bootstrap 可以放在 URL hash 里，但数据变化后不能通过重载 asset 刷新：
+内置 HTML 页面必须由页面生命周期主动请求数据，不要依赖外层 Compose 猜时机预塞数据：
+
+- `home.html` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestHomeData()`
+- `bookmarks.html` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestBookmarksData()`
+- `history.html` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestHistoryData()`
+- `request*Data()` 必须返回 Promise，并由 bridge 直接返回 JSON 数据；不要通过 URL 跳转、hash 二次加载或 fallback 到旧协议取数据
+
+书签和历史数据变化后不能通过重载页面刷新：
 
 - 不要使用 `?v=<timestamp>` 这类 cache busting 刷新方案
 - 书签删除、编辑，历史删除、清空，都应由 HTML 页面更新本地 JS state 和 DOM，保留滚动位置
-- Kotlin 收到对应 `HyperCommand` 后只更新 JSON/store，不要重新 `loadBookmarks()` 或 `loadHistory()`
+- Kotlin 收到对应 bridge 消息后只更新 JSON/store，不要重新 `loadBookmarks()` 或 `loadHistory()`
 - 如果需要跨页面实时同步，后续再设计专门通道；v1 只要求下次进入页面时读取最新 JSON
 
 ## Iceraven 菜单复刻要点

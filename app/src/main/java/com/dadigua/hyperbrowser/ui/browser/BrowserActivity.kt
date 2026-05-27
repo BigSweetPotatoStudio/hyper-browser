@@ -125,13 +125,59 @@ class BrowserActivity : ComponentActivity() {
 private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     var pendingHyperRoute by remember { mutableStateOf<HyperRoute?>(null) }
     var pendingHyperCommand by remember { mutableStateOf<HyperCommand?>(null) }
+    val profileStore = remember { BrowserProfileStore(app) }
+    fun handleHyperBridgeMessage(message: JSONObject): JSONObject {
+        val payload = message.optJSONObject("payload") ?: JSONObject()
+        return when (message.optString("type")) {
+            "data.home" -> okItems(profileStore.observeHistory().value.toHistoryJsonString())
+            "data.bookmarks" -> okItems(profileStore.observeBookmarks().value.toBookmarksJsonString())
+            "data.history" -> okItems(profileStore.observeHistory().value.toHistoryJsonString())
+            "search.submit" -> {
+                pendingHyperCommand = HyperCommand.Search.Submit(payload.optString("query"))
+                ok()
+            }
+            "bookmarks.open" -> {
+                pendingHyperCommand = HyperCommand.Bookmarks.Open(payload.optString("url"))
+                ok()
+            }
+            "bookmarks.remove" -> {
+                pendingHyperCommand = HyperCommand.Bookmarks.Remove(payload.optString("url"))
+                ok()
+            }
+            "bookmarks.edit" -> {
+                pendingHyperCommand = HyperCommand.Bookmarks.Edit(
+                    oldUrl = payload.optString("oldUrl"),
+                    title = payload.optString("title"),
+                    url = payload.optString("url")
+                )
+                ok()
+            }
+            "history.open" -> {
+                pendingHyperCommand = HyperCommand.History.Open(payload.optString("url"))
+                ok()
+            }
+            "history.remove" -> {
+                pendingHyperCommand = HyperCommand.History.Remove(payload.optString("url"))
+                ok()
+            }
+            "history.clear" -> {
+                pendingHyperCommand = HyperCommand.History.Clear
+                ok()
+            }
+            "panel.extensions" -> {
+                pendingHyperCommand = HyperCommand.Panel.Extensions
+                ok()
+            }
+            else -> JSONObject().put("ok", false).put("error", "Unknown bridge message.")
+        }
+    }
     val tabs = remember {
         mutableStateListOf(
             BrowserTabRuntime.create(
                 app = app,
                 url = initialUrl,
                 onHyperRoute = { pendingHyperRoute = it },
-                onHyperCommand = { pendingHyperCommand = it }
+                onHyperBridgeMessage = ::handleHyperBridgeMessage
             )
         )
     }
@@ -142,7 +188,6 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     val controller = tab.controller
     val pageState by controller.state.collectAsState()
     val onHomePage = GeckoSessionController.isHomeUrl(pageState.url)
-    val profileStore = remember { BrowserProfileStore(app) }
     val history by profileStore.observeHistory().collectAsState()
     val bookmarks by profileStore.observeBookmarks().collectAsState()
     val installedExtensions by app.extensions.observeInstalled().collectAsState()
@@ -179,12 +224,6 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
         }
     }
 
-    LaunchedEffect(selectedTabId, pageState.url, history) {
-        if (GeckoSessionController.isHomeUrl(pageState.url)) {
-            controller.loadHome(history.toHistoryJsonString())
-        }
-    }
-
     LaunchedEffect(selectedTabId, installedExtensions) {
         runCatching { app.extensions.refreshMenuActions(controller.session) }
     }
@@ -209,15 +248,15 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             null -> return@LaunchedEffect
             HyperRoute.Home -> {
                 tab.input = GeckoSessionController.HOME_URL
-                controller.loadHome(history.toHistoryJsonString())
+                controller.loadHome()
             }
             HyperRoute.Bookmarks -> {
                 tab.input = GeckoSessionController.BOOKMARKS_URL
-                controller.loadBookmarks(bookmarks.toBookmarksJsonString())
+                controller.loadBookmarks()
             }
             HyperRoute.History -> {
                 tab.input = GeckoSessionController.HISTORY_URL
-                controller.loadHistory(history.toHistoryJsonString())
+                controller.loadHistory()
             }
         }
         pendingHyperRoute = null
@@ -364,7 +403,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                             app = app,
                             url = GeckoSessionController.HOME_URL,
                             onHyperRoute = { pendingHyperRoute = it },
-                            onHyperCommand = { pendingHyperCommand = it }
+                            onHyperBridgeMessage = ::handleHyperBridgeMessage
                         )
                         tabs.add(replacement)
                         selectedTabId = replacement.id
@@ -377,7 +416,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                         app = app,
                         url = GeckoSessionController.HOME_URL,
                         onHyperRoute = { pendingHyperRoute = it },
-                        onHyperCommand = { pendingHyperCommand = it }
+                        onHyperBridgeMessage = ::handleHyperBridgeMessage
                     )
                     tabs.add(newTab)
                     selectedTabId = newTab.id
@@ -406,15 +445,17 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 onForward = controller::goForward,
                 onReload = controller::reload,
                 onShowTabs = {
-                    controller.capturePixels { tab.thumbnail = it }
-                    showTabs = true
+                    controller.capturePixels { bitmap ->
+                        bitmap?.let { tab.thumbnail = it }
+                        showTabs = true
+                    }
                 },
                 onNewTab = {
                     val newTab = BrowserTabRuntime.create(
                         app = app,
                         url = GeckoSessionController.HOME_URL,
                         onHyperRoute = { pendingHyperRoute = it },
-                        onHyperCommand = { pendingHyperCommand = it }
+                        onHyperBridgeMessage = ::handleHyperBridgeMessage
                     )
                     tabs.add(newTab)
                     selectedTabId = newTab.id
@@ -423,7 +464,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 },
                 onHome = {
                     tab.input = GeckoSessionController.HOME_URL
-                    controller.loadHome(history.toHistoryJsonString())
+                    controller.loadHome()
                     message = null
                 },
                 onToggleBookmark = {
@@ -432,11 +473,11 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 },
                 onShowBookmarks = {
                     tab.input = GeckoSessionController.BOOKMARKS_URL
-                    controller.loadBookmarks(bookmarks.toBookmarksJsonString())
+                    controller.loadBookmarks()
                 },
                 onShowHistory = {
                     tab.input = GeckoSessionController.HISTORY_URL
-                    controller.loadHistory(history.toHistoryJsonString())
+                    controller.loadHistory()
                 },
                 onShowExtensions = { showExtensions = true },
                 onExtensionClick = { extension ->
@@ -487,7 +528,7 @@ private class BrowserTabRuntime private constructor(
             app: HyperBrowserApp,
             url: String,
             onHyperRoute: (HyperRoute) -> Unit = {},
-            onHyperCommand: (HyperCommand) -> Unit = {}
+            onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) }
         ): BrowserTabRuntime =
             BrowserTabRuntime(
                 id = UUID.randomUUID().toString(),
@@ -495,7 +536,7 @@ private class BrowserTabRuntime private constructor(
                     context = app,
                     initialUrl = url,
                     onHyperRoute = onHyperRoute,
-                    onHyperCommand = onHyperCommand
+                    onHyperBridgeMessage = onHyperBridgeMessage
                 ),
                 input = url
             )
@@ -510,9 +551,17 @@ private class BrowserTabRuntime private constructor(
 }
 
 private fun browserAddressText(url: String, input: String): String {
-    if (GeckoSessionController.isHomeUrl(url)) return "搜索或输入网址"
     return url.ifBlank { input.ifBlank { "搜索或输入网址" } }
 }
+
+private fun ok(data: JSONObject? = null): JSONObject {
+    val response = JSONObject().put("ok", true)
+    if (data != null) response.put("data", data)
+    return response
+}
+
+private fun okItems(itemsJson: String): JSONObject =
+    JSONObject().put("ok", true).put("itemsJson", itemsJson)
 
 private fun List<BrowserBookmark>.toBookmarksJsonString(): String {
     val array = JSONArray()

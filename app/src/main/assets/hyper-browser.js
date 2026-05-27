@@ -1,17 +1,43 @@
 (function () {
-  function navigate(path, params) {
-    const url = new URL("hyper://command/" + path);
-    Object.entries(params || {}).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) {
-        url.searchParams.set(key, String(value));
-      }
+  const nativeApp = "hyperBrowser";
+
+  function canUseBridge() {
+    return typeof browser !== "undefined" &&
+      browser.runtime &&
+      typeof browser.runtime.sendMessage === "function";
+  }
+
+  function send(type, payload) {
+    if (!canUseBridge()) return Promise.reject(new Error("Hyper bridge unavailable."));
+    return browser.runtime.sendMessage({ nativeApp, type, payload: payload || {} })
+      .then((response) => {
+        if (typeof response === "string") {
+          response = JSON.parse(response);
+        }
+        if (!response || response.ok !== true) {
+          throw new Error((response && response.error) || "Hyper bridge request failed.");
+        }
+        return response;
+      });
+  }
+
+  function command(type, params) {
+    send(type, params).catch((error) => {
+      console.error(error);
     });
-    window.location.href = url.toString();
+  }
+
+  function requestData(type) {
+    return send(type).then((response) => {
+      if (!response || typeof response.itemsJson !== "string") return [];
+      const items = JSON.parse(response.itemsJson);
+      return Array.isArray(items) ? items : [];
+    });
   }
 
   window.hyperBrowser = {
     open(input) {
-      navigate("search/submit", { query: input });
+      command("search.submit", { query: input });
     },
     showBookmarks() {
       window.location.href = "hyper://bookmarks";
@@ -20,25 +46,34 @@
       window.location.href = "hyper://history";
     },
     showExtensions() {
-      navigate("panel/extensions");
+      command("panel.extensions");
+    },
+    requestHomeData() {
+      return requestData("data.home");
+    },
+    requestBookmarksData() {
+      return requestData("data.bookmarks");
+    },
+    requestHistoryData() {
+      return requestData("data.history");
     },
     openBookmark(url) {
-      navigate("bookmarks/open", { url });
+      command("bookmarks.open", { url });
     },
     removeBookmark(url) {
-      navigate("bookmarks/remove", { url });
+      command("bookmarks.remove", { url });
     },
     editBookmark(oldUrl, title, url) {
-      navigate("bookmarks/edit", { oldUrl, title, url });
+      command("bookmarks.edit", { oldUrl, title, url });
     },
     openHistory(url) {
-      navigate("history/open", { url });
+      command("history.open", { url });
     },
     removeHistory(url) {
-      navigate("history/remove", { url });
+      command("history.remove", { url });
     },
     clearHistory() {
-      navigate("history/clear");
+      command("history.clear");
     }
   };
 })();
