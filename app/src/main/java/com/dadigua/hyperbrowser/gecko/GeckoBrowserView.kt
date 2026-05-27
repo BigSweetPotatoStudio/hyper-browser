@@ -2,6 +2,7 @@ package com.dadigua.hyperbrowser.gecko
 
 import android.content.Context
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewConfiguration
 import android.widget.FrameLayout
 import androidx.compose.animation.core.animateDpAsState
@@ -74,6 +75,7 @@ fun GeckoBrowserView(controller: GeckoSessionController, modifier: Modifier = Mo
             modifier = Modifier.matchParentSize(),
             factory = { context ->
                 PullRefreshGeckoContainer(context).apply {
+                    geckoView.configureAndroidAutofill()
                     geckoView.setSession(controller.session)
                     controller.attachView(geckoView)
                     attachedView[0] = geckoView
@@ -234,6 +236,7 @@ fun GeckoSessionView(
         factory = { context ->
             GeckoView(context).apply {
                 viewBackend?.let { setViewBackend(it) }
+                configureAndroidAutofill()
                 setSession(session)
                 onViewChanged(this)
                 attachedView[0] = this
@@ -247,6 +250,12 @@ fun GeckoSessionView(
             attachedView[0] = view
         }
     )
+}
+
+private fun GeckoView.configureAndroidAutofill() {
+    importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_YES
+    isSaveEnabled = true
+    setAutofillEnabled(true)
 }
 
 @Composable
