@@ -46,9 +46,13 @@ import androidx.compose.material.icons.automirrored.outlined.AddToHomeScreen
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.BookmarkRemove
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -89,10 +93,14 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
@@ -867,6 +875,62 @@ private data class ToolbarSuggestion(
 )
 
 @Composable
+private fun ToolbarCurrentPagePanel(
+    title: String,
+    url: String,
+    onShare: () -> Unit,
+    onCopy: () -> Unit,
+    onEdit: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Public,
+                contentDescription = null,
+                tint = Color(0xFF5F6368),
+                modifier = Modifier.size(28.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title.ifBlank { url },
+                    color = Color(0xFF202124),
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = url,
+                    color = Color(0xFF3F51B5),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(onClick = onShare, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Outlined.Share, contentDescription = "Share", tint = Color(0xFF202124))
+            }
+            IconButton(onClick = onCopy, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy URL", tint = Color(0xFF202124))
+            }
+            IconButton(onClick = onEdit, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Outlined.Edit, contentDescription = "Edit URL", tint = Color(0xFF202124))
+            }
+        }
+    }
+}
+
+@Composable
 private fun ToolbarSuggestionPanel(
     suggestions: List<ToolbarSuggestion>,
     onOpen: (String) -> Unit
@@ -1000,19 +1064,22 @@ private fun BrowserToolbar(
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var extensionsExpanded by remember { mutableStateOf(false) }
-    var addressDraft by remember { mutableStateOf(browserAddressText(pageState.url, input)) }
+    var addressDraft by remember { mutableStateOf(TextFieldValue(browserAddressText(pageState.url, input))) }
     var addressEditSawIme by remember { mutableStateOf(false) }
     val currentAddress = browserAddressText(pageState.url, input)
+    val addressDraftText = addressDraft.text
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val addressFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val density = LocalDensity.current
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
     val enabledExtensions = installedExtensions.filter { it.enabled }
-    val addressSuggestions = remember(addressDraft, bookmarks, history, editingAddress) {
+    val addressSuggestions = remember(addressDraftText, bookmarks, history, editingAddress) {
         if (!editingAddress) {
             emptyList()
         } else {
-            val needle = addressDraft.trim().lowercase()
+            val needle = addressDraftText.trim().lowercase()
             if (needle.isBlank()) {
                 emptyList()
             } else {
@@ -1036,7 +1103,7 @@ private fun BrowserToolbar(
         Modifier
     }
 
-    fun submitAddress(value: String = addressDraft) {
+    fun submitAddress(value: String = addressDraftText) {
         val query = value.trim()
         if (query.isBlank()) return
         onEditingAddressChange(false)
@@ -1047,18 +1114,24 @@ private fun BrowserToolbar(
     fun startAddressEdit() {
         onEditingAddressChange(true)
         addressEditSawIme = false
-        addressDraft = ""
+        addressDraft = TextFieldValue("")
+    }
+
+    fun editCurrentAddress() {
+        onEditingAddressChange(true)
+        addressEditSawIme = false
+        addressDraft = TextFieldValue(currentAddress, selection = TextRange(currentAddress.length))
     }
 
     fun cancelAddressEdit() {
         onEditingAddressChange(false)
-        addressDraft = currentAddress
+        addressDraft = TextFieldValue(currentAddress)
         keyboardController?.hide()
     }
 
     LaunchedEffect(currentAddress, editingAddress) {
         if (!editingAddress) {
-            addressDraft = currentAddress
+            addressDraft = TextFieldValue(currentAddress)
         }
     }
 
@@ -1078,14 +1151,35 @@ private fun BrowserToolbar(
     }
 
     val suggestionPanel: @Composable () -> Unit = {
-        if (editingAddress && addressSuggestions.isNotEmpty()) {
-            ToolbarSuggestionPanel(
-                suggestions = addressSuggestions,
-                onOpen = { url ->
-                    addressDraft = url
-                    submitAddress(url)
-                }
-            )
+        if (editingAddress) {
+            if (addressDraftText.isBlank()) {
+                ToolbarCurrentPagePanel(
+                    title = pageState.title,
+                    url = currentAddress,
+                    onShare = {
+                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, currentAddress)
+                        }
+                        context.startActivity(Intent.createChooser(sendIntent, currentAddress))
+                    },
+                    onCopy = {
+                        clipboardManager.setText(AnnotatedString(currentAddress))
+                    },
+                    onEdit = {
+                        editCurrentAddress()
+                        addressFocusRequester.requestFocus()
+                    }
+                )
+            } else if (addressSuggestions.isNotEmpty()) {
+                ToolbarSuggestionPanel(
+                    suggestions = addressSuggestions,
+                    onOpen = { url ->
+                        addressDraft = TextFieldValue(url, selection = TextRange(url.length))
+                        submitAddress(url)
+                    }
+                )
+            }
         }
     }
 
@@ -1128,20 +1222,20 @@ private fun BrowserToolbar(
                             if (editingAddress && !focusState.isFocused) {
                                 cancelAddressEdit()
                             }
-                        },
+                    },
                     decorationBox = { inner ->
-                        if (addressDraft.isBlank()) {
+                        if (addressDraftText.isBlank()) {
                             Text("搜索或输入网址", color = Color(0xFF6F737B), style = MaterialTheme.typography.titleMedium)
                         }
                         inner()
                     }
                 )
-                if (editingAddress && addressDraft.isNotBlank()) {
+                if (editingAddress && addressDraftText.isNotBlank()) {
                     Text(
                         "×",
                         modifier = Modifier
                             .clip(CircleShape)
-                            .clickable { addressDraft = "" }
+                            .clickable { addressDraft = TextFieldValue("") }
                             .padding(horizontal = 8.dp, vertical = 2.dp),
                         fontSize = 24.sp,
                         color = Color(0xFF5F6368)
