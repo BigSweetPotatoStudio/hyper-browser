@@ -77,6 +77,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
@@ -92,6 +93,7 @@ import com.dadigua.hyperbrowser.browser.BrowserHistoryEntry
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
+import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
 import com.dadigua.hyperbrowser.extensions.ExtensionMenuActionState
 import com.dadigua.hyperbrowser.extensions.ExtensionNewTabRequest
@@ -103,6 +105,7 @@ import com.dadigua.hyperbrowser.gecko.GeckoSessionView
 import com.dadigua.hyperbrowser.gecko.HyperCommand
 import com.dadigua.hyperbrowser.gecko.HyperRoute
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
+import com.dadigua.hyperbrowser.ui.webapp.WebAppActivity
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -145,6 +148,7 @@ class BrowserActivity : ComponentActivity() {
 private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     var pendingHyperRoute by remember { mutableStateOf<HyperRoute?>(null) }
     var pendingHyperCommand by remember { mutableStateOf<HyperCommand?>(null) }
+    val context = LocalContext.current
     val profileStore = remember { BrowserProfileStore(app) }
     fun handleHyperBridgeMessage(message: JSONObject): JSONObject {
         val payload = message.optJSONObject("payload") ?: JSONObject()
@@ -158,6 +162,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             )
             "data.bookmarks" -> okItems(profileStore.observeBookmarks().value.toBookmarksJsonString())
             "data.history" -> okItems(profileStore.observeHistory().value.toHistoryJsonString())
+            "data.apps" -> okItems(app.webApps.observeAll().value.toWebAppsJsonString())
             "data.settings" -> okData(profileStore.observeSettings().value.toJson())
             "search.submit" -> {
                 pendingHyperCommand = HyperCommand.Search.Submit(payload.optString("query"))
@@ -200,6 +205,10 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             }
             "history.clear" -> {
                 pendingHyperCommand = HyperCommand.History.Clear
+                ok()
+            }
+            "apps.open" -> {
+                pendingHyperCommand = HyperCommand.Apps.Open(payload.optString("id"))
                 ok()
             }
             "panel.extensions" -> {
@@ -302,6 +311,10 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 tab.input = GeckoSessionController.SETTINGS_URL
                 controller.loadSettings()
             }
+            HyperRoute.Apps -> {
+                tab.input = GeckoSessionController.APPS_URL
+                controller.loadApps()
+            }
             HyperRoute.Bookmarks -> {
                 tab.input = GeckoSessionController.BOOKMARKS_URL
                 controller.loadBookmarks()
@@ -340,6 +353,11 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             }
             HyperCommand.History.Clear -> {
                 profileStore.clearHistory()
+            }
+            is HyperCommand.Apps.Open -> {
+                if (command.id.isNotBlank()) {
+                    context.startActivity(WebAppActivity.intent(context, command.id, true))
+                }
             }
             HyperCommand.Panel.Extensions -> showExtensions = true
         }
@@ -696,6 +714,25 @@ private fun List<BrowserHistoryEntry>.toHistoryJsonString(): String {
                 .put("title", entry.title)
                 .put("url", entry.url)
                 .put("visitedAt", entry.visitedAt)
+        )
+    }
+    return array.toString()
+}
+
+private fun List<WebAppDefinition>.toWebAppsJsonString(): String {
+    val array = JSONArray()
+    forEach { webApp ->
+        array.put(
+            JSONObject()
+                .put("id", webApp.id)
+                .put("name", webApp.name)
+                .put("startUrl", webApp.startUrl)
+                .put("scopeUrl", webApp.scopeUrl)
+                .put("iconPath", webApp.iconPath)
+                .put("themeColor", webApp.themeColor)
+                .put("displayMode", webApp.displayMode)
+                .put("createdAt", webApp.createdAt)
+                .put("lastOpenedAt", webApp.lastOpenedAt)
         )
     }
     return array.toString()

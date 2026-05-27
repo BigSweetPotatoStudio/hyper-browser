@@ -28,19 +28,8 @@ function HomePage() {
   return (
     <main className="home-main">
       <h1 className="home-title">Hyper Browser</h1>
-      <form className="search-form" autoComplete="off" onSubmit={submit}>
-        <div className="search-mark" aria-hidden="true">G</div>
-        <input
-          className="search-input"
-          name="q"
-          type="search"
-          placeholder="搜索或输入网址"
-          autoFocus
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-        />
-      </form>
       <nav className="shortcut-grid" aria-label="Browser shortcuts">
+        <a className="shortcut" href="hyper://apps">Apps</a>
         <a className="shortcut" href="hyper://bookmarks">Bookmarks</a>
         <a className="shortcut" href="hyper://history">History</a>
         <button className="shortcut" type="button" onClick={() => window.hyperBrowser.showExtensions()}>

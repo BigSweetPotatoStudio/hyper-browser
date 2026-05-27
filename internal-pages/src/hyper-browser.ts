@@ -16,6 +16,18 @@ type HistoryItem = {
   visitedAt?: string;
 };
 
+type WebAppItem = {
+  id: string;
+  name: string;
+  startUrl: string;
+  scopeUrl: string;
+  iconPath?: string | null;
+  themeColor: number;
+  displayMode: string;
+  createdAt: number;
+  lastOpenedAt: number;
+};
+
 type SearchSuggestionItem = {
   title?: string;
   url: string;
@@ -45,9 +57,11 @@ type HyperBrowserApi = {
   open(input: string): void;
   showBookmarks(): void;
   showHistory(): void;
+  showApps(): void;
   showSettings(): void;
   showExtensions(): void;
   requestHomeData(): Promise<HistoryItem[]>;
+  requestAppsData(): Promise<WebAppItem[]>;
   requestSearchData(): Promise<SearchSuggestionItem[]>;
   requestSettingsData(): Promise<BrowserSettings>;
   updateSearchEngine(searchEngineId: BrowserSettings["searchEngineId"], customSearchUrl?: string): Promise<BrowserSettings>;
@@ -60,6 +74,7 @@ type HyperBrowserApi = {
   openHistory(url: string): void;
   removeHistory(url: string): void;
   clearHistory(): void;
+  openApp(id: string): void;
 };
 
 const nativeApp = "hyperBrowser";
@@ -116,6 +131,9 @@ window.hyperBrowser = {
   showHistory() {
     window.location.href = "hyper://history";
   },
+  showApps() {
+    window.location.href = "hyper://apps";
+  },
   showSettings() {
     window.location.href = "hyper://settings";
   },
@@ -124,6 +142,9 @@ window.hyperBrowser = {
   },
   requestHomeData() {
     return requestData<HistoryItem>("data.home");
+  },
+  requestAppsData() {
+    return requestData<WebAppItem>("data.apps");
   },
   requestSearchData() {
     return requestData<SearchSuggestionItem>("data.search");
@@ -162,7 +183,10 @@ window.hyperBrowser = {
   },
   clearHistory() {
     command("history.clear");
+  },
+  openApp(id) {
+    command("apps.open", { id });
   }
 };
 
-export type { BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem };
+export type { BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, WebAppItem };
