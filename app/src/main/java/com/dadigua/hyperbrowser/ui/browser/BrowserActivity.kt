@@ -72,6 +72,7 @@ import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
 import com.dadigua.hyperbrowser.extensions.ExtensionMenuActionState
+import com.dadigua.hyperbrowser.extensions.ExtensionNewTabRequest
 import com.dadigua.hyperbrowser.extensions.ExtensionPopupState
 import com.dadigua.hyperbrowser.gecko.GeckoBrowserView
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
@@ -125,6 +126,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     val installedExtensions by app.extensions.observeInstalled().collectAsState()
     val extensionActions by app.extensions.observeMenuActions().collectAsState()
     val extensionPopup by app.extensions.observePopup().collectAsState()
+    val extensionNewTabRequest by app.extensions.observeNewTabRequests().collectAsState()
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
     var showSearch by remember { mutableStateOf(false) }
@@ -156,6 +158,21 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
 
     LaunchedEffect(selectedTabId, installedExtensions) {
         runCatching { app.extensions.refreshMenuActions(controller.session) }
+    }
+
+    LaunchedEffect(extensionNewTabRequest) {
+        extensionNewTabRequest?.let { request ->
+            val newTab = BrowserTabRuntime.fromExtensionRequest(app, request)
+            tabs.add(newTab)
+            selectedTabId = newTab.id
+            showTabs = false
+            showSearch = false
+            showBookmarks = false
+            showHistory = false
+            showExtensions = false
+            message = "Opened ${request.title}."
+            app.extensions.consumeNewTabRequest()
+        }
     }
 
     DisposableEffect(Unit) {
@@ -353,6 +370,13 @@ private class BrowserTabRuntime private constructor(
                 id = UUID.randomUUID().toString(),
                 controller = GeckoSessionController(app, url),
                 input = url
+            )
+
+        fun fromExtensionRequest(app: HyperBrowserApp, request: ExtensionNewTabRequest): BrowserTabRuntime =
+            BrowserTabRuntime(
+                id = UUID.randomUUID().toString(),
+                controller = GeckoSessionController(app, request.url, request.session),
+                input = request.url
             )
     }
 }
@@ -681,7 +705,6 @@ private fun ExtensionPopupOverlay(
             modifier = Modifier
                 .matchParentSize()
                 .background(Color(0x66000000))
-                .clickable(onClick = onClose)
         )
         Card(
             modifier = Modifier

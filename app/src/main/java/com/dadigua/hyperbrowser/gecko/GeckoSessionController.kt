@@ -11,8 +11,12 @@ data class GeckoPageState(
     val insecureHttp: Boolean = false
 )
 
-class GeckoSessionController(context: Context, initialUrl: String) {
-    val session: GeckoSession = GeckoSession()
+class GeckoSessionController(
+    context: Context,
+    initialUrl: String,
+    existingSession: GeckoSession? = null
+) {
+    val session: GeckoSession = existingSession ?: GeckoSession()
 
     private val runtime = GeckoRuntimeProvider.get(context)
     private val _state = MutableStateFlow(GeckoPageState(url = initialUrl, insecureHttp = initialUrl.startsWith("http://")))
@@ -24,8 +28,10 @@ class GeckoSessionController(context: Context, initialUrl: String) {
                 _state.value = _state.value.copy(title = title.orEmpty())
             }
         }
-        session.open(runtime)
-        load(initialUrl)
+        if (existingSession == null) {
+            session.open(runtime)
+            load(initialUrl)
+        }
     }
 
     fun load(input: String) {

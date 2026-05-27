@@ -13,6 +13,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.WebExtension
@@ -34,6 +35,13 @@ data class ExtensionPopupState(
     val session: GeckoSession
 )
 
+data class ExtensionNewTabRequest(
+    val guid: String,
+    val title: String,
+    val url: String,
+    val session: GeckoSession
+)
+
 class ExtensionRepository(
     private val context: Context
 ) {
@@ -46,6 +54,7 @@ class ExtensionRepository(
     private val installedState = MutableStateFlow(loadInstalled())
     private val menuActionState = MutableStateFlow<Map<String, ExtensionMenuActionState>>(emptyMap())
     private val popupState = MutableStateFlow<ExtensionPopupState?>(null)
+    private val newTabRequestState = MutableStateFlow<ExtensionNewTabRequest?>(null)
     private val menuActions = mutableMapOf<String, WebExtension.Action>()
     private val delegatedExtensions = mutableSetOf<String>()
 
@@ -55,9 +64,50 @@ class ExtensionRepository(
 
     fun observePopup(): StateFlow<ExtensionPopupState?> = popupState
 
+    fun observeNewTabRequests(): StateFlow<ExtensionNewTabRequest?> = newTabRequestState
+
+    fun consumeNewTabRequest() {
+        newTabRequestState.value = null
+    }
+
     fun closePopup() {
         popupState.value?.session?.close()
         popupState.value = null
+    }
+
+    private fun openExtensionTab(extension: WebExtension, url: String): GeckoSession {
+        val newSession = GeckoSession()
+        newSession.open(GeckoRuntimeProvider.get(context))
+        newSession.loadUri(url)
+        closePopup()
+        newTabRequestState.value = ExtensionNewTabRequest(
+            guid = extension.id,
+            title = extension.metaData.name ?: extension.id,
+            url = url,
+            session = newSession
+        )
+        return newSession
+    }
+
+    private fun configurePopupSession(popupSession: GeckoSession, extension: WebExtension) {
+        popupSession.navigationDelegate = object : GeckoSession.NavigationDelegate {
+            override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession> =
+                GeckoResult.fromValue(openExtensionTab(extension, uri))
+
+            override fun onLoadRequest(
+                session: GeckoSession,
+                request: GeckoSession.NavigationDelegate.LoadRequest
+            ): GeckoResult<AllowOrDeny>? {
+                val optionsPageUrl = extension.metaData.optionsPageUrl ?: return null
+                val uriWithoutFragment = request.uri.substringBefore("#")
+                val optionsWithoutFragment = optionsPageUrl.substringBefore("#")
+                if (uriWithoutFragment == optionsWithoutFragment) {
+                    openExtensionTab(extension, request.uri)
+                    return GeckoResult.fromValue(AllowOrDeny.DENY)
+                }
+                return null
+            }
+        }
     }
 
     suspend fun refreshMenuActions(activeSession: GeckoSession) {
@@ -66,6 +116,24 @@ class ExtensionRepository(
             listRuntimeExtensions().forEach { extension ->
                 val guid = extension.id
                 if (delegatedExtensions.add(guid)) {
+                    extension.setTabDelegate(
+                        object : WebExtension.TabDelegate {
+                            override fun onNewTab(
+                                extension: WebExtension,
+                                createDetails: WebExtension.CreateTabDetails
+                            ): GeckoResult<GeckoSession> {
+                                val url = createDetails.url?.takeIf { it.isNotBlank() }
+                                    ?: extension.metaData.optionsPageUrl
+                                    ?: extension.metaData.baseUrl
+                                return GeckoResult.fromValue(openExtensionTab(extension, url))
+                            }
+
+                            override fun onOpenOptionsPage(extension: WebExtension) {
+                                val url = extension.metaData.optionsPageUrl ?: return
+                                openExtensionTab(extension, url)
+                            }
+                        }
+                    )
                     extension.setActionDelegate(
                         object : WebExtension.ActionDelegate {
                             override fun onBrowserAction(
@@ -91,6 +159,7 @@ class ExtensionRepository(
                                 action: WebExtension.Action
                             ): GeckoResult<GeckoSession> {
                                 val popupSession = GeckoSession()
+                                configurePopupSession(popupSession, extension)
                                 popupSession.open(GeckoRuntimeProvider.get(context))
                                 popupState.value = ExtensionPopupState(
                                     guid = extension.id,
