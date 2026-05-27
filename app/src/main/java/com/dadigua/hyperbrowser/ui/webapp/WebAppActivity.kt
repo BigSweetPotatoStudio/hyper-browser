@@ -52,7 +52,7 @@ class WebAppActivity : ComponentActivity() {
 
         fun intent(context: Context, webAppId: String, asDocument: Boolean): Intent {
             val flags = if (asDocument) {
-                Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+                Intent.FLAG_ACTIVITY_NEW_DOCUMENT
             } else {
                 0
             }

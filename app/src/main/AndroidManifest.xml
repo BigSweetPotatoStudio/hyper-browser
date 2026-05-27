@@ -17,7 +17,7 @@
 
         <activity
             android:name=".ui.webapp.WebAppActivity"
-            android:documentLaunchMode="always"
+            android:documentLaunchMode="intoExisting"
             android:exported="true"
             android:resizeableActivity="true"
             android:windowSoftInputMode="stateUnspecified|adjustResize" />
