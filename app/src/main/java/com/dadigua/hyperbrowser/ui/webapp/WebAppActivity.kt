@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -85,9 +87,17 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
     }
 
     val controller = remember(current.id) { GeckoSessionController(app, current.startUrl) }
+    val pageState by controller.state.collectAsState()
 
     DisposableEffect(current.id) {
         onDispose { controller.close() }
+    }
+
+    BackHandler {
+        when {
+            pageState.canGoBack -> controller.goBack()
+            else -> controller.goBack()
+        }
     }
 
     Column(

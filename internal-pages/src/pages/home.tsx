@@ -55,8 +55,13 @@ function HomePage() {
                 window.hyperBrowser.openHistory(entry.url);
               }}
             >
-              <div className="recent-title">{entry.title || entry.url}</div>
-              <div className="recent-url">{entry.url}</div>
+              <span className="recent-favicon">
+                {entry.iconDataUrl ? <img src={entry.iconDataUrl} alt="" /> : "•"}
+              </span>
+              <span className="recent-text">
+                <span className="recent-title">{entry.title || entry.url}</span>
+                <span className="recent-url">{entry.url}</span>
+              </span>
             </a>
           ))}
         </div>

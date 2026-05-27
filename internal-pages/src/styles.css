@@ -97,7 +97,7 @@ a {
 .shortcut-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 34px;
 }
 
@@ -110,7 +110,7 @@ a {
   border-radius: 999px;
   background: #e8def8;
   color: #202124;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 560;
   text-decoration: none;
 }
@@ -354,9 +354,36 @@ a {
 }
 
 .recent-item {
-  display: block;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
   padding: 16px 18px;
   text-decoration: none;
+}
+
+.recent-favicon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: #eef0f4;
+  color: #5f6368;
+  font-size: 20px;
+  line-height: 1;
+  overflow: hidden;
+}
+
+.recent-favicon img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.recent-text {
+  display: grid;
+  min-width: 0;
 }
 
 .recent-title,
@@ -751,7 +778,7 @@ a {
 .settings-empty {
   width: 100%;
   border: 0;
-  border-radius: 18px;
+  border-radius: 0;
   background: #fff;
   color: #202124;
 }
