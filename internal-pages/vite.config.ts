@@ -13,6 +13,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         home: resolve(__dirname, "home.html"),
+        search: resolve(__dirname, "search.html"),
         bookmarks: resolve(__dirname, "bookmarks.html"),
         history: resolve(__dirname, "history.html")
       }

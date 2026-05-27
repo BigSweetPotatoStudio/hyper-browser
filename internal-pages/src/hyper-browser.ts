@@ -15,6 +15,12 @@ type HistoryItem = {
   visitedAt?: string;
 };
 
+type SearchSuggestionItem = {
+  title?: string;
+  url: string;
+  source: "bookmark" | "history";
+};
+
 declare global {
   const browser: {
     runtime?: {
@@ -33,6 +39,7 @@ type HyperBrowserApi = {
   showHistory(): void;
   showExtensions(): void;
   requestHomeData(): Promise<HistoryItem[]>;
+  requestSearchData(): Promise<SearchSuggestionItem[]>;
   requestBookmarksData(): Promise<BookmarkItem[]>;
   requestHistoryData(): Promise<HistoryItem[]>;
   openBookmark(url: string): void;
@@ -99,6 +106,9 @@ window.hyperBrowser = {
   requestHomeData() {
     return requestData<HistoryItem>("data.home");
   },
+  requestSearchData() {
+    return requestData<SearchSuggestionItem>("data.search");
+  },
   requestBookmarksData() {
     return requestData<BookmarkItem>("data.bookmarks");
   },
@@ -125,4 +135,4 @@ window.hyperBrowser = {
   }
 };
 
-export type { BookmarkItem, HistoryItem };
+export type { BookmarkItem, HistoryItem, SearchSuggestionItem };

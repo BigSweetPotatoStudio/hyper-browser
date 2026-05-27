@@ -138,6 +138,12 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
         val payload = message.optJSONObject("payload") ?: JSONObject()
         return when (message.optString("type")) {
             "data.home" -> okItems(profileStore.observeHistory().value.toHistoryJsonString())
+            "data.search" -> okItems(
+                searchSuggestionsJsonString(
+                    bookmarks = profileStore.observeBookmarks().value,
+                    history = profileStore.observeHistory().value
+                )
+            )
             "data.bookmarks" -> okItems(profileStore.observeBookmarks().value.toBookmarksJsonString())
             "data.history" -> okItems(profileStore.observeHistory().value.toHistoryJsonString())
             "search.submit" -> {
@@ -196,6 +202,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     val controller = tab.controller
     val pageState by controller.state.collectAsState()
     val onHomePage = GeckoSessionController.isHomeUrl(pageState.url)
+    val onSearchPage = GeckoSessionController.isSearchUrl(pageState.url)
     val history by profileStore.observeHistory().collectAsState()
     val bookmarks by profileStore.observeBookmarks().collectAsState()
     val installedExtensions by app.extensions.observeInstalled().collectAsState()
@@ -257,6 +264,9 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             HyperRoute.Home -> {
                 tab.input = GeckoSessionController.HOME_URL
                 controller.loadHome()
+            }
+            HyperRoute.Search -> {
+                controller.loadSearch()
             }
             HyperRoute.Bookmarks -> {
                 tab.input = GeckoSessionController.BOOKMARKS_URL
@@ -432,82 +442,87 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 }
             )
         } else {
-            BrowserToolbar(
-                input = tab.input,
-                pageState = pageState,
-                message = message,
-                tabCount = tabs.size,
-                bookmarked = !GeckoSessionController.isInternalUrl(pageState.url) &&
-                    profileStore.isBookmarked(pageState.url.ifBlank { tab.input }),
-                installedExtensions = installedExtensions,
-                extensionActions = extensionActions,
-                onAddressClick = { showSearch = true },
-                onLoad = {
-                    val target = GeckoSessionController.normalizeUrl(tab.input)
-                    controller.load(target)
-                    if (!GeckoSessionController.isInternalUrl(target)) {
-                        profileStore.recordVisit(target, pageState.title)
-                    }
-                },
-                onBack = controller::goBack,
-                onForward = controller::goForward,
-                onReload = controller::reload,
-                onShowTabs = {
-                    controller.capturePixels { bitmap ->
-                        bitmap?.let { tab.thumbnail = it }
-                        showTabs = true
-                    }
-                },
-                onNewTab = {
-                    val newTab = BrowserTabRuntime.create(
-                        app = app,
-                        url = GeckoSessionController.HOME_URL,
-                        onHyperRoute = { pendingHyperRoute = it },
-                        onHyperBridgeMessage = ::handleHyperBridgeMessage
-                    )
-                    tabs.add(newTab)
-                    selectedTabId = newTab.id
-                    showTabs = false
-                    message = null
-                },
-                onHome = {
-                    tab.input = GeckoSessionController.HOME_URL
-                    controller.loadHome()
-                    message = null
-                },
-                onToggleBookmark = {
-                    val url = pageState.url.ifBlank { tab.input }
-                    profileStore.toggleBookmark(url, pageState.title)
-                },
-                onShowBookmarks = {
-                    tab.input = GeckoSessionController.BOOKMARKS_URL
-                    controller.loadBookmarks()
-                },
-                onShowHistory = {
-                    tab.input = GeckoSessionController.HISTORY_URL
-                    controller.loadHistory()
-                },
-                onShowExtensions = { showExtensions = true },
-                onExtensionClick = { extension ->
-                    scope.launch {
-                        runCatching { app.extensions.clickMenuAction(extension.guid) }
-                            .onFailure { message = it.message ?: "Extension popup unavailable." }
-                    }
-                },
-                onInstall = install@{
-                    if (GeckoSessionController.isInternalUrl(pageState.url)) {
-                        message = "Open a web page before installing it as a WebApp."
-                        return@install
-                    }
-                    scope.launch {
-                        val title = pageState.title.ifBlank { tab.input }
+            if (!onSearchPage) {
+                BrowserToolbar(
+                    input = tab.input,
+                    pageState = pageState,
+                    message = message,
+                    tabCount = tabs.size,
+                    bookmarked = !GeckoSessionController.isInternalUrl(pageState.url) &&
+                        profileStore.isBookmarked(pageState.url.ifBlank { tab.input }),
+                    installedExtensions = installedExtensions,
+                    extensionActions = extensionActions,
+                    onAddressClick = {
+                        val initialQuery = if (onHomePage) "" else pageState.url.ifBlank { tab.input }
+                        controller.loadSearch(initialQuery)
+                    },
+                    onLoad = {
+                        val target = GeckoSessionController.normalizeUrl(tab.input)
+                        controller.load(target)
+                        if (!GeckoSessionController.isInternalUrl(target)) {
+                            profileStore.recordVisit(target, pageState.title)
+                        }
+                    },
+                    onBack = controller::goBack,
+                    onForward = controller::goForward,
+                    onReload = controller::reload,
+                    onShowTabs = {
+                        controller.capturePixels { bitmap ->
+                            bitmap?.let { tab.thumbnail = it }
+                            showTabs = true
+                        }
+                    },
+                    onNewTab = {
+                        val newTab = BrowserTabRuntime.create(
+                            app = app,
+                            url = GeckoSessionController.HOME_URL,
+                            onHyperRoute = { pendingHyperRoute = it },
+                            onHyperBridgeMessage = ::handleHyperBridgeMessage
+                        )
+                        tabs.add(newTab)
+                        selectedTabId = newTab.id
+                        showTabs = false
+                        message = null
+                    },
+                    onHome = {
+                        tab.input = GeckoSessionController.HOME_URL
+                        controller.loadHome()
+                        message = null
+                    },
+                    onToggleBookmark = {
                         val url = pageState.url.ifBlank { tab.input }
-                        runCatching { app.webApps.installFromPage(title, url) }
-                            .onSuccess { message = "Installed ${it.name} as WebApp." }
-                            .onFailure { message = it.message ?: "Install failed." }
+                        profileStore.toggleBookmark(url, pageState.title)
+                    },
+                    onShowBookmarks = {
+                        tab.input = GeckoSessionController.BOOKMARKS_URL
+                        controller.loadBookmarks()
+                    },
+                    onShowHistory = {
+                        tab.input = GeckoSessionController.HISTORY_URL
+                        controller.loadHistory()
+                    },
+                    onShowExtensions = { showExtensions = true },
+                    onExtensionClick = { extension ->
+                        scope.launch {
+                            runCatching { app.extensions.clickMenuAction(extension.guid) }
+                                .onFailure { message = it.message ?: "Extension popup unavailable." }
+                        }
+                    },
+                    onInstall = install@{
+                        if (GeckoSessionController.isInternalUrl(pageState.url)) {
+                            message = "Open a web page before installing it as a WebApp."
+                            return@install
+                        }
+                        scope.launch {
+                            val title = pageState.title.ifBlank { tab.input }
+                            val url = pageState.url.ifBlank { tab.input }
+                            runCatching { app.webApps.installFromPage(title, url) }
+                                .onSuccess { message = "Installed ${it.name} as WebApp." }
+                                .onFailure { message = it.message ?: "Install failed." }
+                        }
                     }
-                }
-            )
+                )
+            }
             Box(modifier = Modifier.fillMaxSize()) {
                 key(tab.id) {
                     GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())
@@ -593,6 +608,35 @@ private fun List<BrowserHistoryEntry>.toHistoryJsonString(): String {
                 .put("url", entry.url)
                 .put("visitedAt", entry.visitedAt)
         )
+    }
+    return array.toString()
+}
+
+private fun searchSuggestionsJsonString(
+    bookmarks: List<BrowserBookmark>,
+    history: List<BrowserHistoryEntry>
+): String {
+    val seen = mutableSetOf<String>()
+    val array = JSONArray()
+    bookmarks.forEach { bookmark ->
+        if (seen.add(bookmark.url)) {
+            array.put(
+                JSONObject()
+                    .put("title", bookmark.title)
+                    .put("url", bookmark.url)
+                    .put("source", "bookmark")
+            )
+        }
+    }
+    history.filterNot { GeckoSessionController.isInternalUrl(it.url) }.forEach { entry ->
+        if (seen.add(entry.url)) {
+            array.put(
+                JSONObject()
+                    .put("title", entry.title)
+                    .put("url", entry.url)
+                    .put("source", "history")
+            )
+        }
     }
     return array.toString()
 }
@@ -954,11 +998,6 @@ private fun ExtensionPopupOverlay(
             offsetY = offsetY.coerceIn(0f, maxOffsetY)
         }
 
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .background(Color(0x66000000))
-        )
         Card(
             modifier = Modifier
                 .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
@@ -1743,8 +1782,6 @@ private fun ChromeTabHeader(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .size(ChromeActionButtonSize)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFFD8DDEA))
             ) {
                 Text("‹", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
             }
@@ -1783,8 +1820,6 @@ private fun ChromeTabHeader(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .size(ChromeActionButtonSize)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFFD8DDEA))
             ) {
                 Text("+", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
             }
