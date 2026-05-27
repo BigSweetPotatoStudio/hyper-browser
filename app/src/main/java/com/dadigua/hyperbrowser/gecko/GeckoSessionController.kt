@@ -15,7 +15,8 @@ data class GeckoPageState(
     val url: String = "",
     val insecureHttp: Boolean = false,
     val canGoBack: Boolean = false,
-    val canGoForward: Boolean = false
+    val canGoForward: Boolean = false,
+    val isLoading: Boolean = false
 )
 
 class GeckoSessionController(
@@ -38,6 +39,15 @@ class GeckoSessionController(
         session.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onTitleChange(session: GeckoSession, title: String?) {
                 _state.value = _state.value.copy(title = title.orEmpty())
+            }
+        }
+        session.progressDelegate = object : GeckoSession.ProgressDelegate {
+            override fun onPageStart(session: GeckoSession, url: String) {
+                _state.value = _state.value.copy(isLoading = true)
+            }
+
+            override fun onPageStop(session: GeckoSession, success: Boolean) {
+                _state.value = _state.value.copy(isLoading = false)
             }
         }
         session.navigationDelegate = object : GeckoSession.NavigationDelegate {
