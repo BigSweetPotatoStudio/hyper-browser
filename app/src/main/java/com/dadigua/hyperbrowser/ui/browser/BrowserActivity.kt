@@ -2,6 +2,7 @@ package com.dadigua.hyperbrowser.ui.browser
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
@@ -19,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.defaultMinSize
@@ -63,6 +63,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -348,6 +349,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             TabTray(
                 tabs = tabs,
                 selectedTabId = selectedTabId,
+                onBack = { showTabs = false },
                 onSelect = {
                     selectedTabId = it
                     showTabs = false
@@ -403,7 +405,10 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 onBack = controller::goBack,
                 onForward = controller::goForward,
                 onReload = controller::reload,
-                onShowTabs = { showTabs = true },
+                onShowTabs = {
+                    controller.capturePixels { tab.thumbnail = it }
+                    showTabs = true
+                },
                 onNewTab = {
                     val newTab = BrowserTabRuntime.create(
                         app = app,
@@ -475,6 +480,7 @@ private class BrowserTabRuntime private constructor(
     input: String
 ) {
     var input by mutableStateOf(input)
+    var thumbnail by mutableStateOf<Bitmap?>(null)
 
     companion object {
         fun create(
@@ -1534,45 +1540,84 @@ private fun AddonResultRow(
 private fun TabTray(
     tabs: List<BrowserTabRuntime>,
     selectedTabId: String,
+    onBack: () -> Unit,
     onSelect: (String) -> Unit,
     onClose: (String) -> Unit,
     onNewTab: () -> Unit
 ) {
+    var mode by remember { mutableStateOf(TabTrayMode.Card) }
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFFF4F5FA))
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            ChromeTabHeader(count = tabs.size, onNewTab = onNewTab)
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 18.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
-                horizontalArrangement = Arrangement.spacedBy(18.dp)
-            ) {
-                items(tabs, key = { it.id }) { tab ->
-                    val pageState by tab.controller.state.collectAsState()
-                    ChromeTabCard(
-                        tab = tab,
-                        pageState = pageState,
-                        selected = tab.id == selectedTabId,
-                        onSelect = { onSelect(tab.id) },
-                        onClose = { onClose(tab.id) }
-                    )
+            ChromeTabHeader(
+                count = tabs.size,
+                mode = mode,
+                onBack = onBack,
+                onModeChange = { mode = it },
+                onNewTab = onNewTab
+            )
+            if (mode == TabTrayMode.List) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(tabs, key = { it.id }) { tab ->
+                        val pageState by tab.controller.state.collectAsState()
+                        ChromeTabListRow(
+                            tab = tab,
+                            pageState = pageState,
+                            selected = tab.id == selectedTabId,
+                            onSelect = { onSelect(tab.id) },
+                            onClose = { onClose(tab.id) }
+                        )
+                    }
                 }
-                item {
-                    Spacer(modifier = Modifier.height(120.dp))
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    horizontalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    items(tabs, key = { it.id }) { tab ->
+                        val pageState by tab.controller.state.collectAsState()
+                        ChromeTabCard(
+                            tab = tab,
+                            pageState = pageState,
+                            selected = tab.id == selectedTabId,
+                            onSelect = { onSelect(tab.id) },
+                            onClose = { onClose(tab.id) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(302.dp)
+                        )
+                    }
                 }
             }
         }
     }
 }
 
+private enum class TabTrayMode {
+    Card,
+    List
+}
+
 @Composable
-private fun ChromeTabHeader(count: Int, onNewTab: () -> Unit) {
+private fun ChromeTabHeader(
+    count: Int,
+    mode: TabTrayMode,
+    onBack: () -> Unit,
+    onModeChange: (TabTrayMode) -> Unit,
+    onNewTab: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1585,14 +1630,14 @@ private fun ChromeTabHeader(count: Int, onNewTab: () -> Unit) {
                 .padding(horizontal = 18.dp)
         ) {
             IconButton(
-                onClick = onNewTab,
+                onClick = onBack,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .size(ChromeActionButtonSize)
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(0xFFD8DDEA))
             ) {
-                Text("+", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
+                Text("‹", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
             }
             Row(
                 modifier = Modifier
@@ -1607,34 +1652,32 @@ private fun ChromeTabHeader(count: Int, onNewTab: () -> Unit) {
                     modifier = Modifier
                         .size(40.dp)
                         .clip(RoundedCornerShape(26.dp))
-                        .background(Color(0xFFF8F9FE)),
+                        .background(if (mode == TabTrayMode.Card) Color(0xFFF8F9FE) else Color.Transparent)
+                        .clickable { onModeChange(TabTrayMode.Card) },
                     contentAlignment = Alignment.Center
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .border(3.dp, Color(0xFF202124), RoundedCornerShape(8.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(count.toString(), fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    }
+                    Text("▣", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
                 }
                 Box(
                     modifier = Modifier
                         .size(40.dp)
-                        .clip(RoundedCornerShape(26.dp)),
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(if (mode == TabTrayMode.List) Color(0xFFF8F9FE) else Color.Transparent)
+                        .clickable { onModeChange(TabTrayMode.List) },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("▦", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
+                    Text("≡", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
                 }
             }
             IconButton(
-                onClick = { },
+                onClick = onNewTab,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .size(ChromeActionButtonSize)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFFD8DDEA))
             ) {
-                Text("⋮", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
+                Text("+", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
             }
         }
         HorizontalDivider(color = Color(0xFFDADCE3))
@@ -1647,12 +1690,11 @@ private fun ChromeTabCard(
     pageState: GeckoPageState,
     selected: Boolean,
     onSelect: () -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(0.72f),
+        modifier = modifier,
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xFF5669A6) else Color(0xFFE0E2EA)),
         border = null,
@@ -1698,27 +1740,87 @@ private fun ChromeTabCard(
                     .clickable { onSelect() },
                 contentAlignment = Alignment.TopStart
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    horizontalAlignment = Alignment.Start,
-                ) {
-                    Text(
-                        pageState.title.ifBlank { "New tab" },
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                val thumbnail = tab.thumbnail
+                if (thumbnail != null) {
+                    Image(
+                        bitmap = thumbnail.asImageBitmap(),
+                        contentDescription = null,
+                        alignment = Alignment.TopCenter,
+                        contentScale = ContentScale.FillWidth,
+                        modifier = Modifier.fillMaxSize()
                     )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        pageState.url.ifBlank { tab.input },
-                        color = Color(0xFF6F737B),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        horizontalAlignment = Alignment.Start,
+                    ) {
+                        Text(
+                            pageState.title.ifBlank { "New tab" },
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            pageState.url.ifBlank { tab.input },
+                            color = Color(0xFF6F737B),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ChromeTabListRow(
+    tab: BrowserTabRuntime,
+    pageState: GeckoPageState,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onClose: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(86.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (selected) Color(0xFF5669A6) else Color.White)
+            .clickable(onClick = onSelect)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+                .background(if (selected) Color.White else Color(0xFFE8EAED)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("G", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4285F4))
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                pageState.title.ifBlank { "New tab" },
+                color = if (selected) Color.White else Color(0xFF202124),
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                pageState.url.ifBlank { tab.input },
+                color = if (selected) Color(0xFFE8EAED) else Color(0xFF6F737B),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        TextButton(onClick = onClose, shape = RectangleShape, modifier = Modifier.size(44.dp)) {
+            Text("×", fontSize = 30.sp, color = if (selected) Color.White else Color(0xFF202124))
         }
     }
 }

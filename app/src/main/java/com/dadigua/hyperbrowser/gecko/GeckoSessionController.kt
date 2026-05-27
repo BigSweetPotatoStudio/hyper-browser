@@ -1,11 +1,14 @@
 package com.dadigua.hyperbrowser.gecko
 
 import android.content.Context
+import android.graphics.Bitmap
+import androidx.core.view.drawToBitmap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.GeckoView
 import java.net.URLDecoder
 import java.net.URLEncoder
 
@@ -29,6 +32,7 @@ class GeckoSessionController(
     private val runtime = GeckoRuntimeProvider.get(context)
     private val _state = MutableStateFlow(GeckoPageState(url = initialUrl, insecureHttp = initialUrl.startsWith("http://")))
     private var currentRawUrl: String = initialUrl
+    private var view: GeckoView? = null
     val state: StateFlow<GeckoPageState> = _state
 
     init {
@@ -136,6 +140,20 @@ class GeckoSessionController(
 
     fun reload() {
         runCatching { session.reload() }
+    }
+
+    fun attachView(view: GeckoView?) {
+        this.view = view
+    }
+
+    fun capturePixels(onCaptured: (Bitmap) -> Unit) {
+        val currentView = view ?: return
+        runCatching {
+            onCaptured(currentView.drawToBitmap())
+        }
+        currentView.capturePixels().accept({ bitmap ->
+            if (bitmap != null) onCaptured(bitmap)
+        }, {})
     }
 
     fun close() {

@@ -97,6 +97,8 @@ com.dadigua.hyperbrowser/.ui.browser.BrowserActivity
   - WebApp 定义和 pinned shortcut
 - `app/src/main/java/com/dadigua/hyperbrowser/extensions/ExtensionRepository.kt`
   - AMO 搜索、XPI 下载、GeckoView WebExtension 安装/启停/卸载
+- `app/src/main/assets/`
+  - 内置 HTML 页面和 JS 包装：`home.html`、`bookmarks.html`、`history.html`、`hyper-browser.js`
 
 ## 设计方向
 
@@ -108,6 +110,54 @@ com.dadigua.hyperbrowser/.ui.browser.BrowserActivity
 - 标签页使用 Chrome 风格两列卡片和顶部模式切换胶囊
 
 不要把所有浏览器操作按钮堆在顶部工具栏。
+
+## 内置 HTML 页面与 HyperCommand
+
+首页、书签页、历史页优先作为 GeckoView 内置 HTML 页面开发，而不是 Compose 面板：
+
+- `hyper://home` -> `resource://android/assets/home.html`
+- `hyper://bookmarks` -> `resource://android/assets/bookmarks.html#data=...`
+- `hyper://history` -> `resource://android/assets/history.html#data=...`
+
+地址栏必须显示语义 URL，例如 `hyper://home`、`hyper://bookmarks`、`hyper://history`，不要向用户暴露 `resource://android/assets/...`。
+
+内置页面中的浏览器操作通过 `window.hyperBrowser` 发出，JS 文件统一放在：
+
+```text
+app/src/main/assets/hyper-browser.js
+```
+
+不要再使用 `hyper://api/...`。内置页面发出的命令统一走：
+
+```text
+hyper://command/search/submit?query=...
+hyper://command/bookmarks/open?url=...
+hyper://command/bookmarks/remove?url=...
+hyper://command/bookmarks/edit?oldUrl=...&title=...&url=...
+hyper://command/history/open?url=...
+hyper://command/history/remove?url=...
+hyper://command/history/clear
+hyper://command/panel/extensions
+```
+
+Kotlin 侧要把页面路由和页面命令分开：
+
+- `HyperRoute` 只表示可进入 Gecko 历史栈的内置页面：`Home`、`Bookmarks`、`History`
+- `HyperCommand` 只表示内置页面发给浏览器壳的动作，并按功能域分组：`Search`、`Bookmarks`、`History`、`Panel`
+
+`GeckoSessionController` 只负责安全校验和解析：
+
+- `hyper://home`、`hyper://bookmarks`、`hyper://history` 解析为 `HyperRoute`
+- `hyper://command/...` 只有当前 raw URL 是白名单内置 asset 页面时才解析为 `HyperCommand`
+- 普通网页、`https://`、`http://`、`moz-extension://` 页面发出的 `hyper://command/...` 必须直接拒绝，不能执行业务动作
+- 不要新增全局 native bridge；`hyper-browser.js` 只是生成受控导航请求的 JS 包装
+
+书签和历史数据的 HTML bootstrap 可以放在 URL hash 里，但数据变化后不能通过重载 asset 刷新：
+
+- 不要使用 `?v=<timestamp>` 这类 cache busting 刷新方案
+- 书签删除、编辑，历史删除、清空，都应由 HTML 页面更新本地 JS state 和 DOM，保留滚动位置
+- Kotlin 收到对应 `HyperCommand` 后只更新 JSON/store，不要重新 `loadBookmarks()` 或 `loadHistory()`
+- 如果需要跨页面实时同步，后续再设计专门通道；v1 只要求下次进入页面时读取最新 JSON
 
 ## Iceraven 菜单复刻要点
 
