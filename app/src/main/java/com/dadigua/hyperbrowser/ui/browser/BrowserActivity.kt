@@ -41,6 +41,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.AddToHomeScreen
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.BookmarkAdd
+import androidx.compose.material.icons.outlined.BookmarkRemove
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -49,6 +58,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -71,6 +81,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -258,6 +269,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     val history by profileStore.observeHistory().collectAsState()
     val bookmarks by profileStore.observeBookmarks().collectAsState()
     val settings by profileStore.observeSettings().collectAsState()
+    val webApps by app.webApps.observeAll().collectAsState()
     val installedExtensions by app.extensions.observeInstalled().collectAsState()
     val extensionActions by app.extensions.observeMenuActions().collectAsState()
     val extensionPopup by app.extensions.observePopup().collectAsState()
@@ -305,6 +317,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             if (pageState.url == controller.state.value.url) {
                 currentIconPath = iconPath
                 if (iconPath != null) {
+                    tab.iconPath = iconPath
                     profileStore.recordVisit(pageState.url, controller.state.value.title, iconPath)
                     profileStore.updateBookmarkIcon(pageState.url, iconPath)
                 }
@@ -532,6 +545,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             } else if (showTabs) {
                 TabTray(
                     tabs = tabs,
+                    faviconStore = faviconStore,
                     selectedTabId = selectedTabId,
                     onBack = { showTabs = false },
                     onSelect = {
@@ -570,12 +584,19 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 )
             } else if (!onSearchPage) {
                 val toolbar = @Composable {
+                    val currentPageUrl = pageState.url.ifBlank { tab.input }
+                    val installedWebApp = if (GeckoSessionController.isInternalUrl(currentPageUrl)) {
+                        null
+                    } else {
+                        webApps.firstOrNull { it.startUrl == currentPageUrl }
+                    }
                     BrowserToolbar(
                         input = tab.input,
                         pageState = pageState,
                         tabCount = tabs.size,
                         bookmarked = !GeckoSessionController.isInternalUrl(pageState.url) &&
-                            profileStore.isBookmarked(pageState.url.ifBlank { tab.input }),
+                            profileStore.isBookmarked(currentPageUrl),
+                        webAppInstalled = installedWebApp != null,
                         installedExtensions = installedExtensions,
                         extensionActions = extensionActions,
                         toolbarPosition = settings.toolbarPosition,
@@ -617,14 +638,6 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                             val url = pageState.url.ifBlank { tab.input }
                             profileStore.toggleBookmark(url, pageState.title, currentIconPath)
                         },
-                        onShowBookmarks = {
-                            tab.input = GeckoSessionController.BOOKMARKS_URL
-                            controller.loadBookmarks()
-                        },
-                        onShowHistory = {
-                            tab.input = GeckoSessionController.HISTORY_URL
-                            controller.loadHistory()
-                        },
                         onShowSettings = {
                             tab.input = GeckoSessionController.SETTINGS_URL
                             controller.loadSettings()
@@ -637,6 +650,14 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                             }
                         },
                         onInstall = install@{
+                            installedWebApp?.let { webApp ->
+                                scope.launch {
+                                    runCatching { app.webApps.delete(webApp.id) }
+                                        .onSuccess { message = if (it) "Uninstalled ${webApp.name}." else "WebApp not found." }
+                                        .onFailure { message = it.message ?: "Uninstall failed." }
+                                }
+                                return@install
+                            }
                             if (GeckoSessionController.isInternalUrl(pageState.url)) {
                                 message = "Open a web page before installing it as a WebApp."
                                 return@install
@@ -710,6 +731,7 @@ private class BrowserTabRuntime private constructor(
 ) {
     var input by mutableStateOf(input)
     var thumbnail by mutableStateOf<Bitmap?>(null)
+    var iconPath by mutableStateOf<String?>(null)
 
     companion object {
         fun create(
@@ -955,6 +977,7 @@ private fun BrowserToolbar(
     pageState: GeckoPageState,
     tabCount: Int,
     bookmarked: Boolean,
+    webAppInstalled: Boolean,
     installedExtensions: List<InstalledExtensionState>,
     extensionActions: Map<String, ExtensionMenuActionState>,
     toolbarPosition: String,
@@ -970,8 +993,6 @@ private fun BrowserToolbar(
     onShowTabs: () -> Unit,
     onNewTab: () -> Unit,
     onToggleBookmark: () -> Unit,
-    onShowBookmarks: () -> Unit,
-    onShowHistory: () -> Unit,
     onShowSettings: () -> Unit,
     onShowExtensions: () -> Unit,
     onExtensionClick: (InstalledExtensionState) -> Unit,
@@ -1151,9 +1172,10 @@ private fun BrowserToolbar(
                     Text("⋮", fontSize = ChromeActionIconSize)
                 }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                    BrowserMenuPanel(
-                        bookmarked = bookmarked,
-                        enabledExtensions = enabledExtensions,
+                        BrowserMenuPanel(
+                            bookmarked = bookmarked,
+                            webAppInstalled = webAppInstalled,
+                            enabledExtensions = enabledExtensions,
                         installedExtensionCount = installedExtensions.size,
                         extensionActions = extensionActions,
                         extensionsExpanded = extensionsExpanded,
@@ -1163,8 +1185,6 @@ private fun BrowserToolbar(
                         onForward = { showMenu = false; onForward() },
                         onReload = { showMenu = false; onReload() },
                         onToggleBookmark = { showMenu = false; onToggleBookmark() },
-                        onShowBookmarks = { showMenu = false; onShowBookmarks() },
-                        onShowHistory = { showMenu = false; onShowHistory() },
                         onShowSettings = { showMenu = false; onShowSettings() },
                         onShowExtensions = { showMenu = false; onShowExtensions() },
                         onExtensionClick = { showMenu = false; onExtensionClick(it) },
@@ -1226,6 +1246,7 @@ private fun BrowserTip(
 @Composable
 private fun BrowserMenuPanel(
     bookmarked: Boolean,
+    webAppInstalled: Boolean,
     enabledExtensions: List<InstalledExtensionState>,
     installedExtensionCount: Int,
     extensionActions: Map<String, ExtensionMenuActionState>,
@@ -1236,8 +1257,6 @@ private fun BrowserMenuPanel(
     onForward: () -> Unit,
     onReload: () -> Unit,
     onToggleBookmark: () -> Unit,
-    onShowBookmarks: () -> Unit,
-    onShowHistory: () -> Unit,
     onShowSettings: () -> Unit,
     onShowExtensions: () -> Unit,
     onExtensionClick: (InstalledExtensionState) -> Unit,
@@ -1255,13 +1274,17 @@ private fun BrowserMenuPanel(
             onReload = onReload
         )
         MenuGroupBox {
-            BrowserMenuRow(label = "New tab", leading = "+", onClick = onNewTab)
+            BrowserMenuRow(label = "New tab", leadingIconVector = Icons.Outlined.Add, onClick = onNewTab)
             BrowserMenuRow(
-                label = if (bookmarked) "Edit bookmark" else "Bookmark this page",
-                leading = if (bookmarked) "*" else "☆",
+                label = if (bookmarked) "Remove bookmark" else "Bookmark this page",
+                leadingIconVector = if (bookmarked) Icons.Outlined.BookmarkRemove else Icons.Outlined.BookmarkAdd,
                 onClick = onToggleBookmark
             )
-            BrowserMenuRow(label = "Install as WebApp", leading = "A", onClick = onInstall)
+            BrowserMenuRow(
+                label = if (webAppInstalled) "Uninstall WebApp" else "Install as WebApp",
+                leadingIconVector = if (webAppInstalled) Icons.Outlined.Delete else Icons.AutoMirrored.Outlined.AddToHomeScreen,
+                onClick = onInstall
+            )
         }
         MenuGroupBox {
             ExtensionsMenuRow(
@@ -1274,7 +1297,7 @@ private fun BrowserMenuPanel(
                 if (enabledExtensions.isEmpty()) {
                     BrowserMenuRow(
                         label = "Discover more extensions",
-                        leading = "+",
+                        leadingIconVector = Icons.Outlined.Add,
                         description = "Search Android add-ons",
                         indent = 28.dp,
                         onClick = onShowExtensions
@@ -1284,8 +1307,8 @@ private fun BrowserMenuPanel(
                         val action = extensionActions[extension.guid]
                         BrowserMenuRow(
                             label = action?.title ?: extension.name,
-                            leading = "E",
                             leadingIcon = action?.icon,
+                            leadingIconVector = Icons.Outlined.Extension,
                             description = action?.badgeText?.takeIf { it.isNotBlank() }
                                 ?: extension.version,
                             trailing = if (action?.enabled == false) "Disabled" else "Settings",
@@ -1296,7 +1319,7 @@ private fun BrowserMenuPanel(
                     }
                     BrowserMenuRow(
                         label = "Manage extensions",
-                        leading = ">",
+                        leadingIconVector = Icons.Outlined.Tune,
                         description = "$installedExtensionCount installed",
                         indent = 28.dp,
                         onClick = onShowExtensions
@@ -1305,9 +1328,7 @@ private fun BrowserMenuPanel(
             }
         }
         MenuGroupBox {
-            BrowserMenuRow(label = "History", leading = "H", onClick = onShowHistory)
-            BrowserMenuRow(label = "Bookmarks", leading = "B", onClick = onShowBookmarks)
-            BrowserMenuRow(label = "Settings", leading = "S", onClick = onShowSettings)
+            BrowserMenuRow(label = "Settings", leadingIconVector = Icons.Outlined.Settings, onClick = onShowSettings)
         }
     }
 }
@@ -1369,7 +1390,7 @@ private fun ExtensionsMenuRow(
 ) {
     BrowserMenuRow(
         label = "Extensions",
-        leading = "E",
+        leadingIconVector = Icons.Outlined.Extension,
         description = when {
             enabledCount > 0 -> "$enabledCount enabled"
             installedCount > 0 -> "$installedCount installed, none enabled"
@@ -1383,8 +1404,8 @@ private fun ExtensionsMenuRow(
 @Composable
 private fun BrowserMenuRow(
     label: String,
-    leading: String,
     leadingIcon: android.graphics.Bitmap? = null,
+    leadingIconVector: ImageVector? = null,
     description: String? = null,
     trailing: String? = null,
     indent: Dp = 0.dp,
@@ -1414,8 +1435,15 @@ private fun BrowserMenuRow(
                     contentDescription = null,
                     modifier = Modifier.size(20.dp)
                 )
+            } else if (leadingIconVector != null) {
+                Icon(
+                    imageVector = leadingIconVector,
+                    contentDescription = null,
+                    modifier = Modifier.size(19.dp),
+                    tint = Color(0xFF202124)
+                )
             } else {
-                Text(leading, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF202124))
+                Spacer(modifier = Modifier.size(19.dp))
             }
         }
         Column(modifier = Modifier.weight(1f)) {
@@ -2175,6 +2203,7 @@ private fun AddonResultRow(
 @Composable
 private fun TabTray(
     tabs: List<BrowserTabRuntime>,
+    faviconStore: FaviconRepository,
     selectedTabId: String,
     onBack: () -> Unit,
     onSelect: (String) -> Unit,
@@ -2207,6 +2236,7 @@ private fun TabTray(
                         ChromeTabListRow(
                             tab = tab,
                             pageState = pageState,
+                            faviconStore = faviconStore,
                             selected = tab.id == selectedTabId,
                             onSelect = { onSelect(tab.id) },
                             onClose = { onClose(tab.id) }
@@ -2227,6 +2257,7 @@ private fun TabTray(
                         ChromeTabCard(
                             tab = tab,
                             pageState = pageState,
+                            faviconStore = faviconStore,
                             selected = tab.id == selectedTabId,
                             onSelect = { onSelect(tab.id) },
                             onClose = { onClose(tab.id) },
@@ -2318,6 +2349,7 @@ private fun ChromeTabHeader(
 private fun ChromeTabCard(
     tab: BrowserTabRuntime,
     pageState: GeckoPageState,
+    faviconStore: FaviconRepository,
     selected: Boolean,
     onSelect: () -> Unit,
     onClose: () -> Unit,
@@ -2337,28 +2369,28 @@ private fun ChromeTabCard(
                     .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(CircleShape)
-                        .background(Color.White),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("G", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4285F4))
-                }
+                TabFavicon(
+                    iconPath = tab.iconPath,
+                    pageUrl = pageState.url.ifBlank { tab.input },
+                    fallbackLabel = pageState.title.ifBlank { pageState.url.ifBlank { tab.input } },
+                    faviconStore = faviconStore,
+                    selected = selected,
+                    size = 30.dp
+                )
                 Text(
                     pageState.title.ifBlank { "打开新的标签页" },
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 8.dp)
                         .clickable { onSelect() },
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleSmall,
+                    lineHeight = 16.sp,
                     color = if (selected) Color.White else Color(0xFF202124)
                 )
-                TextButton(onClick = onClose, shape = RectangleShape, modifier = Modifier.size(44.dp)) {
-                    Text("×", fontSize = 34.sp, color = if (selected) Color.White else Color(0xFF202124))
+                IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
+                    Text("×", fontSize = 28.sp, lineHeight = 28.sp, color = if (selected) Color.White else Color(0xFF202124))
                 }
             }
             Box(
@@ -2410,6 +2442,7 @@ private fun ChromeTabCard(
 private fun ChromeTabListRow(
     tab: BrowserTabRuntime,
     pageState: GeckoPageState,
+    faviconStore: FaviconRepository,
     selected: Boolean,
     onSelect: () -> Unit,
     onClose: () -> Unit
@@ -2425,21 +2458,20 @@ private fun ChromeTabListRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(42.dp)
-                .clip(CircleShape)
-                .background(if (selected) Color.White else Color(0xFFE8EAED)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("G", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4285F4))
-        }
+        TabFavicon(
+            iconPath = tab.iconPath,
+            pageUrl = pageState.url.ifBlank { tab.input },
+            fallbackLabel = pageState.title.ifBlank { pageState.url.ifBlank { tab.input } },
+            faviconStore = faviconStore,
+            selected = selected,
+            size = 42.dp
+        )
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 pageState.title.ifBlank { "New tab" },
                 color = if (selected) Color.White else Color(0xFF202124),
                 fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
@@ -2449,8 +2481,48 @@ private fun ChromeTabListRow(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        TextButton(onClick = onClose, shape = RectangleShape, modifier = Modifier.size(44.dp)) {
-            Text("×", fontSize = 30.sp, color = if (selected) Color.White else Color(0xFF202124))
+        IconButton(onClick = onClose, modifier = Modifier.size(44.dp)) {
+            Text("×", fontSize = 28.sp, lineHeight = 28.sp, color = if (selected) Color.White else Color(0xFF202124))
+        }
+    }
+}
+
+@Composable
+private fun TabFavicon(
+    iconPath: String?,
+    pageUrl: String,
+    fallbackLabel: String,
+    faviconStore: FaviconRepository,
+    selected: Boolean,
+    size: Dp
+) {
+    val iconBitmap = remember(iconPath, pageUrl) {
+        val path = iconPath ?: faviconStore.cachedIconPath(pageUrl)
+        path?.let { android.graphics.BitmapFactory.decodeFile(it) }
+    }
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(if (selected) Color.White else Color(0xFFE8EAED)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (iconBitmap != null) {
+            Image(
+                bitmap = iconBitmap.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .size((size.value * 0.68f).dp)
+                    .clip(RoundedCornerShape(4.dp))
+            )
+        } else {
+            Text(
+                fallbackLabel.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                fontSize = (size.value * 0.48f).sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF4285F4)
+            )
         }
     }
 }
