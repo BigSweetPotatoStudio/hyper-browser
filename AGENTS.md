@@ -32,6 +32,13 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 .\gradlew.bat :app:installDebug --console=plain
 ```
 
+默认交付方式：
+
+- 修改代码后，默认只执行构建、安装 App、启动 App，并给出人工测试步骤
+- 不要默认替用户执行 adb 点击、截图、uiautomator dump、坐标操作或完整自动化验收
+- 只有当用户明确说“帮我自动测试”“帮我截图验证”“用 adb 验证”“你来点一下看看”等要求时，才执行自动化测试和截图验证
+- 如果问题必须依赖真实设备状态才能定位，可以先说明需要自动测试的原因，再等待用户明确授权，除非用户当前请求本身已经要求调试真实设备行为
+
 启动浏览器 Activity：
 
 ```powershell
@@ -45,7 +52,7 @@ adb shell am start -n com.dadigua.hyperbrowser/.ui.browser.BrowserActivity --es 
 adb shell monkey -p com.dadigua.hyperbrowser 1
 ```
 
-截图验证：
+手动截图验证命令：
 
 ```powershell
 adb shell screencap -p /sdcard/hyper.png
@@ -270,15 +277,15 @@ WebExtension 安装还需要处理 GeckoView 权限提示。否则 XPI 下载完
 - update/optional prompt 默认允许
 - 安装过程要加超时保护，避免 UI 永久卡住
 
-安装状态验证不要只看按钮文案。可以读取 app 私有 JSON：
+需要自动验证扩展安装状态时，不要只看按钮文案。可以读取 app 私有 JSON：
 
 ```powershell
 adb shell run-as com.dadigua.hyperbrowser cat files/installed_extensions.json
 ```
 
-也要打开三点菜单确认扩展入口显示 enabled 数量，并展开看到扩展条目。
+如果用户明确要求自动验证，也要打开三点菜单确认扩展入口显示 enabled 数量，并展开看到扩展条目。
 
-扩展 popup 验证不能只看到菜单条目。点击 uBlock 这类扩展后，`uiautomator` 应能看到 popup WebView 内容，例如：
+需要自动验证扩展 popup 时，不能只看到菜单条目。点击 uBlock 这类扩展后，`uiautomator` 应能看到 popup WebView 内容，例如：
 
 - `uBlock Origin - Example Domain`
 - `在此页面已拦截`
@@ -302,12 +309,17 @@ popup 容器高度必须覆盖 WebExtension 内容的可交互区域。不要让
 
 保持结构简单，后续需要迁移再引入 Room/DataStore。
 
-## 验证重点
+## 验证和交付重点
 
-每次改浏览器主交互后至少验证：
+每次改浏览器主交互后，默认完成：
 
 - `.\gradlew.bat :app:assembleDebug --console=plain`
 - `.\gradlew.bat :app:installDebug --console=plain`
+- 启动 App 到可测试状态
+- 给用户一份简洁人工测试清单，说明应该点哪里、看到什么结果
+
+只有用户明确要求自动测试时，才继续执行以下 adb/uiautomator 验收：
+
 - launcher 解析到 `.ui.browser.BrowserActivity`
 - 打开 `https://example.com`
 - 地址栏点击进入搜索页
@@ -318,7 +330,7 @@ popup 容器高度必须覆盖 WebExtension 内容的可交互区域。不要让
 - 标签页入口能打开
 - 书签/历史/扩展入口能打开
 
-返回键行为要求：
+人工测试时，返回键行为要求：
 
 - 搜索页、书签页、历史页、扩展页、标签页：返回关闭当前面板
 - 普通网页页：返回执行网页后退
@@ -336,7 +348,7 @@ popup 容器高度必须覆盖 WebExtension 内容的可交互区域。不要让
 - `local.properties`
 - Android Studio 本地状态
 
-截图只用于本地验证，默认不提交。
+截图只用于本地验证，默认不提交。除非用户明确要求自动验证，否则不要主动生成截图。
 
 提交前建议运行：
 
@@ -351,7 +363,8 @@ git status --short
 - 不要用 Python 写文件，除非是大规模机械处理且确有必要
 - 不要随意重构无关文件
 - 不要回滚用户或其他 agent 已做的改动
-- UI 改动必须用 adb 截图确认真实手机效果，不能只说代码看起来对
+- UI 改动默认构建、安装、启动 App，并给用户人工测试步骤；不要默认用 adb 截图确认真实手机效果
+- 用户明确要求自动测试或截图验证时，才使用 adb 截图、uiautomator、坐标点击等方式确认真实手机效果
 
 菜单 UI 可用 `uiautomator` 快速验证文本和 bounds：
 

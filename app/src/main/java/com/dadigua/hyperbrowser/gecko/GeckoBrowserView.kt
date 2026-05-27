@@ -19,12 +19,14 @@ fun GeckoBrowserView(controller: GeckoSessionController, modifier: Modifier = Mo
 fun GeckoSessionView(
     session: GeckoSession,
     modifier: Modifier = Modifier,
+    viewBackend: Int? = null,
     onViewChanged: (GeckoView?) -> Unit = {}
 ) {
     AndroidView(
         modifier = modifier,
         factory = { context ->
             GeckoView(context).apply {
+                viewBackend?.let { setViewBackend(it) }
                 setSession(session)
                 onViewChanged(this)
             }

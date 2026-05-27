@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.defaultMinSize
@@ -63,9 +65,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -88,10 +94,12 @@ import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import org.mozilla.geckoview.GeckoView
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.roundToInt
 
 private val ChromeActionBarHeight = 48.dp
 private val ChromeActionButtonSize = 44.dp
@@ -924,11 +932,28 @@ private fun ExtensionPopupOverlay(
     popup: ExtensionPopupState,
     onClose: () -> Unit
 ) {
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .padding(18.dp)
     ) {
+        val density = LocalDensity.current
+        val availableWidth = maxWidth
+        val availableHeight = maxHeight
+        val popupWidth = if (availableWidth <= 360.dp) availableWidth else availableWidth * 0.92f
+        val expandedHeight = if (availableHeight <= 560.dp) availableHeight else availableHeight * 0.88f
+        var collapsed by remember(popup.guid) { mutableStateOf(false) }
+        val popupHeight = if (collapsed) ChromeActionBarHeight else expandedHeight
+        val maxOffsetX = with(density) { (availableWidth - popupWidth).toPx().coerceAtLeast(0f) }
+        val maxOffsetY = with(density) { (availableHeight - popupHeight).toPx().coerceAtLeast(0f) }
+        var offsetX by remember(popup.guid) { mutableStateOf(maxOffsetX) }
+        var offsetY by remember(popup.guid) { mutableStateOf(0f) }
+
+        LaunchedEffect(maxOffsetX, maxOffsetY) {
+            offsetX = offsetX.coerceIn(0f, maxOffsetX)
+            offsetY = offsetY.coerceIn(0f, maxOffsetY)
+        }
+
         Box(
             modifier = Modifier
                 .matchParentSize()
@@ -936,9 +961,9 @@ private fun ExtensionPopupOverlay(
         )
         Card(
             modifier = Modifier
-                .align(Alignment.TopEnd)
-                .fillMaxWidth()
-                .fillMaxHeight(),
+                .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+                .width(popupWidth)
+                .height(popupHeight),
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = Color.White),
             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
@@ -948,9 +973,16 @@ private fun ExtensionPopupOverlay(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(ChromeActionBarHeight)
+                        .pointerInput(maxOffsetX, maxOffsetY, collapsed) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                offsetX = (offsetX + dragAmount.x).coerceIn(0f, maxOffsetX)
+                                offsetY = (offsetY + dragAmount.y).coerceIn(0f, maxOffsetY)
+                            }
+                        }
                         .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
                         popup.title,
@@ -959,12 +991,40 @@ private fun ExtensionPopupOverlay(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    TextButton(onClick = onClose) {
-                        Text("Close")
+                    IconButton(
+                        onClick = {
+                            val nextCollapsed = !collapsed
+                            collapsed = nextCollapsed
+                            val nextHeight = if (nextCollapsed) ChromeActionBarHeight else expandedHeight
+                            val nextMaxOffsetY = with(density) { (availableHeight - nextHeight).toPx().coerceAtLeast(0f) }
+                            offsetY = offsetY.coerceIn(0f, nextMaxOffsetY)
+                        },
+                        modifier = Modifier.size(ChromeActionButtonSize)
+                    ) {
+                        Text(
+                            if (collapsed) "□" else "−",
+                            color = Color(0xFF202124),
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    IconButton(onClick = onClose, modifier = Modifier.size(ChromeActionButtonSize)) {
+                        Text(
+                            "×",
+                            color = Color(0xFF202124),
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
-                HorizontalDivider(color = Color(0xFFE0E3EA))
-                GeckoSessionView(session = popup.session, modifier = Modifier.fillMaxSize())
+                if (!collapsed) {
+                    HorizontalDivider(color = Color(0xFFE0E3EA))
+                    GeckoSessionView(
+                        session = popup.session,
+                        modifier = Modifier.fillMaxSize(),
+                        viewBackend = GeckoView.BACKEND_TEXTURE_VIEW
+                    )
+                }
             }
         }
     }
