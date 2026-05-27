@@ -2,6 +2,7 @@ type BridgeResponse = {
   ok: boolean;
   error?: string;
   itemsJson?: string;
+  data?: unknown;
 };
 
 type BookmarkItem = {
@@ -21,6 +22,13 @@ type SearchSuggestionItem = {
   source: "bookmark" | "history";
 };
 
+type BrowserSettings = {
+  searchEngineId: "google" | "bing" | "custom";
+  searchEngineName: string;
+  customSearchUrl: string;
+  toolbarPosition: "top" | "bottom";
+};
+
 declare global {
   const browser: {
     runtime?: {
@@ -37,9 +45,13 @@ type HyperBrowserApi = {
   open(input: string): void;
   showBookmarks(): void;
   showHistory(): void;
+  showSettings(): void;
   showExtensions(): void;
   requestHomeData(): Promise<HistoryItem[]>;
   requestSearchData(): Promise<SearchSuggestionItem[]>;
+  requestSettingsData(): Promise<BrowserSettings>;
+  updateSearchEngine(searchEngineId: BrowserSettings["searchEngineId"], customSearchUrl?: string): Promise<BrowserSettings>;
+  updateToolbarPosition(toolbarPosition: BrowserSettings["toolbarPosition"]): Promise<BrowserSettings>;
   requestBookmarksData(): Promise<BookmarkItem[]>;
   requestHistoryData(): Promise<HistoryItem[]>;
   openBookmark(url: string): void;
@@ -90,6 +102,10 @@ function requestData<T>(type: string): Promise<T[]> {
   });
 }
 
+function requestObject<T>(type: string): Promise<T> {
+  return send(type).then((response) => response.data as T);
+}
+
 window.hyperBrowser = {
   open(input) {
     command("search.submit", { query: input });
@@ -100,6 +116,9 @@ window.hyperBrowser = {
   showHistory() {
     window.location.href = "hyper://history";
   },
+  showSettings() {
+    window.location.href = "hyper://settings";
+  },
   showExtensions() {
     command("panel.extensions");
   },
@@ -108,6 +127,17 @@ window.hyperBrowser = {
   },
   requestSearchData() {
     return requestData<SearchSuggestionItem>("data.search");
+  },
+  requestSettingsData() {
+    return requestObject<BrowserSettings>("data.settings");
+  },
+  updateSearchEngine(searchEngineId, customSearchUrl = "") {
+    return send("settings.searchEngine.update", { searchEngineId, customSearchUrl })
+      .then((response) => response.data as BrowserSettings);
+  },
+  updateToolbarPosition(toolbarPosition) {
+    return send("settings.toolbarPosition.update", { toolbarPosition })
+      .then((response) => response.data as BrowserSettings);
   },
   requestBookmarksData() {
     return requestData<BookmarkItem>("data.bookmarks");
@@ -135,4 +165,4 @@ window.hyperBrowser = {
   }
 };
 
-export type { BookmarkItem, HistoryItem, SearchSuggestionItem };
+export type { BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem };

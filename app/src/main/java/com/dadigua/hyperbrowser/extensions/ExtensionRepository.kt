@@ -363,10 +363,13 @@ class ExtensionRepository(
         }
 
     private fun localized(value: JSONObject): String =
-        value.optString("zh-CN")
-            .ifBlank { value.optString("en-US") }
-            .ifBlank { value.optString("_default") }
-            .ifBlank { value.keys().asSequence().firstOrNull()?.let(value::optString).orEmpty() }
+        value.nonNullString("zh-CN")
+            .ifBlank { value.nonNullString("en-US") }
+            .ifBlank { value.nonNullString("_default") }
+            .ifBlank { value.keys().asSequence().firstOrNull()?.let { key -> value.nonNullString(key) }.orEmpty() }
+
+    private fun JSONObject.nonNullString(key: String): String =
+        optString(key).takeUnless { it == "null" }.orEmpty()
 
     private fun JSONArray?.toStringList(): List<String> {
         if (this == null) return emptyList()

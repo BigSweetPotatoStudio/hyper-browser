@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -79,6 +80,7 @@ import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.browser.BrowserBookmark
 import com.dadigua.hyperbrowser.browser.BrowserHistoryEntry
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
+import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
 import com.dadigua.hyperbrowser.extensions.ExtensionMenuActionState
@@ -146,9 +148,21 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             )
             "data.bookmarks" -> okItems(profileStore.observeBookmarks().value.toBookmarksJsonString())
             "data.history" -> okItems(profileStore.observeHistory().value.toHistoryJsonString())
+            "data.settings" -> okData(profileStore.observeSettings().value.toJson())
             "search.submit" -> {
                 pendingHyperCommand = HyperCommand.Search.Submit(payload.optString("query"))
                 ok()
+            }
+            "settings.searchEngine.update" -> {
+                profileStore.updateSearchEngine(
+                    searchEngineId = payload.optString("searchEngineId"),
+                    customSearchUrl = payload.optString("customSearchUrl")
+                )
+                okData(profileStore.observeSettings().value.toJson())
+            }
+            "settings.toolbarPosition.update" -> {
+                profileStore.updateToolbarPosition(payload.optString("toolbarPosition"))
+                okData(profileStore.observeSettings().value.toJson())
             }
             "bookmarks.open" -> {
                 pendingHyperCommand = HyperCommand.Bookmarks.Open(payload.optString("url"))
@@ -205,6 +219,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     val onSearchPage = GeckoSessionController.isSearchUrl(pageState.url)
     val history by profileStore.observeHistory().collectAsState()
     val bookmarks by profileStore.observeBookmarks().collectAsState()
+    val settings by profileStore.observeSettings().collectAsState()
     val installedExtensions by app.extensions.observeInstalled().collectAsState()
     val extensionActions by app.extensions.observeMenuActions().collectAsState()
     val extensionPopup by app.extensions.observePopup().collectAsState()
@@ -268,6 +283,10 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             HyperRoute.Search -> {
                 controller.loadSearch()
             }
+            HyperRoute.Settings -> {
+                tab.input = GeckoSessionController.SETTINGS_URL
+                controller.loadSettings()
+            }
             HyperRoute.Bookmarks -> {
                 tab.input = GeckoSessionController.BOOKMARKS_URL
                 controller.loadBookmarks()
@@ -285,7 +304,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             null -> return@LaunchedEffect
             is HyperCommand.Search.Submit -> {
                 tab.input = command.query
-                controller.load(command.query)
+                controller.load(command.query, settings.searchUrlTemplate)
             }
             is HyperCommand.Bookmarks.Open -> {
                 tab.input = command.url
@@ -325,8 +344,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 onCancel = { showSearch = false },
                 onGo = { value ->
                     tab.input = value
-                    val target = GeckoSessionController.normalizeUrl(value)
-                    controller.load(target)
+                    controller.load(value, settings.searchUrlTemplate)
                     showSearch = false
                     message = null
                 }
@@ -369,9 +387,18 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                     scope.launch {
                         extensionMessage = "Searching AMO..."
                         runCatching { app.extensions.searchAndroidAddons(extensionQuery) }
-                            .onSuccess {
-                                extensionResults = it
-                                extensionMessage = if (it.isEmpty()) "No Android add-ons found." else null
+                            .onSuccess { results ->
+                                extensionResults = results
+                                val installedMatches = results.count { result ->
+                                    installedExtensions.any { it.guid == result.guid }
+                                }
+                                val installableCount = results.size - installedMatches
+                                extensionMessage = when {
+                                    results.isEmpty() -> "No Android add-ons found."
+                                    installableCount == 0 -> "All AMO matches are already installed."
+                                    installedMatches > 0 -> "$installableCount add-ons found · $installedMatches already installed"
+                                    else -> null
+                                }
                             }
                             .onFailure { extensionMessage = it.message ?: "AMO search failed." }
                     }
@@ -443,97 +470,137 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
             )
         } else {
             if (!onSearchPage) {
-                BrowserToolbar(
-                    input = tab.input,
-                    pageState = pageState,
-                    message = message,
-                    tabCount = tabs.size,
-                    bookmarked = !GeckoSessionController.isInternalUrl(pageState.url) &&
-                        profileStore.isBookmarked(pageState.url.ifBlank { tab.input }),
-                    installedExtensions = installedExtensions,
-                    extensionActions = extensionActions,
-                    onAddressClick = {
-                        val initialQuery = if (onHomePage) "" else pageState.url.ifBlank { tab.input }
-                        controller.loadSearch(initialQuery)
-                    },
-                    onLoad = {
-                        val target = GeckoSessionController.normalizeUrl(tab.input)
-                        controller.load(target)
-                        if (!GeckoSessionController.isInternalUrl(target)) {
-                            profileStore.recordVisit(target, pageState.title)
-                        }
-                    },
-                    onBack = controller::goBack,
-                    onForward = controller::goForward,
-                    onReload = controller::reload,
-                    onShowTabs = {
-                        controller.capturePixels { bitmap ->
-                            bitmap?.let { tab.thumbnail = it }
-                            showTabs = true
-                        }
-                    },
-                    onNewTab = {
-                        val newTab = BrowserTabRuntime.create(
-                            app = app,
-                            url = GeckoSessionController.HOME_URL,
-                            onHyperRoute = { pendingHyperRoute = it },
-                            onHyperBridgeMessage = ::handleHyperBridgeMessage
-                        )
-                        tabs.add(newTab)
-                        selectedTabId = newTab.id
-                        showTabs = false
-                        message = null
-                    },
-                    onHome = {
-                        tab.input = GeckoSessionController.HOME_URL
-                        controller.loadHome()
-                        message = null
-                    },
-                    onToggleBookmark = {
-                        val url = pageState.url.ifBlank { tab.input }
-                        profileStore.toggleBookmark(url, pageState.title)
-                    },
-                    onShowBookmarks = {
-                        tab.input = GeckoSessionController.BOOKMARKS_URL
-                        controller.loadBookmarks()
-                    },
-                    onShowHistory = {
-                        tab.input = GeckoSessionController.HISTORY_URL
-                        controller.loadHistory()
-                    },
-                    onShowExtensions = { showExtensions = true },
-                    onExtensionClick = { extension ->
-                        scope.launch {
-                            runCatching { app.extensions.clickMenuAction(extension.guid) }
-                                .onFailure { message = it.message ?: "Extension popup unavailable." }
-                        }
-                    },
-                    onInstall = install@{
-                        if (GeckoSessionController.isInternalUrl(pageState.url)) {
-                            message = "Open a web page before installing it as a WebApp."
-                            return@install
-                        }
-                        scope.launch {
-                            val title = pageState.title.ifBlank { tab.input }
+                val toolbar = @Composable {
+                    BrowserToolbar(
+                        input = tab.input,
+                        pageState = pageState,
+                        message = message,
+                        tabCount = tabs.size,
+                        bookmarked = !GeckoSessionController.isInternalUrl(pageState.url) &&
+                            profileStore.isBookmarked(pageState.url.ifBlank { tab.input }),
+                        installedExtensions = installedExtensions,
+                        extensionActions = extensionActions,
+                        toolbarPosition = settings.toolbarPosition,
+                        onAddressClick = {
+                            val initialQuery = if (onHomePage) "" else pageState.url.ifBlank { tab.input }
+                            controller.loadSearch(initialQuery)
+                        },
+                        onLoad = {
+                            val target = GeckoSessionController.normalizeUrl(tab.input, settings.searchUrlTemplate)
+                            controller.load(tab.input, settings.searchUrlTemplate)
+                            if (!GeckoSessionController.isInternalUrl(target)) {
+                                profileStore.recordVisit(target, pageState.title)
+                            }
+                        },
+                        onBack = controller::goBack,
+                        onForward = controller::goForward,
+                        onReload = controller::reload,
+                        onShowTabs = {
+                            controller.capturePixels { bitmap ->
+                                bitmap?.let { tab.thumbnail = it }
+                                showTabs = true
+                            }
+                        },
+                        onNewTab = {
+                            val newTab = BrowserTabRuntime.create(
+                                app = app,
+                                url = GeckoSessionController.HOME_URL,
+                                onHyperRoute = { pendingHyperRoute = it },
+                                onHyperBridgeMessage = ::handleHyperBridgeMessage
+                            )
+                            tabs.add(newTab)
+                            selectedTabId = newTab.id
+                            showTabs = false
+                            message = null
+                        },
+                        onHome = {
+                            tab.input = GeckoSessionController.HOME_URL
+                            controller.loadHome()
+                            message = null
+                        },
+                        onToggleBookmark = {
                             val url = pageState.url.ifBlank { tab.input }
-                            runCatching { app.webApps.installFromPage(title, url) }
-                                .onSuccess { message = "Installed ${it.name} as WebApp." }
-                                .onFailure { message = it.message ?: "Install failed." }
+                            profileStore.toggleBookmark(url, pageState.title)
+                        },
+                        onShowBookmarks = {
+                            tab.input = GeckoSessionController.BOOKMARKS_URL
+                            controller.loadBookmarks()
+                        },
+                        onShowHistory = {
+                            tab.input = GeckoSessionController.HISTORY_URL
+                            controller.loadHistory()
+                        },
+                        onShowSettings = {
+                            tab.input = GeckoSessionController.SETTINGS_URL
+                            controller.loadSettings()
+                        },
+                        onShowExtensions = { showExtensions = true },
+                        onExtensionClick = { extension ->
+                            scope.launch {
+                                runCatching { app.extensions.clickMenuAction(extension.guid) }
+                                    .onFailure { message = it.message ?: "Extension popup unavailable." }
+                            }
+                        },
+                        onInstall = install@{
+                            if (GeckoSessionController.isInternalUrl(pageState.url)) {
+                                message = "Open a web page before installing it as a WebApp."
+                                return@install
+                            }
+                            scope.launch {
+                                val title = pageState.title.ifBlank { tab.input }
+                                val url = pageState.url.ifBlank { tab.input }
+                                runCatching { app.webApps.installFromPage(title, url) }
+                                    .onSuccess { message = "Installed ${it.name} as WebApp." }
+                                    .onFailure { message = it.message ?: "Install failed." }
+                            }
                         }
-                    }
-                )
-            }
-            Box(modifier = Modifier.fillMaxSize()) {
-                key(tab.id) {
-                    GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())
-                }
-                extensionPopup?.let { popup ->
-                    ExtensionPopupOverlay(
-                        popup = popup,
-                        onClose = app.extensions::closePopup
                     )
                 }
+                if (settings.toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) {
+                    BrowserContent(
+                        controller = controller,
+                        tabId = tab.id,
+                        extensionPopup = extensionPopup,
+                        onClosePopup = app.extensions::closePopup,
+                        modifier = Modifier
+                            .weight(1f)
+                            .statusBarsPadding()
+                    )
+                    toolbar()
+                } else {
+                    toolbar()
+                    BrowserContent(
+                        controller = controller,
+                        tabId = tab.id,
+                        extensionPopup = extensionPopup,
+                        onClosePopup = app.extensions::closePopup,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            } else {
+                BrowserContent(controller = controller, tabId = tab.id, extensionPopup = extensionPopup, onClosePopup = app.extensions::closePopup)
             }
+        }
+    }
+}
+
+@Composable
+private fun BrowserContent(
+    controller: GeckoSessionController,
+    tabId: String,
+    extensionPopup: ExtensionPopupState?,
+    onClosePopup: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier.fillMaxSize()) {
+        key(tabId) {
+            GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())
+        }
+        extensionPopup?.let { popup ->
+            ExtensionPopupOverlay(
+                popup = popup,
+                onClose = onClosePopup
+            )
         }
     }
 }
@@ -583,8 +650,18 @@ private fun ok(data: JSONObject? = null): JSONObject {
     return response
 }
 
+private fun okData(data: JSONObject): JSONObject =
+    JSONObject().put("ok", true).put("data", data)
+
 private fun okItems(itemsJson: String): JSONObject =
     JSONObject().put("ok", true).put("itemsJson", itemsJson)
+
+private fun BrowserSettings.toJson(): JSONObject =
+    JSONObject()
+        .put("searchEngineId", searchEngineId)
+        .put("searchEngineName", searchEngineName)
+        .put("customSearchUrl", customSearchUrl)
+        .put("toolbarPosition", toolbarPosition)
 
 private fun List<BrowserBookmark>.toBookmarksJsonString(): String {
     val array = JSONArray()
@@ -650,6 +727,7 @@ private fun BrowserToolbar(
     bookmarked: Boolean,
     installedExtensions: List<InstalledExtensionState>,
     extensionActions: Map<String, ExtensionMenuActionState>,
+    toolbarPosition: String,
     onAddressClick: () -> Unit,
     onLoad: () -> Unit,
     onBack: () -> Unit,
@@ -661,6 +739,7 @@ private fun BrowserToolbar(
     onToggleBookmark: () -> Unit,
     onShowBookmarks: () -> Unit,
     onShowHistory: () -> Unit,
+    onShowSettings: () -> Unit,
     onShowExtensions: () -> Unit,
     onExtensionClick: (InstalledExtensionState) -> Unit,
     onInstall: () -> Unit
@@ -668,10 +747,15 @@ private fun BrowserToolbar(
     var showMenu by remember { mutableStateOf(false) }
     var extensionsExpanded by remember { mutableStateOf(false) }
     val enabledExtensions = installedExtensions.filter { it.enabled }
+    val toolbarPadding = if (toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) {
+        Modifier.navigationBarsPadding()
+    } else {
+        Modifier.statusBarsPadding()
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .statusBarsPadding()
+            .then(toolbarPadding)
             .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -705,6 +789,9 @@ private fun BrowserToolbar(
                         .weight(1f)
                         .padding(horizontal = 10.dp)
                 )
+            }
+            IconButton(onClick = onNewTab, modifier = Modifier.size(ChromeActionButtonSize)) {
+                Text("+", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
             }
             IconButton(
                 onClick = onShowTabs,
@@ -741,6 +828,7 @@ private fun BrowserToolbar(
                         onToggleBookmark = { showMenu = false; onToggleBookmark() },
                         onShowBookmarks = { showMenu = false; onShowBookmarks() },
                         onShowHistory = { showMenu = false; onShowHistory() },
+                        onShowSettings = { showMenu = false; onShowSettings() },
                         onShowExtensions = { showMenu = false; onShowExtensions() },
                         onExtensionClick = { showMenu = false; onExtensionClick(it) },
                         onInstall = { showMenu = false; onInstall() }
@@ -768,6 +856,7 @@ private fun BrowserMenuPanel(
     onToggleBookmark: () -> Unit,
     onShowBookmarks: () -> Unit,
     onShowHistory: () -> Unit,
+    onShowSettings: () -> Unit,
     onShowExtensions: () -> Unit,
     onExtensionClick: (InstalledExtensionState) -> Unit,
     onInstall: () -> Unit
@@ -836,6 +925,7 @@ private fun BrowserMenuPanel(
         MenuGroupBox {
             BrowserMenuRow(label = "History", leading = "H", onClick = onShowHistory)
             BrowserMenuRow(label = "Bookmarks", leading = "B", onClick = onShowBookmarks)
+            BrowserMenuRow(label = "Settings", leading = "S", onClick = onShowSettings)
         }
     }
 }
@@ -1415,6 +1505,10 @@ private fun ExtensionsPage(
     onToggleEnabled: (InstalledExtensionState) -> Unit,
     onUninstall: (InstalledExtensionState) -> Unit
 ) {
+    val installedGuids = installed.map { it.guid }.toSet()
+    val installedAmoListings = results.associateBy { it.guid }
+    val installableResults = results.filterNot { it.guid in installedGuids }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -1502,15 +1596,16 @@ private fun ExtensionsPage(
                 )
             }
         } else {
-            items(installed, key = { it.guid }) { extension ->
+            items(installed, key = { "installed:${it.guid}" }) { extension ->
                 InstalledExtensionRow(
                     extension = extension,
+                    amoListing = installedAmoListings[extension.guid],
                     onToggle = { onToggleEnabled(extension) },
                     onUninstall = { onUninstall(extension) }
                 )
             }
         }
-        if (results.isNotEmpty()) {
+        if (installableResults.isNotEmpty()) {
             item {
                 Text(
                     "Recommended from AMO",
@@ -1519,7 +1614,7 @@ private fun ExtensionsPage(
                     fontWeight = FontWeight.Bold
                 )
             }
-            items(results, key = { it.guid }) { addon ->
+            items(installableResults, key = { "result:${it.guid}" }) { addon ->
                 AddonResultRow(
                     addon = addon,
                     installing = installingAddonGuid == addon.guid,
@@ -1586,6 +1681,7 @@ private fun ExtensionSummaryCard(
 @Composable
 private fun InstalledExtensionRow(
     extension: InstalledExtensionState,
+    amoListing: AmoAddonListing?,
     onToggle: () -> Unit,
     onUninstall: () -> Unit
 ) {
@@ -1612,6 +1708,19 @@ private fun InstalledExtensionRow(
                     Text(extension.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text("${extension.version} · ${if (extension.enabled) "Enabled" else "Disabled"}", color = Color(0xFF5F6368))
                 }
+            }
+            amoListing?.let { listing ->
+                val updateAvailable = listing.version != extension.version
+                Text(
+                    if (updateAvailable) {
+                        "AMO update available: ${listing.version}"
+                    } else {
+                        "AMO latest: ${listing.version}"
+                    },
+                    color = if (updateAvailable) Color(0xFF126D6A) else Color(0xFF5F6368),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (updateAvailable) FontWeight.SemiBold else FontWeight.Normal
+                )
             }
             if (extension.permissionsSnapshot.isNotBlank()) {
                 Text(

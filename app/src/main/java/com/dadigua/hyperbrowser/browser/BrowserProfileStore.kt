@@ -19,14 +19,47 @@ data class BrowserBookmark(
     val createdAt: Long
 )
 
+data class BrowserSettings(
+    val searchEngineId: String = SEARCH_ENGINE_GOOGLE,
+    val customSearchUrl: String = "",
+    val toolbarPosition: String = TOOLBAR_POSITION_TOP
+) {
+    val searchEngineName: String
+        get() = when (searchEngineId) {
+            SEARCH_ENGINE_BING -> "Bing"
+            SEARCH_ENGINE_CUSTOM -> "自定义"
+            else -> "Google"
+        }
+
+    val searchUrlTemplate: String
+        get() = when (searchEngineId) {
+            SEARCH_ENGINE_BING -> "https://www.bing.com/search?q=%s"
+            SEARCH_ENGINE_CUSTOM -> customSearchUrl.takeIf { it.contains("%s") }
+                ?: DEFAULT_SEARCH_URL_TEMPLATE
+            else -> DEFAULT_SEARCH_URL_TEMPLATE
+        }
+
+    companion object {
+        const val SEARCH_ENGINE_GOOGLE = "google"
+        const val SEARCH_ENGINE_BING = "bing"
+        const val SEARCH_ENGINE_CUSTOM = "custom"
+        const val DEFAULT_SEARCH_URL_TEMPLATE = "https://www.google.com/search?q=%s"
+        const val TOOLBAR_POSITION_TOP = "top"
+        const val TOOLBAR_POSITION_BOTTOM = "bottom"
+    }
+}
+
 class BrowserProfileStore(context: Context) {
     private val historyFile = File(context.filesDir, "browser_history.json")
     private val bookmarksFile = File(context.filesDir, "browser_bookmarks.json")
+    private val settingsFile = File(context.filesDir, "browser_settings.json")
     private val historyState = MutableStateFlow(loadHistory())
     private val bookmarksState = MutableStateFlow(loadBookmarks())
+    private val settingsState = MutableStateFlow(loadSettings())
 
     fun observeHistory(): StateFlow<List<BrowserHistoryEntry>> = historyState
     fun observeBookmarks(): StateFlow<List<BrowserBookmark>> = bookmarksState
+    fun observeSettings(): StateFlow<BrowserSettings> = settingsState
 
     fun recordVisit(url: String, title: String) {
         if (url.isBlank()) return
@@ -82,6 +115,30 @@ class BrowserProfileStore(context: Context) {
         saveHistory(emptyList())
     }
 
+    fun updateSearchEngine(searchEngineId: String, customSearchUrl: String) {
+        val next = settingsState.value.copy(
+            searchEngineId = when (searchEngineId) {
+                BrowserSettings.SEARCH_ENGINE_BING -> BrowserSettings.SEARCH_ENGINE_BING
+                BrowserSettings.SEARCH_ENGINE_CUSTOM -> BrowserSettings.SEARCH_ENGINE_CUSTOM
+                else -> BrowserSettings.SEARCH_ENGINE_GOOGLE
+            },
+            customSearchUrl = customSearchUrl.trim()
+        )
+        settingsState.value = next
+        saveSettings(next)
+    }
+
+    fun updateToolbarPosition(toolbarPosition: String) {
+        val next = settingsState.value.copy(
+            toolbarPosition = when (toolbarPosition) {
+                BrowserSettings.TOOLBAR_POSITION_BOTTOM -> BrowserSettings.TOOLBAR_POSITION_BOTTOM
+                else -> BrowserSettings.TOOLBAR_POSITION_TOP
+            }
+        )
+        settingsState.value = next
+        saveSettings(next)
+    }
+
     private fun loadHistory(): List<BrowserHistoryEntry> {
         if (!historyFile.exists()) return emptyList()
         return runCatching {
@@ -120,6 +177,18 @@ class BrowserProfileStore(context: Context) {
         }.getOrDefault(emptyList())
     }
 
+    private fun loadSettings(): BrowserSettings {
+        if (!settingsFile.exists()) return BrowserSettings()
+        return runCatching {
+            val item = JSONObject(settingsFile.readText())
+            BrowserSettings(
+                searchEngineId = item.optString("searchEngineId", BrowserSettings.SEARCH_ENGINE_GOOGLE),
+                customSearchUrl = item.optString("customSearchUrl"),
+                toolbarPosition = item.optString("toolbarPosition", BrowserSettings.TOOLBAR_POSITION_TOP)
+            )
+        }.getOrDefault(BrowserSettings())
+    }
+
     private fun saveHistory(items: List<BrowserHistoryEntry>) {
         val array = JSONArray()
         items.forEach {
@@ -134,5 +203,15 @@ class BrowserProfileStore(context: Context) {
             array.put(JSONObject().put("url", it.url).put("title", it.title).put("createdAt", it.createdAt))
         }
         bookmarksFile.writeText(array.toString())
+    }
+
+    private fun saveSettings(settings: BrowserSettings) {
+        settingsFile.writeText(
+            JSONObject()
+                .put("searchEngineId", settings.searchEngineId)
+                .put("customSearchUrl", settings.customSearchUrl)
+                .put("toolbarPosition", settings.toolbarPosition)
+                .toString()
+        )
     }
 }

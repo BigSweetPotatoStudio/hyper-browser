@@ -55,6 +55,7 @@ class GeckoSessionController(
                     title = when {
                         isHomeUrl(target) -> "Hyper Browser"
                         isSearchUrl(target) -> "Search"
+                        isSettingsUrl(target) -> "设置"
                         isBookmarksUrl(target) -> "Bookmarks"
                         isHistoryUrl(target) -> "History"
                         else -> _state.value.title
@@ -90,14 +91,18 @@ class GeckoSessionController(
         }
     }
 
-    fun load(input: String) {
-        val target = normalizeUrl(input)
+    fun load(input: String, searchUrlTemplate: String? = null) {
+        val target = normalizeUrl(input, searchUrlTemplate)
         if (isHomeUrl(target)) {
             loadHome()
             return
         }
         if (isSearchUrl(target)) {
             loadSearch()
+            return
+        }
+        if (isSettingsUrl(target)) {
+            loadSettings()
             return
         }
         if (isBookmarksUrl(target)) {
@@ -129,6 +134,10 @@ class GeckoSessionController(
         } else {
             loadPage()
         }
+    }
+
+    fun loadSettings() {
+        loadInternalPage(SETTINGS_URL, "设置", "settings.html", null)
     }
 
     fun loadBookmarks(bookmarksJson: String? = null) {
@@ -191,47 +200,59 @@ class GeckoSessionController(
     companion object {
         const val HOME_URL = "hyper://home"
         const val SEARCH_URL = "hyper://search"
+        const val SETTINGS_URL = "hyper://settings"
         const val BOOKMARKS_URL = "hyper://bookmarks"
         const val HISTORY_URL = "hyper://history"
         private const val HOME_ASSET_URL = "resource://android/assets/home.html"
         private const val SEARCH_ASSET_URL = "resource://android/assets/search.html"
+        private const val SETTINGS_ASSET_URL = "resource://android/assets/settings.html"
         private const val BOOKMARKS_ASSET_URL = "resource://android/assets/bookmarks.html"
         private const val HISTORY_ASSET_URL = "resource://android/assets/history.html"
 
         fun isHomeUrl(url: String): Boolean = url == HOME_URL
         fun isSearchUrl(url: String): Boolean = url == SEARCH_URL
+        fun isSettingsUrl(url: String): Boolean = url == SETTINGS_URL
         fun isBookmarksUrl(url: String): Boolean = url == BOOKMARKS_URL
         fun isHistoryUrl(url: String): Boolean = url == HISTORY_URL
         fun isHomeDocumentUrl(url: String): Boolean =
             url.startsWith(HOME_ASSET_URL) || HyperBridge.isPageUrl(url, "home.html")
         fun isSearchDocumentUrl(url: String): Boolean =
             url.startsWith(SEARCH_ASSET_URL) || HyperBridge.isPageUrl(url, "search.html")
+        fun isSettingsDocumentUrl(url: String): Boolean =
+            url.startsWith(SETTINGS_ASSET_URL) || HyperBridge.isPageUrl(url, "settings.html")
         fun isBookmarksDocumentUrl(url: String): Boolean =
             url.startsWith(BOOKMARKS_ASSET_URL) || HyperBridge.isPageUrl(url, "bookmarks.html")
         fun isHistoryDocumentUrl(url: String): Boolean =
             url.startsWith(HISTORY_ASSET_URL) || HyperBridge.isPageUrl(url, "history.html")
         fun isInternalUrl(url: String): Boolean =
-            isHomeUrl(url) || isSearchUrl(url) || isBookmarksUrl(url) || isHistoryUrl(url) ||
-                isHomeDocumentUrl(url) || isSearchDocumentUrl(url) || isBookmarksDocumentUrl(url) || isHistoryDocumentUrl(url)
+            isHomeUrl(url) || isSearchUrl(url) || isSettingsUrl(url) || isBookmarksUrl(url) || isHistoryUrl(url) ||
+                isHomeDocumentUrl(url) || isSearchDocumentUrl(url) || isSettingsDocumentUrl(url) ||
+                isBookmarksDocumentUrl(url) || isHistoryDocumentUrl(url)
         fun isBrowserLoadableUrl(url: String): Boolean =
             url.startsWith("http://") || url.startsWith("https://") || url.startsWith("moz-extension://")
 
-        fun normalizeUrl(input: String): String {
+        fun normalizeUrl(input: String, searchUrlTemplate: String? = null): String {
             val value = input.trim()
             if (value.isBlank()) return HOME_URL
             if (isHomeUrl(value)) return HOME_URL
             if (isSearchUrl(value)) return SEARCH_URL
+            if (isSettingsUrl(value)) return SETTINGS_URL
             if (isBookmarksUrl(value)) return BOOKMARKS_URL
             if (isHistoryUrl(value)) return HISTORY_URL
             if (isBrowserLoadableUrl(value)) return value
             if (value.contains(".") && !value.contains(" ")) return "https://$value"
-            return "https://www.google.com/search?q=${java.net.URLEncoder.encode(value, "UTF-8")}"
+            val encodedQuery = java.net.URLEncoder.encode(value, "UTF-8")
+            val template = searchUrlTemplate
+                ?.takeIf { it.contains("%s") }
+                ?: "https://www.google.com/search?q=%s"
+            return template.replace("%s", encodedQuery)
         }
 
         private fun semanticUrlForRawUrl(url: String): String =
             when {
                 isHomeDocumentUrl(url) -> HOME_URL
                 isSearchDocumentUrl(url) -> SEARCH_URL
+                isSettingsDocumentUrl(url) -> SETTINGS_URL
                 isBookmarksDocumentUrl(url) -> BOOKMARKS_URL
                 isHistoryDocumentUrl(url) -> HISTORY_URL
                 else -> url
@@ -242,6 +263,7 @@ class GeckoSessionController(
             return when {
                 uri == HOME_URL -> HyperRoute.Home
                 uri == SEARCH_URL -> HyperRoute.Search
+                uri == SETTINGS_URL -> HyperRoute.Settings
                 uri == BOOKMARKS_URL -> HyperRoute.Bookmarks
                 uri == HISTORY_URL -> HyperRoute.History
                 else -> null
@@ -270,6 +292,7 @@ class GeckoSessionController(
 sealed interface HyperRoute {
     data object Home : HyperRoute
     data object Search : HyperRoute
+    data object Settings : HyperRoute
     data object Bookmarks : HyperRoute
     data object History : HyperRoute
 }
