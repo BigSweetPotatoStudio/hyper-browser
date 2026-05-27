@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -61,8 +62,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dadigua.hyperbrowser.HyperBrowserApp
@@ -84,6 +87,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+
+private val ChromeActionBarHeight = 48.dp
+private val ChromeActionButtonSize = 44.dp
+private val ChromeActionIconSize = 28.sp
 
 class BrowserActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -415,14 +422,18 @@ private fun BrowserToolbar(
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            IconButton(onClick = { }, modifier = Modifier.size(48.dp)) {
-                Text("⌂", fontSize = 30.sp, color = Color(0xFF202124))
+        Row(
+            modifier = Modifier.height(ChromeActionBarHeight),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            IconButton(onClick = { }, modifier = Modifier.size(ChromeActionButtonSize)) {
+                Text("⌂", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
             }
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .height(52.dp)
+                    .height(ChromeActionButtonSize)
                     .clip(RoundedCornerShape(28.dp))
                     .background(Color(0xFFE9EAF1))
                     .clickable(onClick = onAddressClick)
@@ -444,11 +455,11 @@ private fun BrowserToolbar(
             IconButton(
                 onClick = onShowTabs,
                 modifier = Modifier
-                    .defaultMinSize(minWidth = 52.dp, minHeight = 52.dp)
+                    .defaultMinSize(minWidth = ChromeActionButtonSize, minHeight = ChromeActionButtonSize)
             ) {
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(30.dp)
                         .clip(RoundedCornerShape(9.dp))
                         .background(Color.Transparent)
                         .borderForChromeTabCounter(),
@@ -458,8 +469,8 @@ private fun BrowserToolbar(
                 }
             }
             Box {
-                IconButton(onClick = { showMenu = true }) {
-                    Text("⋮", fontSize = 30.sp)
+                IconButton(onClick = { showMenu = true }, modifier = Modifier.size(ChromeActionButtonSize)) {
+                    Text("⋮", fontSize = ChromeActionIconSize)
                 }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                     BrowserMenuPanel(
@@ -540,6 +551,7 @@ private fun BrowserMenuPanel(
                         label = "Discover more extensions",
                         leading = "+",
                         description = "Search Android add-ons",
+                        indent = 28.dp,
                         onClick = onShowExtensions
                     )
                 } else {
@@ -548,9 +560,11 @@ private fun BrowserMenuPanel(
                         BrowserMenuRow(
                             label = action?.title ?: extension.name,
                             leading = "E",
+                            leadingIcon = action?.icon,
                             description = action?.badgeText?.takeIf { it.isNotBlank() }
                                 ?: extension.version,
                             trailing = if (action?.enabled == false) "Disabled" else "Settings",
+                            indent = 28.dp,
                             onClick = { onExtensionClick(extension) },
                             onTrailingClick = onShowExtensions
                         )
@@ -559,6 +573,7 @@ private fun BrowserMenuPanel(
                         label = "Manage extensions",
                         leading = ">",
                         description = "$installedExtensionCount installed",
+                        indent = 28.dp,
                         onClick = onShowExtensions
                     )
                 }
@@ -643,14 +658,17 @@ private fun ExtensionsMenuRow(
 private fun BrowserMenuRow(
     label: String,
     leading: String,
+    leadingIcon: android.graphics.Bitmap? = null,
     description: String? = null,
     trailing: String? = null,
+    indent: Dp = 0.dp,
     onTrailingClick: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(start = indent)
             .background(Color(0xFFF1F3F8))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -664,7 +682,15 @@ private fun BrowserMenuRow(
                 .background(Color.White),
             contentAlignment = Alignment.Center
         ) {
-            Text(leading, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF202124))
+            if (leadingIcon != null) {
+                Image(
+                    bitmap = leadingIcon.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+            } else {
+                Text(leading, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF202124))
+            }
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(label, color = Color(0xFF202124), fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -719,7 +745,7 @@ private fun ExtensionPopupOverlay(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
+                        .height(ChromeActionBarHeight)
                         .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -777,14 +803,18 @@ private fun SearchPage(
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
-                Text("‹", fontSize = 38.sp, color = Color(0xFF202124))
+        Row(
+            modifier = Modifier.height(ChromeActionBarHeight),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            IconButton(onClick = onCancel, modifier = Modifier.size(ChromeActionButtonSize)) {
+                Text("‹", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
             }
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .height(52.dp)
+                    .height(ChromeActionButtonSize)
                     .clip(RoundedCornerShape(26.dp))
                     .background(Color(0xFFE7E9F1))
                     .padding(horizontal = 14.dp),
@@ -812,7 +842,7 @@ private fun SearchPage(
                             .clip(CircleShape)
                             .clickable { query = "" }
                             .padding(horizontal = 8.dp, vertical = 2.dp),
-                        fontSize = 26.sp,
+                        fontSize = 24.sp,
                         color = Color(0xFF5F6368)
                     )
                 }
@@ -960,11 +990,12 @@ private fun <T> BrowserLibraryPage(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .height(ChromeActionBarHeight)
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onBack, modifier = Modifier.size(52.dp)) {
-                Text("‹", fontSize = 42.sp, color = Color(0xFF202124))
+            IconButton(onClick = onBack, modifier = Modifier.size(ChromeActionButtonSize)) {
+                Text("‹", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
             }
             Text(
                 title,
@@ -1094,11 +1125,12 @@ private fun ExtensionsPage(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .height(ChromeActionBarHeight)
+                    .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBack, modifier = Modifier.size(52.dp)) {
-                    Text("‹", fontSize = 42.sp, color = Color(0xFF202124))
+                IconButton(onClick = onBack, modifier = Modifier.size(ChromeActionButtonSize)) {
+                    Text("‹", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
                 }
                 Text(
                     "扩展",
@@ -1398,42 +1430,42 @@ private fun ChromeTabHeader(count: Int, onNewTab: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(top = 8.dp)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 8.dp)
+                .height(ChromeActionBarHeight)
+                .padding(horizontal = 18.dp)
         ) {
             IconButton(
                 onClick = onNewTab,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .size(54.dp)
+                    .size(ChromeActionButtonSize)
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(0xFFD8DDEA))
             ) {
-                Text("+", fontSize = 38.sp, color = Color(0xFF202124))
+                Text("+", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
             }
             Row(
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .height(64.dp)
+                    .height(ChromeActionBarHeight)
                     .clip(RoundedCornerShape(34.dp))
                     .background(Color(0xFFE6E8F0))
-                    .padding(6.dp),
+                    .padding(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
-                        .size(52.dp)
+                        .size(40.dp)
                         .clip(RoundedCornerShape(26.dp))
                         .background(Color(0xFFF8F9FE)),
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(31.dp)
+                            .size(28.dp)
                             .border(3.dp, Color(0xFF202124), RoundedCornerShape(8.dp)),
                         contentAlignment = Alignment.Center
                     ) {
@@ -1442,20 +1474,20 @@ private fun ChromeTabHeader(count: Int, onNewTab: () -> Unit) {
                 }
                 Box(
                     modifier = Modifier
-                        .size(52.dp)
+                        .size(40.dp)
                         .clip(RoundedCornerShape(26.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("▦", fontSize = 30.sp, color = Color(0xFF202124))
+                    Text("▦", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
                 }
             }
             IconButton(
                 onClick = { },
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .size(54.dp)
+                    .size(ChromeActionButtonSize)
             ) {
-                Text("⋮", fontSize = 32.sp, color = Color(0xFF202124))
+                Text("⋮", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
             }
         }
         HorizontalDivider(color = Color(0xFFDADCE3))

@@ -1,6 +1,7 @@
 package com.dadigua.hyperbrowser.extensions
 
 import android.content.Context
+import android.graphics.Bitmap
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.gecko.GeckoRuntimeProvider
 import kotlinx.coroutines.Dispatchers
@@ -26,7 +27,8 @@ data class ExtensionMenuActionState(
     val guid: String,
     val title: String,
     val enabled: Boolean,
-    val badgeText: String?
+    val badgeText: String?,
+    val icon: Bitmap? = null
 )
 
 data class ExtensionPopupState(
@@ -313,13 +315,27 @@ class ExtensionRepository(
             ?: extension.metaData.name
             ?: extension.id
         menuActions[extension.id] = action
+        val previous = menuActionState.value[extension.id]
         menuActionState.value = menuActionState.value + (
             extension.id to ExtensionMenuActionState(
                 guid = extension.id,
                 title = title,
                 enabled = action.enabled != false,
-                badgeText = action.badgeText
+                badgeText = action.badgeText,
+                icon = previous?.icon
             )
+        )
+        loadMenuIcon(extension.id, action)
+    }
+
+    private fun loadMenuIcon(guid: String, action: WebExtension.Action) {
+        val icon = action.icon ?: return
+        icon.getBitmap(48).accept(
+            { bitmap ->
+                val current = menuActionState.value[guid] ?: return@accept
+                menuActionState.value = menuActionState.value + (guid to current.copy(icon = bitmap))
+            },
+            { }
         )
     }
 
