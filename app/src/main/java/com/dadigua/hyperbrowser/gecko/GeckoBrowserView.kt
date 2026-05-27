@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -37,6 +38,7 @@ import kotlin.math.abs
 @Composable
 fun GeckoBrowserView(controller: GeckoSessionController, modifier: Modifier = Modifier) {
     val pageState by controller.state.collectAsState()
+    val sessionChangeVersion by controller.sessionChangeVersion.collectAsState()
     val pullRefreshEnabled = !GeckoSessionController.isInternalUrl(pageState.url)
     val density = LocalDensity.current
     val triggerDistancePx = with(density) { 72.dp.toPx() }
@@ -44,6 +46,7 @@ fun GeckoBrowserView(controller: GeckoSessionController, modifier: Modifier = Mo
     val indicatorSize = 44.dp
     var pullDistancePx by remember { mutableFloatStateOf(0f) }
     var refreshing by remember { mutableStateOf(false) }
+    val attachedView = remember(controller) { arrayOfNulls<GeckoView>(1) }
     val indicatorOffset by animateDpAsState(
         targetValue = if (refreshing) 32.dp else with(density) { pullDistancePx.toDp() },
         label = "pull-refresh-offset"
@@ -56,6 +59,16 @@ fun GeckoBrowserView(controller: GeckoSessionController, modifier: Modifier = Mo
         }
     }
 
+    DisposableEffect(controller) {
+        onDispose {
+            val view = attachedView[0]
+            if (view?.session == controller.session) {
+                view.releaseSession()
+            }
+            controller.attachView(null)
+        }
+    }
+
     Box(modifier = modifier) {
         AndroidView(
             modifier = Modifier.matchParentSize(),
@@ -63,13 +76,15 @@ fun GeckoBrowserView(controller: GeckoSessionController, modifier: Modifier = Mo
                 PullRefreshGeckoContainer(context).apply {
                     geckoView.setSession(controller.session)
                     controller.attachView(geckoView)
+                    attachedView[0] = geckoView
                 }
             },
             update = { container ->
-                if (container.geckoView.session != controller.session) {
+                if (sessionChangeVersion >= 0 && container.geckoView.session != controller.session) {
                     container.geckoView.setSession(controller.session)
                 }
                 controller.attachView(container.geckoView)
+                attachedView[0] = container.geckoView
                 container.configurePullRefresh(
                     enabled = pullRefreshEnabled && !refreshing,
                     triggerDistancePx = triggerDistancePx,
@@ -202,6 +217,18 @@ fun GeckoSessionView(
     viewBackend: Int? = null,
     onViewChanged: (GeckoView?) -> Unit = {}
 ) {
+    val attachedView = remember(session) { arrayOfNulls<GeckoView>(1) }
+
+    DisposableEffect(session) {
+        onDispose {
+            val view = attachedView[0]
+            if (view?.session == session) {
+                view.releaseSession()
+            }
+            onViewChanged(null)
+        }
+    }
+
     AndroidView(
         modifier = modifier,
         factory = { context ->
@@ -209,6 +236,7 @@ fun GeckoSessionView(
                 viewBackend?.let { setViewBackend(it) }
                 setSession(session)
                 onViewChanged(this)
+                attachedView[0] = this
             }
         },
         update = { view ->
@@ -216,6 +244,7 @@ fun GeckoSessionView(
                 view.setSession(session)
             }
             onViewChanged(view)
+            attachedView[0] = view
         }
     )
 }

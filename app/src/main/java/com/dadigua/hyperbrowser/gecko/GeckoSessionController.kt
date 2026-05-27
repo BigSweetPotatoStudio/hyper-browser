@@ -2,6 +2,8 @@ package com.dadigua.hyperbrowser.gecko
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.mozilla.geckoview.AllowOrDeny
@@ -26,31 +28,59 @@ class GeckoSessionController(
     private val onHyperRoute: (HyperRoute) -> Unit = {},
     private val onHyperBridgeMessage: ((org.json.JSONObject) -> org.json.JSONObject)? = null
 ) {
-    val session: GeckoSession = existingSession ?: GeckoSession()
+    var session: GeckoSession = existingSession ?: GeckoSession()
+        private set
 
     private val appContext = context.applicationContext
     private val runtime = GeckoRuntimeProvider.get(context)
     private val _state = MutableStateFlow(GeckoPageState(url = initialUrl, insecureHttp = initialUrl.startsWith("http://")))
+    private val _sessionChangeVersion = MutableStateFlow(0)
     private var currentRawUrl: String = initialUrl
+    private var lastLoadTarget: String = initialUrl
     private var view: GeckoView? = null
+    private var sessionCrashed = false
+    private var automaticRecoveryTarget: String? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
     val state: StateFlow<GeckoPageState> = _state
+    val sessionChangeVersion: StateFlow<Int> = _sessionChangeVersion
 
     init {
-        session.contentDelegate = object : GeckoSession.ContentDelegate {
+        configureSession(session)
+        onHyperBridgeMessage?.let { HyperBridge.register(session, it) }
+        if (existingSession == null) {
+            session.open(runtime)
+            load(initialUrl)
+        }
+    }
+
+    private fun configureSession(targetSession: GeckoSession) {
+        targetSession.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onTitleChange(session: GeckoSession, title: String?) {
                 _state.value = _state.value.copy(title = title.orEmpty())
             }
+
+            override fun onCrash(session: GeckoSession) {
+                recoverAfterContentLoss()
+            }
+
+            override fun onKill(session: GeckoSession) {
+                recoverAfterContentLoss()
+            }
         }
-        session.progressDelegate = object : GeckoSession.ProgressDelegate {
+        targetSession.progressDelegate = object : GeckoSession.ProgressDelegate {
             override fun onPageStart(session: GeckoSession, url: String) {
                 _state.value = _state.value.copy(isLoading = true)
             }
 
             override fun onPageStop(session: GeckoSession, success: Boolean) {
                 _state.value = _state.value.copy(isLoading = false)
+                if (success) {
+                    sessionCrashed = false
+                    automaticRecoveryTarget = null
+                }
             }
         }
-        session.navigationDelegate = object : GeckoSession.NavigationDelegate {
+        targetSession.navigationDelegate = object : GeckoSession.NavigationDelegate {
             override fun onLocationChange(
                 session: GeckoSession,
                 url: String?,
@@ -95,15 +125,13 @@ class GeckoSessionController(
                 return null
             }
         }
-        onHyperBridgeMessage?.let { HyperBridge.register(session, it) }
-        if (existingSession == null) {
-            session.open(runtime)
-            load(initialUrl)
-        }
     }
 
     fun load(input: String, searchUrlTemplate: String? = null) {
         val target = normalizeUrl(input, searchUrlTemplate)
+        lastLoadTarget = target
+        sessionCrashed = false
+        automaticRecoveryTarget = null
         if (isHomeUrl(target)) {
             loadHome()
             return
@@ -133,10 +161,12 @@ class GeckoSessionController(
     }
 
     fun loadHome(historyJson: String? = null) {
+        lastLoadTarget = HOME_URL
         loadInternalPage(HOME_URL, "Hyper Browser", "home.html", historyJson)
     }
 
     fun loadSearch(query: String = "") {
+        lastLoadTarget = SEARCH_URL
         _state.value = GeckoPageState(title = "Search", url = SEARCH_URL)
         val loadPage = {
             HyperBridge.pageUrl("search.html")?.let { url ->
@@ -152,18 +182,22 @@ class GeckoSessionController(
     }
 
     fun loadSettings() {
+        lastLoadTarget = SETTINGS_URL
         loadInternalPage(SETTINGS_URL, "设置", "settings.html", null)
     }
 
     fun loadApps(appsJson: String? = null) {
+        lastLoadTarget = APPS_URL
         loadInternalPage(APPS_URL, "Apps", "apps.html", appsJson)
     }
 
     fun loadBookmarks(bookmarksJson: String? = null) {
+        lastLoadTarget = BOOKMARKS_URL
         loadInternalPage(BOOKMARKS_URL, "Bookmarks", "bookmarks.html", bookmarksJson)
     }
 
     fun loadHistory(historyJson: String? = null) {
+        lastLoadTarget = HISTORY_URL
         loadInternalPage(HISTORY_URL, "History", "history.html", historyJson)
     }
 
@@ -176,7 +210,12 @@ class GeckoSessionController(
     }
 
     fun reload() {
-        runCatching { session.reload() }
+        if (sessionCrashed || !session.isOpen) {
+            recoverSession(force = true)
+            return
+        }
+        runCatching { session.reload(GeckoSession.LOAD_FLAGS_BYPASS_CACHE) }
+            .onFailure { recoverSession(force = true) }
     }
 
     fun attachView(view: GeckoView?) {
@@ -202,6 +241,8 @@ class GeckoSessionController(
     }
 
     private fun loadInternalPage(semanticUrl: String, title: String, page: String, bootstrapJson: String?) {
+        lastLoadTarget = semanticUrl
+        sessionCrashed = false
         _state.value = GeckoPageState(title = title, url = semanticUrl)
         val loadPage = {
             HyperBridge.pageUrl(page)?.let { url ->
@@ -213,6 +254,44 @@ class GeckoSessionController(
             HyperBridge.ensureInstalled(appContext) { loadPage() }
         } else {
             loadPage()
+        }
+    }
+
+    private fun recoverAfterContentLoss() {
+        val target = currentRecoveryTarget()
+        sessionCrashed = true
+        _state.value = _state.value.copy(isLoading = false)
+        if (automaticRecoveryTarget == target) return
+        automaticRecoveryTarget = target
+        mainHandler.post { recoverSession(force = false) }
+    }
+
+    private fun recoverSession(force: Boolean) {
+        val target = currentRecoveryTarget()
+        if (force) {
+            automaticRecoveryTarget = null
+        }
+        onHyperBridgeMessage?.let { HyperBridge.unregister(session) }
+        runCatching { session.close() }
+        session = GeckoSession()
+        configureSession(session)
+        onHyperBridgeMessage?.let { HyperBridge.register(session, it) }
+        session.open(runtime)
+        view?.setSession(session)
+        _sessionChangeVersion.value = _sessionChangeVersion.value + 1
+        sessionCrashed = false
+        load(target)
+        if (!force) {
+            automaticRecoveryTarget = target
+        }
+    }
+
+    private fun currentRecoveryTarget(): String {
+        val visibleUrl = _state.value.url
+        return when {
+            visibleUrl.isNotBlank() -> visibleUrl
+            currentRawUrl.isNotBlank() -> semanticUrlForRawUrl(currentRawUrl)
+            else -> lastLoadTarget
         }
     }
 
