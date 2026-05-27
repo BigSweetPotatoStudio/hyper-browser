@@ -8,12 +8,14 @@ type BridgeResponse = {
 type BookmarkItem = {
   title?: string;
   url: string;
+  iconDataUrl?: string | null;
 };
 
 type HistoryItem = {
   title?: string;
   url: string;
   visitedAt?: string;
+  iconDataUrl?: string | null;
 };
 
 type WebAppItem = {
@@ -22,6 +24,7 @@ type WebAppItem = {
   startUrl: string;
   scopeUrl: string;
   iconPath?: string | null;
+  iconDataUrl?: string | null;
   themeColor: number;
   displayMode: string;
   createdAt: number;
@@ -75,6 +78,9 @@ type HyperBrowserApi = {
   removeHistory(url: string): void;
   clearHistory(): void;
   openApp(id: string): void;
+  pinApp(id: string): void;
+  editApp(id: string, name: string, startUrl: string): void;
+  deleteApp(id: string): void;
 };
 
 const nativeApp = "hyperBrowser";
@@ -186,6 +192,15 @@ window.hyperBrowser = {
   },
   openApp(id) {
     command("apps.open", { id });
+  },
+  pinApp(id) {
+    command("apps.pin", { id });
+  },
+  editApp(id, name, startUrl) {
+    command("apps.edit", { id, name, startUrl });
+  },
+  deleteApp(id) {
+    command("apps.delete", { id });
   }
 };
 

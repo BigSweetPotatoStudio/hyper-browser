@@ -91,8 +91,13 @@ function BookmarkRow(props: {
   return (
     <div className="item bookmark">
       <button className="item-open" type="button" onClick={props.onOpen}>
-        <div className="item-title">{bookmark.title || bookmark.url}</div>
-        <div className="item-url">{bookmark.url}</div>
+        <span className="item-favicon">
+          {bookmark.iconDataUrl ? <img src={bookmark.iconDataUrl} alt="" /> : "★"}
+        </span>
+        <span className="item-text">
+          <span className="item-title">{bookmark.title || bookmark.url}</span>
+          <span className="item-url">{bookmark.url}</span>
+        </span>
       </button>
       <button className="icon-button" type="button" aria-label="Edit bookmark" onClick={props.onEdit}>✎</button>
       <button className="icon-button" type="button" aria-label="Remove bookmark" onClick={props.onRemove}>×</button>

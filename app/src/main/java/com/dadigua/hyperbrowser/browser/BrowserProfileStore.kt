@@ -10,13 +10,15 @@ import java.io.File
 data class BrowserHistoryEntry(
     val url: String,
     val title: String,
-    val visitedAt: Long
+    val visitedAt: Long,
+    val iconPath: String? = null
 )
 
 data class BrowserBookmark(
     val url: String,
     val title: String,
-    val createdAt: Long
+    val createdAt: Long,
+    val iconPath: String? = null
 )
 
 data class BrowserSettings(
@@ -61,27 +63,65 @@ class BrowserProfileStore(context: Context) {
     fun observeBookmarks(): StateFlow<List<BrowserBookmark>> = bookmarksState
     fun observeSettings(): StateFlow<BrowserSettings> = settingsState
 
-    fun recordVisit(url: String, title: String) {
+    fun recordVisit(url: String, title: String, iconPath: String? = null) {
         if (url.isBlank()) return
-        val entry = BrowserHistoryEntry(url = url, title = title.ifBlank { url }, visitedAt = System.currentTimeMillis())
+        if (historyState.value.firstOrNull()?.url == url) {
+            val next = historyState.value.toMutableList()
+            next[0] = next[0].copy(
+                title = title.ifBlank { url },
+                visitedAt = System.currentTimeMillis(),
+                iconPath = iconPath ?: next[0].iconPath
+            )
+            historyState.value = next
+            saveHistory(next)
+            return
+        }
+        val entry = BrowserHistoryEntry(
+            url = url,
+            title = title.ifBlank { url },
+            visitedAt = System.currentTimeMillis(),
+            iconPath = iconPath
+        )
         val next = (listOf(entry) + historyState.value.filterNot { it.url == url }).take(100)
         historyState.value = next
         saveHistory(next)
     }
 
-    fun toggleBookmark(url: String, title: String) {
+    fun toggleBookmark(url: String, title: String, iconPath: String? = null) {
         if (url.isBlank()) return
         val current = bookmarksState.value
         val next = if (current.any { it.url == url }) {
             current.filterNot { it.url == url }
         } else {
-            listOf(BrowserBookmark(url = url, title = title.ifBlank { url }, createdAt = System.currentTimeMillis())) + current
+            listOf(
+                BrowserBookmark(
+                    url = url,
+                    title = title.ifBlank { url },
+                    createdAt = System.currentTimeMillis(),
+                    iconPath = iconPath
+                )
+            ) + current
         }
         bookmarksState.value = next
         saveBookmarks(next)
     }
 
     fun isBookmarked(url: String): Boolean = bookmarksState.value.any { it.url == url }
+
+    fun updateBookmarkIcon(url: String, iconPath: String) {
+        if (url.isBlank() || iconPath.isBlank()) return
+        val next = bookmarksState.value.map { bookmark ->
+            if (bookmark.url == url && bookmark.iconPath != iconPath) {
+                bookmark.copy(iconPath = iconPath)
+            } else {
+                bookmark
+            }
+        }
+        if (next != bookmarksState.value) {
+            bookmarksState.value = next
+            saveBookmarks(next)
+        }
+    }
 
     fun removeBookmark(url: String) {
         if (url.isBlank()) return
@@ -150,7 +190,8 @@ class BrowserProfileStore(context: Context) {
                         BrowserHistoryEntry(
                             url = item.getString("url"),
                             title = item.optString("title"),
-                            visitedAt = item.optLong("visitedAt")
+                            visitedAt = item.optLong("visitedAt"),
+                            iconPath = item.optString("iconPath").ifBlank { null }
                         )
                     )
                 }
@@ -169,7 +210,8 @@ class BrowserProfileStore(context: Context) {
                         BrowserBookmark(
                             url = item.getString("url"),
                             title = item.optString("title"),
-                            createdAt = item.optLong("createdAt")
+                            createdAt = item.optLong("createdAt"),
+                            iconPath = item.optString("iconPath").ifBlank { null }
                         )
                     )
                 }
@@ -192,7 +234,13 @@ class BrowserProfileStore(context: Context) {
     private fun saveHistory(items: List<BrowserHistoryEntry>) {
         val array = JSONArray()
         items.forEach {
-            array.put(JSONObject().put("url", it.url).put("title", it.title).put("visitedAt", it.visitedAt))
+            array.put(
+                JSONObject()
+                    .put("url", it.url)
+                    .put("title", it.title)
+                    .put("visitedAt", it.visitedAt)
+                    .put("iconPath", it.iconPath)
+            )
         }
         historyFile.writeText(array.toString())
     }
@@ -200,7 +248,13 @@ class BrowserProfileStore(context: Context) {
     private fun saveBookmarks(items: List<BrowserBookmark>) {
         val array = JSONArray()
         items.forEach {
-            array.put(JSONObject().put("url", it.url).put("title", it.title).put("createdAt", it.createdAt))
+            array.put(
+                JSONObject()
+                    .put("url", it.url)
+                    .put("title", it.title)
+                    .put("createdAt", it.createdAt)
+                    .put("iconPath", it.iconPath)
+            )
         }
         bookmarksFile.writeText(array.toString())
     }

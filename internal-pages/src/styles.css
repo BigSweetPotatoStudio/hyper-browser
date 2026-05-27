@@ -176,6 +176,7 @@ a {
 }
 
 .app-icon {
+  position: relative;
   display: grid;
   width: 60px;
   height: 60px;
@@ -185,6 +186,17 @@ a {
   font-size: 28px;
   font-weight: 760;
   line-height: 1;
+}
+
+.app-icon img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.app-icon-image {
+  box-shadow: none;
 }
 
 .app-label {
@@ -199,6 +211,107 @@ a {
   overflow-wrap: anywhere;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+}
+
+.app-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  align-items: end;
+  background: rgba(32, 33, 36, 0.28);
+  padding: 16px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+.app-menu,
+.app-edit-dialog {
+  width: min(100%, 420px);
+  margin: 0 auto;
+  border-radius: 18px;
+  background: #fff;
+  color: #202124;
+  box-shadow: 0 16px 36px rgba(32, 33, 36, 0.22);
+  overflow: hidden;
+}
+
+.app-menu-title {
+  padding: 16px 18px 8px;
+  color: #5f6368;
+  font-size: 13px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-menu button {
+  width: 100%;
+  min-height: 54px;
+  border: 0;
+  background: #fff;
+  color: #202124;
+  padding: 0 18px;
+  text-align: left;
+  font-size: 16px;
+  font-weight: 560;
+}
+
+.app-menu button.danger {
+  color: #b3261e;
+}
+
+.app-edit-dialog {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.app-edit-dialog h2 {
+  margin: 0 0 2px;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.app-edit-dialog label {
+  display: grid;
+  gap: 6px;
+  color: #4d5158;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.app-edit-dialog input {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid #dadce0;
+  border-radius: 12px;
+  background: #fff;
+  color: #202124;
+  padding: 0 12px;
+  font-size: 16px;
+}
+
+.app-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.app-edit-actions button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 999px;
+  background: #e8eaed;
+  color: #202124;
+  padding: 0 16px;
+  font-weight: 650;
+}
+
+.app-edit-actions button[type="submit"] {
+  background: #1a73e8;
+  color: #fff;
 }
 
 .apps-empty {
@@ -317,6 +430,10 @@ a {
 }
 
 .item-open {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
   min-width: 0;
   padding: 18px;
   color: inherit;
@@ -324,6 +441,35 @@ a {
   text-decoration: none;
   background: transparent;
   border: 0;
+}
+
+.item-favicon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: #eef0f4;
+  color: #5f6368;
+  font-size: 18px;
+  overflow: hidden;
+}
+
+.item-favicon img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.item-text {
+  min-width: 0;
+  display: grid;
+}
+
+.item-title,
+.item-url,
+.item-meta {
+  display: block;
 }
 
 .item-meta {

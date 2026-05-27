@@ -90,6 +90,7 @@ import androidx.compose.ui.unit.sp
 import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.browser.BrowserBookmark
 import com.dadigua.hyperbrowser.browser.BrowserHistoryEntry
+import com.dadigua.hyperbrowser.browser.FaviconRepository
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
@@ -106,6 +107,7 @@ import com.dadigua.hyperbrowser.gecko.HyperCommand
 import com.dadigua.hyperbrowser.gecko.HyperRoute
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
 import com.dadigua.hyperbrowser.ui.webapp.WebAppActivity
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -150,19 +152,20 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     var pendingHyperCommand by remember { mutableStateOf<HyperCommand?>(null) }
     val context = LocalContext.current
     val profileStore = remember { BrowserProfileStore(app) }
+    val faviconStore = remember { FaviconRepository(app) }
     fun handleHyperBridgeMessage(message: JSONObject): JSONObject {
         val payload = message.optJSONObject("payload") ?: JSONObject()
         return when (message.optString("type")) {
-            "data.home" -> okItems(profileStore.observeHistory().value.toHistoryJsonString())
+            "data.home" -> okItems(profileStore.observeHistory().value.toHistoryJsonString(faviconStore))
             "data.search" -> okItems(
                 searchSuggestionsJsonString(
                     bookmarks = profileStore.observeBookmarks().value,
                     history = profileStore.observeHistory().value
                 )
             )
-            "data.bookmarks" -> okItems(profileStore.observeBookmarks().value.toBookmarksJsonString())
-            "data.history" -> okItems(profileStore.observeHistory().value.toHistoryJsonString())
-            "data.apps" -> okItems(app.webApps.observeAll().value.toWebAppsJsonString())
+            "data.bookmarks" -> okItems(profileStore.observeBookmarks().value.toBookmarksJsonString(faviconStore))
+            "data.history" -> okItems(profileStore.observeHistory().value.toHistoryJsonString(faviconStore))
+            "data.apps" -> okItems(app.webApps.observeAll().value.toWebAppsJsonString(app))
             "data.settings" -> okData(profileStore.observeSettings().value.toJson())
             "search.submit" -> {
                 pendingHyperCommand = HyperCommand.Search.Submit(payload.optString("query"))
@@ -211,6 +214,22 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 pendingHyperCommand = HyperCommand.Apps.Open(payload.optString("id"))
                 ok()
             }
+            "apps.pin" -> {
+                pendingHyperCommand = HyperCommand.Apps.Pin(payload.optString("id"))
+                ok()
+            }
+            "apps.edit" -> {
+                pendingHyperCommand = HyperCommand.Apps.Edit(
+                    id = payload.optString("id"),
+                    name = payload.optString("name"),
+                    startUrl = payload.optString("startUrl")
+                )
+                ok()
+            }
+            "apps.delete" -> {
+                pendingHyperCommand = HyperCommand.Apps.Delete(payload.optString("id"))
+                ok()
+            }
             "panel.extensions" -> {
                 pendingHyperCommand = HyperCommand.Panel.Extensions
                 ok()
@@ -254,6 +273,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     var extensionResults by remember { mutableStateOf<List<AmoAddonListing>>(emptyList()) }
     var extensionMessage by remember { mutableStateOf<String?>(null) }
     var installingAddonGuid by remember { mutableStateOf<String?>(null) }
+    var currentIconPath by remember { mutableStateOf<String?>(null) }
 
     BackHandler {
         when {
@@ -274,7 +294,21 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
 
     LaunchedEffect(pageState.url, pageState.title) {
         if (pageState.url.isNotBlank() && !GeckoSessionController.isInternalUrl(pageState.url)) {
-            profileStore.recordVisit(pageState.url, pageState.title)
+            profileStore.recordVisit(pageState.url, pageState.title, currentIconPath)
+        }
+    }
+
+    LaunchedEffect(pageState.url) {
+        currentIconPath = null
+        if (pageState.url.isNotBlank() && !GeckoSessionController.isInternalUrl(pageState.url)) {
+            val iconPath = faviconStore.resolveIconPath(pageState.url)
+            if (pageState.url == controller.state.value.url) {
+                currentIconPath = iconPath
+                if (iconPath != null) {
+                    profileStore.recordVisit(pageState.url, controller.state.value.title, iconPath)
+                    profileStore.updateBookmarkIcon(pageState.url, iconPath)
+                }
+            }
         }
     }
 
@@ -359,6 +393,27 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                     context.startActivity(WebAppActivity.intent(context, command.id, true))
                 }
             }
+            is HyperCommand.Apps.Pin -> {
+                scope.launch {
+                    runCatching { app.webApps.pinToHome(command.id) }
+                        .onSuccess { message = if (it) "Shortcut requested." else "WebApp not found." }
+                        .onFailure { message = it.message ?: "Shortcut failed." }
+                }
+            }
+            is HyperCommand.Apps.Edit -> {
+                scope.launch {
+                    runCatching { app.webApps.update(command.id, command.name, command.startUrl) }
+                        .onSuccess { message = if (it != null) "Updated ${it.name}." else "WebApp not found." }
+                        .onFailure { message = it.message ?: "Update failed." }
+                }
+            }
+            is HyperCommand.Apps.Delete -> {
+                scope.launch {
+                    runCatching { app.webApps.delete(command.id) }
+                        .onSuccess { message = if (it) "WebApp deleted." else "WebApp not found." }
+                        .onFailure { message = it.message ?: "Delete failed." }
+                }
+            }
             HyperCommand.Panel.Extensions -> showExtensions = true
         }
         pendingHyperCommand = null
@@ -368,150 +423,156 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
         onDispose { tabs.forEach { it.controller.close() } }
     }
 
-    Column(
+    LaunchedEffect(message) {
+        if (message != null) {
+            delay(2400)
+            message = null
+        }
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
     ) {
-        if (showSearch) {
-            SearchPage(
-                initialInput = if (onHomePage) "" else tab.input,
-                history = history,
-                bookmarks = bookmarks,
-                onCancel = { showSearch = false },
-                onGo = { value ->
-                    tab.input = value
-                    controller.load(value, settings.searchUrlTemplate)
-                    showSearch = false
-                    message = null
-                }
-            )
-        } else if (showBookmarks) {
-            BookmarksPage(
-                bookmarks = bookmarks,
-                onBack = { showBookmarks = false },
-                onOpen = { url ->
-                    tab.input = url
-                    controller.load(url)
-                    showBookmarks = false
-                    message = null
-                },
-                onRemove = profileStore::removeBookmark
-            )
-        } else if (showHistory) {
-            HistoryPage(
-                history = history,
-                onBack = { showHistory = false },
-                onOpen = { url ->
-                    tab.input = url
-                    controller.load(url)
-                    showHistory = false
-                    message = null
-                },
-                onRemove = profileStore::removeHistoryEntry,
-                onClear = profileStore::clearHistory
-            )
-        } else if (showExtensions) {
-            ExtensionsPage(
-                query = extensionQuery,
-                installed = installedExtensions,
-                results = extensionResults,
-                message = extensionMessage,
-                installingAddonGuid = installingAddonGuid,
-                onQueryChange = { extensionQuery = it },
-                onBack = { showExtensions = false },
-                onSearch = {
-                    scope.launch {
-                        extensionMessage = "Searching AMO..."
-                        runCatching { app.extensions.searchAndroidAddons(extensionQuery) }
-                            .onSuccess { results ->
-                                extensionResults = results
-                                val installedMatches = results.count { result ->
-                                    installedExtensions.any { it.guid == result.guid }
-                                }
-                                val installableCount = results.size - installedMatches
-                                extensionMessage = when {
-                                    results.isEmpty() -> "No Android add-ons found."
-                                    installableCount == 0 -> "All AMO matches are already installed."
-                                    installedMatches > 0 -> "$installableCount add-ons found · $installedMatches already installed"
-                                    else -> null
-                                }
-                            }
-                            .onFailure { extensionMessage = it.message ?: "AMO search failed." }
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (showSearch) {
+                SearchPage(
+                    initialInput = if (onHomePage) "" else tab.input,
+                    history = history,
+                    bookmarks = bookmarks,
+                    onCancel = { showSearch = false },
+                    onGo = { value ->
+                        tab.input = value
+                        controller.load(value, settings.searchUrlTemplate)
+                        showSearch = false
+                        message = null
                     }
-                },
-                onInstall = { addon ->
-                    scope.launch {
-                        installingAddonGuid = addon.guid
-                        runCatching {
-                            app.extensions.downloadAndInstall(addon) { stage ->
-                                extensionMessage = stage
-                            }
+                )
+            } else if (showBookmarks) {
+                BookmarksPage(
+                    bookmarks = bookmarks,
+                    onBack = { showBookmarks = false },
+                    onOpen = { url ->
+                        tab.input = url
+                        controller.load(url)
+                        showBookmarks = false
+                        message = null
+                    },
+                    onRemove = profileStore::removeBookmark
+                )
+            } else if (showHistory) {
+                HistoryPage(
+                    history = history,
+                    onBack = { showHistory = false },
+                    onOpen = { url ->
+                        tab.input = url
+                        controller.load(url)
+                        showHistory = false
+                        message = null
+                    },
+                    onRemove = profileStore::removeHistoryEntry,
+                    onClear = profileStore::clearHistory
+                )
+            } else if (showExtensions) {
+                ExtensionsPage(
+                    query = extensionQuery,
+                    installed = installedExtensions,
+                    results = extensionResults,
+                    message = extensionMessage,
+                    installingAddonGuid = installingAddonGuid,
+                    onQueryChange = { extensionQuery = it },
+                    onBack = { showExtensions = false },
+                    onSearch = {
+                        scope.launch {
+                            extensionMessage = "Searching AMO..."
+                            runCatching { app.extensions.searchAndroidAddons(extensionQuery) }
+                                .onSuccess { results ->
+                                    extensionResults = results
+                                    val installedMatches = results.count { result ->
+                                        installedExtensions.any { it.guid == result.guid }
+                                    }
+                                    val installableCount = results.size - installedMatches
+                                    extensionMessage = when {
+                                        results.isEmpty() -> "No Android add-ons found."
+                                        installableCount == 0 -> "All AMO matches are already installed."
+                                        installedMatches > 0 -> "$installableCount add-ons found · $installedMatches already installed"
+                                        else -> null
+                                    }
+                                }
+                                .onFailure { extensionMessage = it.message ?: "AMO search failed." }
                         }
-                            .onSuccess { extensionMessage = "Installed ${addon.name}." }
-                            .onFailure { extensionMessage = it.message ?: "Extension install failed." }
-                        installingAddonGuid = null
+                    },
+                    onInstall = { addon ->
+                        scope.launch {
+                            installingAddonGuid = addon.guid
+                            runCatching {
+                                app.extensions.downloadAndInstall(addon) { stage ->
+                                    extensionMessage = stage
+                                }
+                            }
+                                .onSuccess { extensionMessage = "Installed ${addon.name}." }
+                                .onFailure { extensionMessage = it.message ?: "Extension install failed." }
+                            installingAddonGuid = null
+                        }
+                    },
+                    onToggleEnabled = { extension ->
+                        scope.launch {
+                            runCatching { app.extensions.setEnabled(extension.guid, !extension.enabled) }
+                                .onFailure { extensionMessage = it.message ?: "Unable to update extension." }
+                        }
+                    },
+                    onUninstall = { extension ->
+                        scope.launch {
+                            runCatching { app.extensions.uninstall(extension.guid) }
+                                .onFailure { extensionMessage = it.message ?: "Unable to uninstall extension." }
+                        }
                     }
-                },
-                onToggleEnabled = { extension ->
-                    scope.launch {
-                        runCatching { app.extensions.setEnabled(extension.guid, !extension.enabled) }
-                            .onFailure { extensionMessage = it.message ?: "Unable to update extension." }
-                    }
-                },
-                onUninstall = { extension ->
-                    scope.launch {
-                        runCatching { app.extensions.uninstall(extension.guid) }
-                            .onFailure { extensionMessage = it.message ?: "Unable to uninstall extension." }
-                    }
-                }
-            )
-        } else if (showTabs) {
-            TabTray(
-                tabs = tabs,
-                selectedTabId = selectedTabId,
-                onBack = { showTabs = false },
-                onSelect = {
-                    selectedTabId = it
-                    showTabs = false
-                },
-                onClose = { id ->
-                    val closing = tabs.firstOrNull { it.id == id } ?: return@TabTray
-                    val oldIndex = tabs.indexOf(closing)
-                    closing.controller.close()
-                    tabs.remove(closing)
-                    if (tabs.isEmpty()) {
-                        val replacement = BrowserTabRuntime.create(
+                )
+            } else if (showTabs) {
+                TabTray(
+                    tabs = tabs,
+                    selectedTabId = selectedTabId,
+                    onBack = { showTabs = false },
+                    onSelect = {
+                        selectedTabId = it
+                        showTabs = false
+                    },
+                    onClose = { id ->
+                        val closing = tabs.firstOrNull { it.id == id } ?: return@TabTray
+                        val oldIndex = tabs.indexOf(closing)
+                        closing.controller.close()
+                        tabs.remove(closing)
+                        if (tabs.isEmpty()) {
+                            val replacement = BrowserTabRuntime.create(
+                                app = app,
+                                url = GeckoSessionController.HOME_URL,
+                                onHyperRoute = { pendingHyperRoute = it },
+                                onHyperBridgeMessage = ::handleHyperBridgeMessage
+                            )
+                            tabs.add(replacement)
+                            selectedTabId = replacement.id
+                        } else if (selectedTabId == id) {
+                            selectedTabId = tabs[oldIndex.coerceAtMost(tabs.lastIndex)].id
+                        }
+                    },
+                    onNewTab = {
+                        val newTab = BrowserTabRuntime.create(
                             app = app,
                             url = GeckoSessionController.HOME_URL,
                             onHyperRoute = { pendingHyperRoute = it },
                             onHyperBridgeMessage = ::handleHyperBridgeMessage
                         )
-                        tabs.add(replacement)
-                        selectedTabId = replacement.id
-                    } else if (selectedTabId == id) {
-                        selectedTabId = tabs[oldIndex.coerceAtMost(tabs.lastIndex)].id
+                        tabs.add(newTab)
+                        selectedTabId = newTab.id
+                        showTabs = false
                     }
-                },
-                onNewTab = {
-                    val newTab = BrowserTabRuntime.create(
-                        app = app,
-                        url = GeckoSessionController.HOME_URL,
-                        onHyperRoute = { pendingHyperRoute = it },
-                        onHyperBridgeMessage = ::handleHyperBridgeMessage
-                    )
-                    tabs.add(newTab)
-                    selectedTabId = newTab.id
-                    showTabs = false
-                }
-            )
-        } else {
-            if (!onSearchPage) {
+                )
+            } else if (!onSearchPage) {
                 val toolbar = @Composable {
                     BrowserToolbar(
                         input = tab.input,
                         pageState = pageState,
-                        message = message,
                         tabCount = tabs.size,
                         bookmarked = !GeckoSessionController.isInternalUrl(pageState.url) &&
                             profileStore.isBookmarked(pageState.url.ifBlank { tab.input }),
@@ -554,7 +615,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                         },
                         onToggleBookmark = {
                             val url = pageState.url.ifBlank { tab.input }
-                            profileStore.toggleBookmark(url, pageState.title)
+                            profileStore.toggleBookmark(url, pageState.title, currentIconPath)
                         },
                         onShowBookmarks = {
                             tab.input = GeckoSessionController.BOOKMARKS_URL
@@ -583,7 +644,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                             scope.launch {
                                 val title = pageState.title.ifBlank { tab.input }
                                 val url = pageState.url.ifBlank { tab.input }
-                                runCatching { app.webApps.installFromPage(title, url) }
+                                runCatching { app.webApps.installFromPage(title, url, iconPath = currentIconPath) }
                                     .onSuccess { message = "Installed ${it.name} as WebApp." }
                                     .onFailure { message = it.message ?: "Install failed." }
                             }
@@ -613,6 +674,11 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                 BrowserContent(controller = controller, tabId = tab.id, extensionPopup = extensionPopup, onClosePopup = app.extensions::closePopup)
             }
         }
+        BrowserTip(
+            message = message,
+            toolbarPosition = settings.toolbarPosition,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
     }
 }
 
@@ -695,7 +761,7 @@ private fun BrowserSettings.toJson(): JSONObject =
         .put("customSearchUrl", customSearchUrl)
         .put("toolbarPosition", toolbarPosition)
 
-private fun List<BrowserBookmark>.toBookmarksJsonString(): String {
+private fun List<BrowserBookmark>.toBookmarksJsonString(faviconStore: FaviconRepository): String {
     val array = JSONArray()
     forEach { bookmark ->
         array.put(
@@ -703,12 +769,13 @@ private fun List<BrowserBookmark>.toBookmarksJsonString(): String {
                 .put("title", bookmark.title)
                 .put("url", bookmark.url)
                 .put("createdAt", bookmark.createdAt)
+                .put("iconDataUrl", faviconStore.iconDataUrl(bookmark.iconPath, bookmark.url))
         )
     }
     return array.toString()
 }
 
-private fun List<BrowserHistoryEntry>.toHistoryJsonString(): String {
+private fun List<BrowserHistoryEntry>.toHistoryJsonString(faviconStore: FaviconRepository): String {
     val array = JSONArray()
     filterNot { GeckoSessionController.isInternalUrl(it.url) }.forEach { entry ->
         array.put(
@@ -716,12 +783,13 @@ private fun List<BrowserHistoryEntry>.toHistoryJsonString(): String {
                 .put("title", entry.title)
                 .put("url", entry.url)
                 .put("visitedAt", entry.visitedAt)
+                .put("iconDataUrl", faviconStore.iconDataUrl(entry.iconPath, entry.url))
         )
     }
     return array.toString()
 }
 
-private fun List<WebAppDefinition>.toWebAppsJsonString(): String {
+private fun List<WebAppDefinition>.toWebAppsJsonString(app: HyperBrowserApp): String {
     val array = JSONArray()
     forEach { webApp ->
         array.put(
@@ -731,6 +799,7 @@ private fun List<WebAppDefinition>.toWebAppsJsonString(): String {
                 .put("startUrl", webApp.startUrl)
                 .put("scopeUrl", webApp.scopeUrl)
                 .put("iconPath", webApp.iconPath)
+                .put("iconDataUrl", app.webApps.iconDataUrl(webApp))
                 .put("themeColor", webApp.themeColor)
                 .put("displayMode", webApp.displayMode)
                 .put("createdAt", webApp.createdAt)
@@ -884,7 +953,6 @@ private fun ToolbarSuggestionItems(
 private fun BrowserToolbar(
     input: String,
     pageState: GeckoPageState,
-    message: String?,
     tabCount: Int,
     bookmarked: Boolean,
     installedExtensions: List<InstalledExtensionState>,
@@ -1123,7 +1191,35 @@ private fun BrowserToolbar(
             suggestionPanel()
         }
         if (pageState.insecureHttp) Text("Insecure HTTP page", color = MaterialTheme.colorScheme.error)
-        message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+    }
+}
+
+@Composable
+private fun BrowserTip(
+    message: String?,
+    toolbarPosition: String,
+    modifier: Modifier = Modifier
+) {
+    if (message == null) return
+    val bottomPadding = if (toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) 72.dp else 24.dp
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(start = 18.dp, end = 18.dp, bottom = bottomPadding),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = message,
+            color = Color.White,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(Color(0xE6202124))
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

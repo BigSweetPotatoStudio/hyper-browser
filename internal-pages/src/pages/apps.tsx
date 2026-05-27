@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
@@ -8,6 +8,8 @@ import type { WebAppItem } from "../hyper-browser";
 function AppsPage() {
   const [apps, setApps] = useState<WebAppItem[] | null>(() => readBootstrapData<WebAppItem>());
   const [failed, setFailed] = useState(false);
+  const [menuApp, setMenuApp] = useState<WebAppItem | null>(null);
+  const [editingApp, setEditingApp] = useState<WebAppItem | null>(null);
 
   useEffect(() => {
     if (apps !== null) return;
@@ -34,32 +36,158 @@ function AppsPage() {
         ) : (
           <div className="apps-grid" aria-label="Installed web apps">
             {items.map((app) => (
-              <AppTile app={app} key={app.id} />
+              <AppTile app={app} key={app.id} onMenu={setMenuApp} />
             ))}
           </div>
         )}
       </main>
+      {menuApp && (
+        <AppActionSheet
+          app={menuApp}
+          onClose={() => setMenuApp(null)}
+          onPin={() => {
+            window.hyperBrowser.pinApp(menuApp.id);
+            setMenuApp(null);
+          }}
+          onEdit={() => {
+            setEditingApp(menuApp);
+            setMenuApp(null);
+          }}
+          onDelete={() => {
+            window.hyperBrowser.deleteApp(menuApp.id);
+            setApps((current) => (current || []).filter((app) => app.id !== menuApp.id));
+            setMenuApp(null);
+          }}
+        />
+      )}
+      {editingApp && (
+        <EditAppDialog
+          app={editingApp}
+          onClose={() => setEditingApp(null)}
+          onSave={(name, startUrl) => {
+            window.hyperBrowser.editApp(editingApp.id, name, startUrl);
+            setApps((current) => (current || []).map((app) => (
+              app.id === editingApp.id
+                ? { ...app, name, startUrl }
+                : app
+            )));
+            setEditingApp(null);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function AppTile({ app }: { app: WebAppItem }) {
+function AppTile({ app, onMenu }: { app: WebAppItem; onMenu: (app: WebAppItem) => void }) {
   const icon = useMemo(() => appInitial(app.name), [app.name]);
   const color = useMemo(() => colorFromTheme(app.themeColor, app.id), [app.themeColor, app.id]);
   const label = app.name || hostLabel(app.startUrl);
+  const hasIcon = !!app.iconDataUrl;
+  const longPressTimer = useRef<number | null>(null);
+  const longPressed = useRef(false);
+
+  function clearLongPress() {
+    if (longPressTimer.current !== null) {
+      window.clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }
 
   return (
     <button
       className="app-tile"
       type="button"
-      onClick={() => window.hyperBrowser.openApp(app.id)}
+      onClick={() => {
+        clearLongPress();
+        if (longPressed.current) {
+          longPressed.current = false;
+          return;
+        }
+        window.hyperBrowser.openApp(app.id);
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        clearLongPress();
+        onMenu(app);
+      }}
+      onPointerDown={() => {
+        clearLongPress();
+        longPressed.current = false;
+        longPressTimer.current = window.setTimeout(() => {
+          longPressed.current = true;
+          onMenu(app);
+        }, 560);
+      }}
+      onPointerMove={clearLongPress}
+      onPointerCancel={clearLongPress}
+      onPointerUp={clearLongPress}
+      onPointerLeave={clearLongPress}
       title={label}
     >
-      <span className="app-icon" style={{ background: color.background, color: color.foreground }}>
-        {icon}
+      <span
+        className={hasIcon ? "app-icon app-icon-image" : "app-icon"}
+        style={{ background: hasIcon ? "transparent" : color.background, color: color.foreground }}
+      >
+        {hasIcon ? <img src={app.iconDataUrl!} alt="" /> : icon}
       </span>
       <span className="app-label">{label}</span>
     </button>
+  );
+}
+
+function AppActionSheet(props: {
+  app: WebAppItem;
+  onClose: () => void;
+  onPin: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="app-menu-scrim" onClick={props.onClose}>
+      <div className="app-menu" role="menu" onClick={(event) => event.stopPropagation()}>
+        <div className="app-menu-title">{props.app.name || hostLabel(props.app.startUrl)}</div>
+        <button type="button" role="menuitem" onClick={props.onPin}>发送到桌面</button>
+        <button type="button" role="menuitem" onClick={props.onEdit}>修改</button>
+        <button className="danger" type="button" role="menuitem" onClick={props.onDelete}>删除</button>
+      </div>
+    </div>
+  );
+}
+
+function EditAppDialog(props: {
+  app: WebAppItem;
+  onClose: () => void;
+  onSave: (name: string, startUrl: string) => void;
+}) {
+  const [name, setName] = useState(props.app.name || "");
+  const [startUrl, setStartUrl] = useState(props.app.startUrl);
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const cleanUrl = startUrl.trim();
+    if (!cleanUrl) return;
+    props.onSave(name.trim() || hostLabel(cleanUrl), cleanUrl);
+  }
+
+  return (
+    <div className="app-menu-scrim">
+      <form className="app-edit-dialog" onSubmit={submit}>
+        <h2>修改 WebApp</h2>
+        <label>
+          <span>名称</span>
+          <input value={name} onChange={(event) => setName(event.currentTarget.value)} />
+        </label>
+        <label>
+          <span>URL</span>
+          <input value={startUrl} inputMode="url" onChange={(event) => setStartUrl(event.currentTarget.value)} />
+        </label>
+        <div className="app-edit-actions">
+          <button type="button" onClick={props.onClose}>取消</button>
+          <button type="submit">保存</button>
+        </div>
+      </form>
+    </div>
   );
 }
 

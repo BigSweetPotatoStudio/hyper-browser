@@ -51,9 +51,14 @@ function HistoryPage() {
                   type="button"
                   onClick={() => window.hyperBrowser.openHistory(entry.url)}
                 >
-                  <div className="item-title">{entry.title || entry.url}</div>
-                  <div className="item-url">{entry.url}</div>
-                  <div className="item-meta">{formatVisitTime(entry.visitedAt)}</div>
+                  <span className="item-favicon">
+                    {entry.iconDataUrl ? <img src={entry.iconDataUrl} alt="" /> : "◷"}
+                  </span>
+                  <span className="item-text">
+                    <span className="item-title">{entry.title || entry.url}</span>
+                    <span className="item-url">{entry.url}</span>
+                    <span className="item-meta">{formatVisitTime(entry.visitedAt)}</span>
+                  </span>
                 </button>
                 <button className="icon-button" type="button" aria-label="Remove history entry" onClick={() => remove(entry.url)}>
                   ×
