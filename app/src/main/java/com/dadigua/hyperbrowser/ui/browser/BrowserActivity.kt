@@ -17,10 +17,13 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,6 +39,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -67,10 +72,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
@@ -230,6 +240,7 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     var showBookmarks by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showExtensions by remember { mutableStateOf(false) }
+    var editingAddress by remember { mutableStateOf(false) }
     var extensionQuery by remember { mutableStateOf("ublock") }
     var extensionResults by remember { mutableStateOf<List<AmoAddonListing>>(emptyList()) }
     var extensionMessage by remember { mutableStateOf<String?>(null) }
@@ -238,6 +249,10 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
     BackHandler {
         when {
             extensionPopup != null -> app.extensions.closePopup()
+            editingAddress -> {
+                editingAddress = false
+                message = null
+            }
             showSearch -> showSearch = false
             showBookmarks -> showBookmarks = false
             showHistory -> showHistory = false
@@ -481,16 +496,13 @@ private fun BrowserScreen(app: HyperBrowserApp, initialUrl: String) {
                         installedExtensions = installedExtensions,
                         extensionActions = extensionActions,
                         toolbarPosition = settings.toolbarPosition,
-                        onAddressClick = {
-                            val initialQuery = if (onHomePage) "" else pageState.url.ifBlank { tab.input }
-                            controller.loadSearch(initialQuery)
-                        },
-                        onLoad = {
-                            val target = GeckoSessionController.normalizeUrl(tab.input, settings.searchUrlTemplate)
-                            controller.load(tab.input, settings.searchUrlTemplate)
-                            if (!GeckoSessionController.isInternalUrl(target)) {
-                                profileStore.recordVisit(target, pageState.title)
-                            }
+                        editingAddress = editingAddress,
+                        onEditingAddressChange = { editingAddress = it },
+                        bookmarks = bookmarks,
+                        history = history,
+                        onSubmitAddress = { query ->
+                            tab.input = query
+                            controller.load(query, settings.searchUrlTemplate)
                         },
                         onBack = controller::goBack,
                         onForward = controller::goForward,
@@ -718,6 +730,117 @@ private fun searchSuggestionsJsonString(
     return array.toString()
 }
 
+private data class ToolbarSuggestion(
+    val title: String,
+    val url: String,
+    val source: String
+)
+
+@Composable
+private fun ToolbarSuggestionPanel(
+    suggestions: List<ToolbarSuggestion>,
+    onOpen: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    ) {
+        Column {
+            suggestions.forEachIndexed { index, suggestion ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpen(suggestion.url) }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = if (suggestion.source == "书签") "★" else "◷",
+                        color = Color(0xFF5F6368),
+                        fontSize = 18.sp,
+                        modifier = Modifier.width(24.dp)
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = suggestion.title.ifBlank { suggestion.url },
+                            color = Color(0xFF202124),
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = suggestion.url,
+                            color = Color(0xFF6F737B),
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Text(
+                        text = suggestion.source,
+                        color = Color(0xFF6F737B),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+                if (index != suggestions.lastIndex) {
+                    HorizontalDivider(color = Color(0xFFE8EAED))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolbarSuggestionItems(
+    suggestions: List<ToolbarSuggestion>,
+    onOpen: (String) -> Unit
+) {
+    suggestions.forEach { suggestion ->
+        Row(
+            modifier = Modifier
+                .width(320.dp)
+                .clickable { onOpen(suggestion.url) }
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = if (suggestion.source == "书签") "★" else "◷",
+                color = Color(0xFF5F6368),
+                fontSize = 18.sp,
+                modifier = Modifier.width(24.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = suggestion.title.ifBlank { suggestion.url },
+                    color = Color(0xFF202124),
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = suggestion.url,
+                    color = Color(0xFF6F737B),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(
+                text = suggestion.source,
+                color = Color(0xFF6F737B),
+                style = MaterialTheme.typography.labelMedium
+            )
+        }
+        if (suggestion != suggestions.last()) {
+            HorizontalDivider(color = Color(0xFFE8EAED))
+        }
+    }
+}
+
 @Composable
 private fun BrowserToolbar(
     input: String,
@@ -728,8 +851,11 @@ private fun BrowserToolbar(
     installedExtensions: List<InstalledExtensionState>,
     extensionActions: Map<String, ExtensionMenuActionState>,
     toolbarPosition: String,
-    onAddressClick: () -> Unit,
-    onLoad: () -> Unit,
+    editingAddress: Boolean,
+    onEditingAddressChange: (Boolean) -> Unit,
+    bookmarks: List<BrowserBookmark>,
+    history: List<BrowserHistoryEntry>,
+    onSubmitAddress: (String) -> Unit,
     onBack: () -> Unit,
     onForward: () -> Unit,
     onReload: () -> Unit,
@@ -746,20 +872,96 @@ private fun BrowserToolbar(
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var extensionsExpanded by remember { mutableStateOf(false) }
+    var addressDraft by remember { mutableStateOf(browserAddressText(pageState.url, input)) }
+    var addressEditSawIme by remember { mutableStateOf(false) }
+    val currentAddress = browserAddressText(pageState.url, input)
+    val addressFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val density = LocalDensity.current
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
     val enabledExtensions = installedExtensions.filter { it.enabled }
+    val addressSuggestions = remember(addressDraft, bookmarks, history, editingAddress) {
+        if (!editingAddress) {
+            emptyList()
+        } else {
+            val needle = addressDraft.trim().lowercase()
+            if (needle.isBlank()) {
+                emptyList()
+            } else {
+                (bookmarks.map { ToolbarSuggestion(it.title, it.url, "书签") } +
+                    history.filterNot { GeckoSessionController.isInternalUrl(it.url) }
+                        .map { ToolbarSuggestion(it.title, it.url, "历史") })
+                    .distinctBy { it.url }
+                    .filter {
+                        it.title.lowercase().contains(needle) ||
+                            it.url.lowercase().contains(needle)
+                    }
+                    .take(5)
+            }
+        }
+    }
     val toolbarPadding = if (toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) {
-        Modifier.navigationBarsPadding()
+        Modifier
+            .navigationBarsPadding()
+            .then(if (editingAddress) Modifier.imePadding() else Modifier)
     } else {
         Modifier.statusBarsPadding()
     }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(toolbarPadding)
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
+
+    fun submitAddress(value: String = addressDraft) {
+        val query = value.trim()
+        if (query.isBlank()) return
+        onEditingAddressChange(false)
+        keyboardController?.hide()
+        onSubmitAddress(query)
+    }
+
+    fun startAddressEdit() {
+        onEditingAddressChange(true)
+        addressEditSawIme = false
+        addressDraft = ""
+    }
+
+    fun cancelAddressEdit() {
+        onEditingAddressChange(false)
+        addressDraft = currentAddress
+        keyboardController?.hide()
+    }
+
+    LaunchedEffect(currentAddress, editingAddress) {
+        if (!editingAddress) {
+            addressDraft = currentAddress
+        }
+    }
+
+    LaunchedEffect(editingAddress) {
+        if (editingAddress) {
+            addressFocusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
+
+    LaunchedEffect(editingAddress, imeVisible) {
+        when {
+            !editingAddress -> addressEditSawIme = false
+            imeVisible -> addressEditSawIme = true
+            addressEditSawIme -> cancelAddressEdit()
+        }
+    }
+
+    val suggestionPanel: @Composable () -> Unit = {
+        if (editingAddress && addressSuggestions.isNotEmpty()) {
+            ToolbarSuggestionPanel(
+                suggestions = addressSuggestions,
+                onOpen = { url ->
+                    addressDraft = url
+                    submitAddress(url)
+                }
+            )
+        }
+    }
+
+    val toolbarRow: @Composable () -> Unit = {
         Row(
             modifier = Modifier.height(ChromeActionBarHeight),
             verticalAlignment = Alignment.CenterVertically,
@@ -774,21 +976,49 @@ private fun BrowserToolbar(
                     .height(ChromeActionButtonSize)
                     .clip(RoundedCornerShape(28.dp))
                     .background(Color(0xFFE9EAF1))
-                    .clickable(onClick = onAddressClick)
+                    .clickable {
+                        startAddressEdit()
+                    }
                     .padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(if (pageState.insecureHttp) "!" else "G", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = if (pageState.insecureHttp) Color(0xFFC5221F) else Color(0xFF4285F4))
-                Text(
-                    text = browserAddressText(pageState.url, input),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = if (pageState.url.isBlank() && input.isBlank()) Color(0xFF6F737B) else Color(0xFF202124),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                BasicTextField(
+                    value = addressDraft,
+                    onValueChange = {
+                        addressDraft = it
+                        if (!editingAddress) onEditingAddressChange(true)
+                    },
+                    singleLine = true,
+                    enabled = editingAddress,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(onGo = { submitAddress() }),
+                    textStyle = MaterialTheme.typography.titleMedium.copy(color = Color(0xFF202124)),
                     modifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = 10.dp)
+                        .focusRequester(addressFocusRequester)
+                        .onFocusChanged { focusState ->
+                            if (editingAddress && !focusState.isFocused) {
+                                cancelAddressEdit()
+                            }
+                        },
+                    decorationBox = { inner ->
+                        if (addressDraft.isBlank()) {
+                            Text("搜索或输入网址", color = Color(0xFF6F737B), style = MaterialTheme.typography.titleMedium)
+                        }
+                        inner()
+                    }
                 )
+                if (editingAddress && addressDraft.isNotBlank()) {
+                    Text(
+                        "×",
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { addressDraft = "" }
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                        fontSize = 24.sp,
+                        color = Color(0xFF5F6368)
+                    )
+                }
             }
             IconButton(onClick = onNewTab, modifier = Modifier.size(ChromeActionButtonSize)) {
                 Text("+", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
@@ -835,6 +1065,23 @@ private fun BrowserToolbar(
                     )
                 }
             }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(toolbarPadding)
+            .background(MaterialTheme.colorScheme.background)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        if (toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) {
+            suggestionPanel()
+            toolbarRow()
+        } else {
+            toolbarRow()
+            suggestionPanel()
         }
         if (pageState.insecureHttp) Text("Insecure HTTP page", color = MaterialTheme.colorScheme.error)
         message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
