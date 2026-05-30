@@ -155,8 +155,9 @@ import java.util.UUID
 import kotlin.math.roundToInt
 
 private val ChromeActionBarHeight = 48.dp
-private val ChromeActionButtonSize = 44.dp
-private val ChromeActionIconSize = 28.sp
+private val ChromeActionButtonSize = 40.dp
+private val ChromeAddressBarHeight = 44.dp
+private val ChromeActionIconSize = 24.sp
 
 class BrowserActivity : ComponentActivity() {
     private val externalIntents = MutableSharedFlow<ExternalBrowserIntent>(extraBufferCapacity = 1)
@@ -1342,7 +1343,7 @@ private fun BrowserToolbar(
         Row(
             modifier = Modifier.height(ChromeActionBarHeight),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             IconButton(onClick = onHome, modifier = Modifier.size(ChromeActionButtonSize)) {
                 Text("⌂", fontSize = ChromeActionIconSize, color = Color(0xFF202124))
@@ -1350,7 +1351,7 @@ private fun BrowserToolbar(
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .height(ChromeActionButtonSize)
+                    .height(ChromeAddressBarHeight)
                     .clip(RoundedCornerShape(28.dp))
                     .background(Color(0xFFE9EAF1))
                     .clickable {
@@ -1403,17 +1404,17 @@ private fun BrowserToolbar(
             IconButton(
                 onClick = onShowTabs,
                 modifier = Modifier
-                    .defaultMinSize(minWidth = ChromeActionButtonSize, minHeight = ChromeActionButtonSize)
+                    .size(ChromeActionButtonSize)
             ) {
                 Box(
                     modifier = Modifier
-                        .size(30.dp)
+                        .size(28.dp)
                         .clip(RoundedCornerShape(9.dp))
                         .background(Color.Transparent)
                         .borderForChromeTabCounter(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(tabCount.toString(), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF202124))
+                    Text(tabCount.toString(), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF202124))
                 }
             }
             Box {
@@ -1452,7 +1453,7 @@ private fun BrowserToolbar(
             .then(toolbarPadding)
             .then(toolbarImeOffset)
             .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         if (toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) {
