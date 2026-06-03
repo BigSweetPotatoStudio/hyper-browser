@@ -951,7 +951,8 @@ private class BrowserTabRuntime private constructor(
                     initialUrl = url,
                     onHyperRoute = onHyperRoute,
                     onHyperBridgeMessage = onHyperBridgeMessage,
-                    onDownload = onDownload
+                    onDownload = onDownload,
+                    mediaNotificationIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
                 ),
                 input = url
             )
@@ -959,7 +960,12 @@ private class BrowserTabRuntime private constructor(
         fun fromExtensionRequest(app: HyperBrowserApp, request: ExtensionNewTabRequest): BrowserTabRuntime =
             BrowserTabRuntime(
                 id = UUID.randomUUID().toString(),
-                controller = GeckoSessionController(app, request.url, request.session),
+                controller = GeckoSessionController(
+                    context = app,
+                    initialUrl = request.url,
+                    existingSession = request.session,
+                    mediaNotificationIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
+                ),
                 input = request.url
             )
     }

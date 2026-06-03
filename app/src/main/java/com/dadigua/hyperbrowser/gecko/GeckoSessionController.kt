@@ -1,6 +1,7 @@
 package com.dadigua.hyperbrowser.gecko
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
@@ -11,10 +12,12 @@ import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
+import org.mozilla.geckoview.MediaSession
 import org.mozilla.geckoview.WebResponse
 import java.net.URLEncoder
 import java.io.InputStream
 import com.dadigua.hyperbrowser.browser.DownloadHandler
+import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 
 data class GeckoPageState(
     val title: String = "",
@@ -40,7 +43,8 @@ class GeckoSessionController(
     existingSession: GeckoSession? = null,
     private val onHyperRoute: (HyperRoute) -> Unit = {},
     private val onHyperBridgeMessage: ((org.json.JSONObject) -> org.json.JSONObject)? = null,
-    private val onDownload: (GeckoDownloadRequest) -> Unit = {}
+    private val onDownload: (GeckoDownloadRequest) -> Unit = {},
+    private val mediaNotificationIntent: Intent? = null
 ) {
     var session: GeckoSession = existingSession ?: GeckoSession()
         private set
@@ -163,6 +167,50 @@ class GeckoSessionController(
                 return null
             }
         }
+        targetSession.setMediaSessionDelegate(object : MediaSession.Delegate {
+            private val mediaNotifications: BrowserMediaNotificationController
+                get() = BrowserMediaNotificationController.get(appContext)
+
+            override fun onActivated(session: GeckoSession, mediaSession: MediaSession) {
+                mediaNotifications.onActivated(session, mediaSession, mediaNotificationIntent)
+            }
+
+            override fun onDeactivated(session: GeckoSession, mediaSession: MediaSession) {
+                mediaNotifications.onDeactivated(session, mediaSession)
+            }
+
+            override fun onMetadata(
+                session: GeckoSession,
+                mediaSession: MediaSession,
+                meta: MediaSession.Metadata
+            ) {
+                mediaNotifications.onMetadata(session, mediaSession, meta)
+            }
+
+            override fun onFeatures(session: GeckoSession, mediaSession: MediaSession, features: Long) {
+                mediaNotifications.onFeatures(session, mediaSession, features)
+            }
+
+            override fun onPlay(session: GeckoSession, mediaSession: MediaSession) {
+                mediaNotifications.onPlay(session, mediaSession)
+            }
+
+            override fun onPause(session: GeckoSession, mediaSession: MediaSession) {
+                mediaNotifications.onPause(session, mediaSession)
+            }
+
+            override fun onStop(session: GeckoSession, mediaSession: MediaSession) {
+                mediaNotifications.onStop(session, mediaSession)
+            }
+
+            override fun onPositionState(
+                session: GeckoSession,
+                mediaSession: MediaSession,
+                state: MediaSession.PositionState
+            ) {
+                mediaNotifications.onPositionState(session, mediaSession, state)
+            }
+        })
     }
 
     fun load(input: String, searchUrlTemplate: String? = null) {
@@ -289,6 +337,7 @@ class GeckoSessionController(
 
     fun close() {
         HyperBridge.unregister(session)
+        BrowserMediaNotificationController.get(appContext).clearIfOwner(session)
         runCatching { session.close() }
     }
 
@@ -341,6 +390,7 @@ class GeckoSessionController(
             automaticRecoveryTarget = null
         }
         HyperBridge.unregister(session)
+        BrowserMediaNotificationController.get(appContext).clearIfOwner(session)
         runCatching { session.close() }
         session = GeckoSession()
         configureSession(session)

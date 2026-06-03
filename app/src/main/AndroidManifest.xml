@@ -31,6 +31,10 @@
             android:name=".webapp.ShortcutPinnedReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".browser.BrowserMediaActionReceiver"
+            android:exported="false" />
+
         <activity
             android:name=".ui.webapp.WebAppActivity"
             android:documentLaunchMode="intoExisting"

@@ -93,7 +93,13 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
         return
     }
 
-    val controller = remember(current.id) { GeckoSessionController(app, current.startUrl) }
+    val controller = remember(current.id) {
+        GeckoSessionController(
+            context = app,
+            initialUrl = current.startUrl,
+            mediaNotificationIntent = WebAppActivity.intent(app, current.id, true)
+        )
+    }
     val pageState by controller.state.collectAsState()
 
     DisposableEffect(current.id) {
