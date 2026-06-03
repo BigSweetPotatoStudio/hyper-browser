@@ -9,6 +9,7 @@ function BookmarksPage() {
   const [bookmarks, setBookmarks] = useState<BookmarkItem[] | null>(() => readBootstrapData<BookmarkItem>());
   const [editingUrl, setEditingUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     if (bookmarks !== null) return;
@@ -35,6 +36,7 @@ function BookmarksPage() {
   }
 
   const items = bookmarks || [];
+  const visibleItems = filterBookmarks(items, query);
 
   return (
     <div className="page">
@@ -50,24 +52,70 @@ function BookmarksPage() {
         ) : items.length === 0 ? (
           <div className="empty">还没有书签。打开网页后可以从菜单添加。</div>
         ) : (
-          <div className="list">
-            {items.map((bookmark) => (
-              <BookmarkRow
-                bookmark={bookmark}
-                editing={editingUrl === bookmark.url}
-                key={bookmark.url}
-                onEdit={() => setEditingUrl(bookmark.url)}
-                onCancel={() => setEditingUrl(null)}
-                onOpen={() => window.hyperBrowser.openBookmark(bookmark.url)}
-                onRemove={() => remove(bookmark.url)}
-                onSave={save}
-              />
-            ))}
-          </div>
+          <>
+            <SearchBox
+              label="搜索书签"
+              placeholder="搜索标题或网址"
+              value={query}
+              onChange={setQuery}
+            />
+            {visibleItems.length === 0 ? (
+              <div className="empty">没有匹配的书签。</div>
+            ) : (
+              <div className="list">
+                {visibleItems.map((bookmark) => (
+                  <BookmarkRow
+                    bookmark={bookmark}
+                    editing={editingUrl === bookmark.url}
+                    key={bookmark.url}
+                    onEdit={() => setEditingUrl(bookmark.url)}
+                    onCancel={() => setEditingUrl(null)}
+                    onOpen={() => window.hyperBrowser.openBookmark(bookmark.url)}
+                    onRemove={() => remove(bookmark.url)}
+                    onSave={save}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </main>
     </div>
   );
+}
+
+function SearchBox(props: {
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="page-search">
+      <span className="page-search-icon">⌕</span>
+      <input
+        type="search"
+        aria-label={props.label}
+        value={props.value}
+        placeholder={props.placeholder}
+        onChange={(event) => props.onChange(event.currentTarget.value)}
+      />
+      {props.value && (
+        <button className="page-search-clear" type="button" aria-label="清除搜索" onClick={() => props.onChange("")}>
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
+function filterBookmarks(items: BookmarkItem[], query: string): BookmarkItem[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return items;
+  return items.filter((item) => (
+    (item.title || "").toLocaleLowerCase().includes(normalizedQuery) ||
+    item.url.toLocaleLowerCase().includes(normalizedQuery)
+  ));
 }
 
 function BookmarkRow(props: {

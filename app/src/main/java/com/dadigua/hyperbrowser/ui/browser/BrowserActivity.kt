@@ -1401,6 +1401,10 @@ private fun BrowserToolbar(
                     .padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                AddressSecurityIndicator(
+                    insecure = pageState.insecureHttp && !editingAddress,
+                    modifier = Modifier.width(26.dp)
+                )
                 BasicTextField(
                     value = addressDraft,
                     onValueChange = {
@@ -1504,7 +1508,41 @@ private fun BrowserToolbar(
             toolbarRow()
             suggestionPanel()
         }
-        if (pageState.insecureHttp) Text("Insecure HTTP page", color = MaterialTheme.colorScheme.error)
+    }
+}
+
+@Composable
+private fun AddressSecurityIndicator(
+    insecure: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.CenterStart
+    ) {
+        if (insecure) {
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .border(1.5.dp, MaterialTheme.colorScheme.error, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "!",
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        } else {
+            Icon(
+                imageVector = Icons.Outlined.Public,
+                contentDescription = null,
+                tint = Color(0xFF5F6368),
+                modifier = Modifier.size(18.dp)
+            )
+        }
     }
 }
 
