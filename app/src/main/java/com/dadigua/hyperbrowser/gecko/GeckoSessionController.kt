@@ -22,7 +22,8 @@ data class GeckoPageState(
     val insecureHttp: Boolean = false,
     val canGoBack: Boolean = false,
     val canGoForward: Boolean = false,
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val loadProgress: Int = 0
 )
 
 data class GeckoDownloadRequest(
@@ -102,11 +103,15 @@ class GeckoSessionController(
         targetSession.progressDelegate = object : GeckoSession.ProgressDelegate {
             override fun onPageStart(session: GeckoSession, url: String) {
                 resetContentTouchState()
-                _state.value = _state.value.copy(isLoading = true)
+                _state.value = _state.value.copy(isLoading = true, loadProgress = 0)
+            }
+
+            override fun onProgressChange(session: GeckoSession, progress: Int) {
+                _state.value = _state.value.copy(loadProgress = progress.coerceIn(0, 100))
             }
 
             override fun onPageStop(session: GeckoSession, success: Boolean) {
-                _state.value = _state.value.copy(isLoading = false)
+                _state.value = _state.value.copy(isLoading = false, loadProgress = 100)
                 if (success) {
                     sessionCrashed = false
                     automaticRecoveryTarget = null

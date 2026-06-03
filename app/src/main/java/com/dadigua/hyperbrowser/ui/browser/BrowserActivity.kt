@@ -890,10 +890,16 @@ private fun BrowserContent(
     onClosePopup: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val contentPageState by controller.state.collectAsState()
     Box(modifier = modifier.fillMaxSize()) {
         key(tabId) {
             GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())
         }
+        TopPageLoadingProgressBar(
+            loading = contentPageState.isLoading,
+            progress = contentPageState.loadProgress,
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
         extensionPopup?.let { popup ->
             ExtensionPopupOverlay(
                 popup = popup,
@@ -901,6 +907,24 @@ private fun BrowserContent(
             )
         }
     }
+}
+
+@Composable
+private fun TopPageLoadingProgressBar(
+    loading: Boolean,
+    progress: Int,
+    modifier: Modifier = Modifier
+) {
+    if (!loading) return
+    val normalizedProgress = (progress.coerceIn(0, 100) / 100f).coerceAtLeast(0.08f)
+    LinearProgressIndicator(
+        progress = { normalizedProgress },
+        modifier = modifier
+            .fillMaxWidth()
+            .height(2.dp),
+        color = MaterialTheme.colorScheme.primary,
+        trackColor = Color.Transparent
+    )
 }
 
 private class BrowserTabRuntime private constructor(

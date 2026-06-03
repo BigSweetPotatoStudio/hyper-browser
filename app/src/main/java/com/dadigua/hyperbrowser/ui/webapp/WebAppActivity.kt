@@ -7,11 +7,15 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -23,7 +27,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.data.WebAppDefinition
@@ -107,6 +113,31 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-        GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())
+        Box(modifier = Modifier.fillMaxSize()) {
+            GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())
+            WebAppLoadingProgressBar(
+                loading = pageState.isLoading,
+                progress = pageState.loadProgress,
+                modifier = Modifier.align(Alignment.TopCenter)
+            )
+        }
     }
+}
+
+@Composable
+private fun WebAppLoadingProgressBar(
+    loading: Boolean,
+    progress: Int,
+    modifier: Modifier = Modifier
+) {
+    if (!loading) return
+    val normalizedProgress = (progress.coerceIn(0, 100) / 100f).coerceAtLeast(0.08f)
+    LinearProgressIndicator(
+        progress = { normalizedProgress },
+        modifier = modifier
+            .fillMaxWidth()
+            .height(2.dp),
+        color = MaterialTheme.colorScheme.primary,
+        trackColor = Color.Transparent
+    )
 }
