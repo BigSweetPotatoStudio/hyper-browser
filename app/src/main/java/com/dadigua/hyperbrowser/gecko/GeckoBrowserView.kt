@@ -91,6 +91,8 @@ fun GeckoBrowserView(controller: GeckoSessionController, modifier: Modifier = Mo
                     enabled = pullRefreshEnabled && !refreshing,
                     triggerDistancePx = triggerDistancePx,
                     maxPullDistancePx = maxPullDistancePx,
+                    onGestureStarted = controller::markPullRefreshGestureStarted,
+                    contentCanStartPullRefresh = controller::canStartPullRefreshFromContent,
                     onPull = { pullDistancePx = it },
                     onRefresh = {
                         refreshing = true
@@ -123,6 +125,8 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
     private var startedInUpperHalf = false
     private var pullDistancePx = 0f
     private var pulling = false
+    private var onGestureStarted: () -> Unit = {}
+    private var contentCanStartPullRefresh: () -> Boolean = { true }
     private var onPull: (Float) -> Unit = {}
     private var onRefresh: () -> Unit = {}
 
@@ -137,12 +141,16 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
         enabled: Boolean,
         triggerDistancePx: Float,
         maxPullDistancePx: Float,
+        onGestureStarted: () -> Unit,
+        contentCanStartPullRefresh: () -> Boolean,
         onPull: (Float) -> Unit,
         onRefresh: () -> Unit
     ) {
         this.enabled = enabled
         this.triggerDistancePx = triggerDistancePx
         this.maxPullDistancePx = maxPullDistancePx
+        this.onGestureStarted = onGestureStarted
+        this.contentCanStartPullRefresh = contentCanStartPullRefresh
         this.onPull = onPull
         this.onRefresh = onRefresh
         if (!enabled) {
@@ -161,13 +169,16 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
                 startY = event.rawY
                 startedInUpperHalf = event.y <= height / 3f
                 resetPull()
+                if (startedInUpperHalf) {
+                    onGestureStarted()
+                }
                 return super.dispatchTouchEvent(event)
             }
 
             MotionEvent.ACTION_MOVE -> {
                 val dy = event.rawY - startY
                 val dx = abs(event.rawX - startX)
-                val canStartPull = !geckoView.canScrollVertically(-1)
+                val canStartPull = !geckoView.canScrollVertically(-1) && contentCanStartPullRefresh()
                 val shouldStartPull = startedInUpperHalf &&
                     canStartPull &&
                     dy > touchSlop &&

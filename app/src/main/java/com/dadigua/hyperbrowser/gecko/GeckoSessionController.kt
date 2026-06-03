@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.mozilla.geckoview.AllowOrDeny
@@ -53,12 +54,15 @@ class GeckoSessionController(
     private var sessionCrashed = false
     private var automaticRecoveryTarget: String? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var contentTouchCanScrollUp = false
+    private var lastContentTouchStateAt = 0L
+    private var pullRefreshGestureStartedAt = 0L
     val state: StateFlow<GeckoPageState> = _state
     val sessionChangeVersion: StateFlow<Int> = _sessionChangeVersion
 
     init {
         configureSession(session)
-        onHyperBridgeMessage?.let { HyperBridge.register(session, it) }
+        HyperBridge.register(session, ::handleBridgeMessage)
         if (existingSession == null) {
             session.open(runtime)
             load(initialUrl)
@@ -97,6 +101,7 @@ class GeckoSessionController(
         }
         targetSession.progressDelegate = object : GeckoSession.ProgressDelegate {
             override fun onPageStart(session: GeckoSession, url: String) {
+                resetContentTouchState()
                 _state.value = _state.value.copy(isLoading = true)
             }
 
@@ -250,6 +255,20 @@ class GeckoSessionController(
         this.view = view
     }
 
+    fun markPullRefreshGestureStarted() {
+        pullRefreshGestureStartedAt = SystemClock.uptimeMillis()
+        contentTouchCanScrollUp = false
+        lastContentTouchStateAt = 0L
+    }
+
+    fun canStartPullRefreshFromContent(): Boolean {
+        if (pullRefreshGestureStartedAt == 0L || lastContentTouchStateAt < pullRefreshGestureStartedAt) {
+            return false
+        }
+        val stateAgeMs = SystemClock.uptimeMillis() - lastContentTouchStateAt
+        return stateAgeMs <= CONTENT_TOUCH_STATE_TTL_MS && !contentTouchCanScrollUp
+    }
+
     fun capturePixels(onCaptured: (Bitmap?) -> Unit) {
         val currentView = view
         if (currentView == null) {
@@ -264,8 +283,25 @@ class GeckoSessionController(
     }
 
     fun close() {
-        onHyperBridgeMessage?.let { HyperBridge.unregister(session) }
+        HyperBridge.unregister(session)
         runCatching { session.close() }
+    }
+
+    private fun handleBridgeMessage(message: org.json.JSONObject): org.json.JSONObject {
+        val payload = message.optJSONObject("payload") ?: org.json.JSONObject()
+        if (message.optString("type") == "pullRefresh.touch") {
+            contentTouchCanScrollUp = payload.optBoolean("canScrollUp", false)
+            lastContentTouchStateAt = SystemClock.uptimeMillis()
+            return org.json.JSONObject().put("ok", true)
+        }
+        return onHyperBridgeMessage?.invoke(message)
+            ?: org.json.JSONObject().put("ok", false).put("error", "No bridge handler for session.")
+    }
+
+    private fun resetContentTouchState() {
+        contentTouchCanScrollUp = false
+        lastContentTouchStateAt = 0L
+        pullRefreshGestureStartedAt = 0L
     }
 
     private fun loadInternalPage(semanticUrl: String, title: String, page: String, bootstrapJson: String?) {
@@ -299,11 +335,11 @@ class GeckoSessionController(
         if (force) {
             automaticRecoveryTarget = null
         }
-        onHyperBridgeMessage?.let { HyperBridge.unregister(session) }
+        HyperBridge.unregister(session)
         runCatching { session.close() }
         session = GeckoSession()
         configureSession(session)
-        onHyperBridgeMessage?.let { HyperBridge.register(session, it) }
+        HyperBridge.register(session, ::handleBridgeMessage)
         session.open(runtime)
         view?.setSession(session)
         _sessionChangeVersion.value = _sessionChangeVersion.value + 1
@@ -336,6 +372,7 @@ class GeckoSessionController(
         private const val APPS_ASSET_URL = "resource://android/assets/apps.html"
         private const val BOOKMARKS_ASSET_URL = "resource://android/assets/bookmarks.html"
         private const val HISTORY_ASSET_URL = "resource://android/assets/history.html"
+        private const val CONTENT_TOUCH_STATE_TTL_MS = 700L
 
         fun isHomeUrl(url: String): Boolean = url == HOME_URL
         fun isSearchUrl(url: String): Boolean = url == SEARCH_URL

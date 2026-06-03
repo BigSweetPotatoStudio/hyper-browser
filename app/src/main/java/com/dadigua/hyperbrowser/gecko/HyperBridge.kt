@@ -53,11 +53,14 @@ object HyperBridge {
                             message: Any,
                             sender: WebExtension.MessageSender
                         ): GeckoResult<Any> {
-                            if (nativeApp != NATIVE_APP || !isTrustedSender(sender)) {
+                            if (nativeApp != NATIVE_APP) {
                                 return GeckoResult.fromValue(error("Rejected bridge message.").toString())
                             }
                             val request = message as? JSONObject
                                 ?: return GeckoResult.fromValue(error("Invalid bridge payload.").toString())
+                            if (!isTrustedSender(sender, request)) {
+                                return GeckoResult.fromValue(error("Rejected bridge message.").toString())
+                            }
                             val handler = handlers[sender.session] ?: fallbackHandler
                                 ?: return GeckoResult.fromValue(error("No bridge handler for session.").toString())
                             return GeckoResult.fromValue(handler(request).toString())
@@ -99,8 +102,12 @@ object HyperBridge {
     fun isInternalPageUrl(url: String): Boolean =
         extension?.metaData?.baseUrl?.let { url.startsWith(it) } == true
 
-    private fun isTrustedSender(sender: WebExtension.MessageSender): Boolean =
-        isInternalPageUrl(sender.url)
+    private fun isTrustedSender(sender: WebExtension.MessageSender, request: JSONObject): Boolean {
+        if (isInternalPageUrl(sender.url)) return true
+        val type = request.optString("type")
+        return type == "pullRefresh.touch" &&
+            (sender.url.startsWith("https://") || sender.url.startsWith("http://"))
+    }
 
     private fun error(message: String): JSONObject =
         JSONObject().put("ok", false).put("error", message)
