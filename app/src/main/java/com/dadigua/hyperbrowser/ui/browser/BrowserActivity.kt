@@ -142,6 +142,7 @@ import com.dadigua.hyperbrowser.gecko.HyperCommand
 import com.dadigua.hyperbrowser.gecko.HyperRoute
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
 import com.dadigua.hyperbrowser.ui.webapp.WebAppActivity
+import com.dadigua.hyperbrowser.webapp.PinnedShortcutRequestResult
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
@@ -551,7 +552,7 @@ private fun BrowserScreen(
             is HyperCommand.Apps.Pin -> {
                 scope.launch {
                     runCatching { app.webApps.pinToHome(command.id) }
-                        .onSuccess { message = if (it) "Shortcut requested." else "WebApp not found." }
+                        .onSuccess { message = shortcutRequestMessage(it) }
                         .onFailure { message = it.message ?: "Shortcut failed." }
                 }
             }
@@ -834,7 +835,9 @@ private fun BrowserScreen(
                                 val title = pageState.title.ifBlank { tab.input }
                                 val url = pageState.url.ifBlank { tab.input }
                                 runCatching { app.webApps.installFromPage(title, url, iconPath = currentIconPath) }
-                                    .onSuccess { message = "Installed ${it.name} as WebApp." }
+                                    .onSuccess {
+                                        message = "Installed ${it.webApp.name}. ${shortcutRequestMessage(it.shortcutRequest)}"
+                                    }
                                     .onFailure { message = it.message ?: "Install failed." }
                             }
                         }
@@ -870,6 +873,14 @@ private fun BrowserScreen(
         )
     }
 }
+
+private fun shortcutRequestMessage(result: PinnedShortcutRequestResult): String =
+    when (result) {
+        PinnedShortcutRequestResult.Requested -> "Tap Create shortcut in the system prompt."
+        PinnedShortcutRequestResult.Unsupported -> "Home screen shortcuts are not supported by this launcher."
+        PinnedShortcutRequestResult.Failed -> "Shortcut request failed."
+        PinnedShortcutRequestResult.WebAppNotFound -> "WebApp not found."
+    }
 
 @Composable
 private fun BrowserContent(

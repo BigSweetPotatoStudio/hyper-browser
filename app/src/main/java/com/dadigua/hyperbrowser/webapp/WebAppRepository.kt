@@ -2,6 +2,7 @@ package com.dadigua.hyperbrowser.webapp
 
 import android.app.Activity
 import android.app.ActivityManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ShortcutInfo
@@ -51,7 +52,7 @@ class WebAppRepository(
         url: String,
         themeColor: Int = Color.rgb(18, 109, 106),
         iconPath: String? = null
-    ): WebAppDefinition {
+    ): WebAppInstallResult {
         val now = System.currentTimeMillis()
         val resolvedIconPath = iconPath ?: faviconStore.cachedIconPath(url) ?: faviconStore.resolveIconPath(url)
         val webApp = WebAppDefinition(
@@ -66,14 +67,15 @@ class WebAppRepository(
             lastOpenedAt = now
         )
         upsert(webApp)
-        requestPinnedShortcut(webApp)
-        return webApp
+        return WebAppInstallResult(
+            webApp = webApp,
+            shortcutRequest = requestPinnedShortcut(webApp)
+        )
     }
 
-    suspend fun pinToHome(id: String): Boolean {
-        val webApp = state.value.firstOrNull { it.id == id } ?: return false
-        requestPinnedShortcut(webApp)
-        return true
+    suspend fun pinToHome(id: String): PinnedShortcutRequestResult {
+        val webApp = state.value.firstOrNull { it.id == id } ?: return PinnedShortcutRequestResult.WebAppNotFound
+        return requestPinnedShortcut(webApp)
     }
 
     suspend fun update(id: String, name: String, startUrl: String): WebAppDefinition? {
@@ -121,12 +123,22 @@ class WebAppRepository(
         activity.setTaskDescription(ActivityManager.TaskDescription(webApp.name, icon, webApp.themeColor))
     }
 
-    private fun requestPinnedShortcut(webApp: WebAppDefinition) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    private fun requestPinnedShortcut(webApp: WebAppDefinition): PinnedShortcutRequestResult {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return PinnedShortcutRequestResult.Unsupported
         val shortcutManager = context.getSystemService(ShortcutManager::class.java)
-        if (!shortcutManager.isRequestPinShortcutSupported) return
+        if (!shortcutManager.isRequestPinShortcutSupported) return PinnedShortcutRequestResult.Unsupported
         val shortcut = shortcutInfo(webApp)
-        shortcutManager.requestPinShortcut(shortcut, null)
+        val callback = PendingIntent.getBroadcast(
+            context,
+            shortcutId(webApp.id).hashCode(),
+            ShortcutPinnedReceiver.intent(context, webApp.name),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return if (shortcutManager.requestPinShortcut(shortcut, callback.intentSender)) {
+            PinnedShortcutRequestResult.Requested
+        } else {
+            PinnedShortcutRequestResult.Failed
+        }
     }
 
     private fun updateShortcut(webApp: WebAppDefinition) {
@@ -249,4 +261,16 @@ class WebAppRepository(
             }.sortedByDescending { it.lastOpenedAt }
         }.getOrDefault(emptyList())
     }
+}
+
+data class WebAppInstallResult(
+    val webApp: WebAppDefinition,
+    val shortcutRequest: PinnedShortcutRequestResult
+)
+
+enum class PinnedShortcutRequestResult {
+    Requested,
+    Unsupported,
+    Failed,
+    WebAppNotFound
 }

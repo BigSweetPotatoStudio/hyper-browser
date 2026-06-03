@@ -27,6 +27,10 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <receiver
+            android:name=".webapp.ShortcutPinnedReceiver"
+            android:exported="false" />
+
         <activity
             android:name=".ui.webapp.WebAppActivity"
             android:documentLaunchMode="intoExisting"
