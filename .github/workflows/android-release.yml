@@ -59,10 +59,10 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-      - name: Build unsigned release APK
+      - name: Build unsigned release APKs
         run: ./gradlew :app:assembleRelease --console=plain
 
-      - name: Sign release APK
+      - name: Sign release APKs
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -71,13 +71,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          UNSIGNED_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
-          ALIGNED_APK="app/build/outputs/apk/release/app-release-aligned.apk"
-          SIGNED_APK="app/build/outputs/apk/release/HyperBrowser-release.apk"
+          APK_DIR="app/build/outputs/apk/release"
+          SIGNED_DIR="$APK_DIR/signed"
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -n 1)"
+          mkdir -p "$SIGNED_DIR"
 
-          if [ ! -f "$UNSIGNED_APK" ]; then
-            echo "Unsigned release APK not found: $UNSIGNED_APK" >&2
+          mapfile -t UNSIGNED_APKS < <(find "$APK_DIR" -maxdepth 1 -type f -name "app-*-release-unsigned.apk" | sort)
+          if [ "${#UNSIGNED_APKS[@]}" -eq 0 ]; then
+            echo "No unsigned release split APKs found in $APK_DIR" >&2
             exit 1
           fi
 
@@ -102,21 +103,32 @@ jobs:
             KEY_PASSWORD="android"
           fi
 
-          "$BUILD_TOOLS/zipalign" -p -f 4 "$UNSIGNED_APK" "$ALIGNED_APK"
-          "$BUILD_TOOLS/apksigner" sign \
-            --ks release.keystore \
-            --ks-pass "pass:$KEYSTORE_PASSWORD" \
-            --ks-key-alias "$KEY_ALIAS" \
-            --key-pass "pass:$KEY_PASSWORD" \
-            --out "$SIGNED_APK" \
-            "$ALIGNED_APK"
-          "$BUILD_TOOLS/apksigner" verify --verbose "$SIGNED_APK"
+          for unsigned_apk in "${UNSIGNED_APKS[@]}"; do
+            filename="$(basename "$unsigned_apk")"
+            abi="${filename#app-}"
+            abi="${abi%-release-unsigned.apk}"
+            aligned_apk="$SIGNED_DIR/HyperBrowser-$abi-release-aligned.apk"
+            signed_apk="$SIGNED_DIR/HyperBrowser-$abi-release.apk"
 
-      - name: Upload signed release APK artifact
+            "$BUILD_TOOLS/zipalign" -p -f 4 "$unsigned_apk" "$aligned_apk"
+            "$BUILD_TOOLS/apksigner" sign \
+              --ks release.keystore \
+              --ks-pass "pass:$KEYSTORE_PASSWORD" \
+              --ks-key-alias "$KEY_ALIAS" \
+              --key-pass "pass:$KEY_PASSWORD" \
+              --out "$signed_apk" \
+              "$aligned_apk"
+            "$BUILD_TOOLS/apksigner" verify --verbose "$signed_apk"
+            rm "$aligned_apk"
+          done
+
+          ls -lh "$SIGNED_DIR"
+
+      - name: Upload signed release APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: HyperBrowser-release-apk
-          path: app/build/outputs/apk/release/HyperBrowser-release.apk
+          name: HyperBrowser-release-apks
+          path: app/build/outputs/apk/release/signed/*.apk
           if-no-files-found: error
 
       - name: Publish GitHub Release
@@ -127,7 +139,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          APK="app/build/outputs/apk/release/HyperBrowser-release.apk"
+          SIGNED_DIR="app/build/outputs/apk/release/signed"
+          mapfile -t APKS < <(find "$SIGNED_DIR" -maxdepth 1 -type f -name "*.apk" | sort)
+          if [ "${#APKS[@]}" -eq 0 ]; then
+            echo "No signed release APKs found in $SIGNED_DIR" >&2
+            exit 1
+          fi
+
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
           else
@@ -139,7 +157,7 @@ jobs:
           fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK" --clobber
+            gh release upload "$TAG" "${APKS[@]}" --clobber
           else
-            gh release create "$TAG" "$APK" --target "$GITHUB_SHA" --title "$RELEASE_NAME" --notes "Installable Hyper Browser release APK."
+            gh release create "$TAG" "${APKS[@]}" --target "$GITHUB_SHA" --title "$RELEASE_NAME" --notes "Installable Hyper Browser release APKs split by CPU architecture."
           fi
