@@ -35,6 +35,12 @@ android {
     buildFeatures {
         compose = true
     }
+
+    lint {
+        // Work around a lint/Kotlin analysis API crash in androidx.lifecycle's
+        // NullSafeMutableLiveData detector during release lintVital.
+        disable += "NullSafeMutableLiveData"
+    }
 }
 
 val internalPagesDir = rootProject.layout.projectDirectory.dir("internal-pages")
