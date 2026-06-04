@@ -204,6 +204,11 @@ private data class ExternalBrowserIntent(
     val download: Boolean
 )
 
+private data class LinkContextMenuState(
+    val url: String,
+    val label: String?
+)
+
 private fun Intent.toExternalBrowserIntent(): ExternalBrowserIntent? {
     getStringExtra(BrowserActivity.EXTRA_URL)?.takeIf { it.isNotBlank() }?.let {
         return ExternalBrowserIntent(it, download = false)
@@ -238,6 +243,7 @@ private fun BrowserScreen(
     var pendingHyperRoute by remember { mutableStateOf<HyperRoute?>(null) }
     var pendingHyperCommand by remember { mutableStateOf<HyperCommand?>(null) }
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val profileStore = remember { BrowserProfileStore(app) }
     val faviconStore = remember { FaviconRepository(app) }
     val downloadStore = remember { DownloadStore(app) }
@@ -355,6 +361,7 @@ private fun BrowserScreen(
             else -> JSONObject().put("ok", false).put("error", "Unknown bridge message.")
         }
     }
+    var linkContextMenu by remember { mutableStateOf<LinkContextMenuState?>(null) }
     val tabs = remember {
         mutableStateListOf(
             BrowserTabRuntime.create(
@@ -362,6 +369,9 @@ private fun BrowserScreen(
                 url = initialUrl,
                 onHyperRoute = { pendingHyperRoute = it },
                 onHyperBridgeMessage = ::handleHyperBridgeMessage,
+                onLinkContextMenu = { url, label ->
+                    linkContextMenu = LinkContextMenuState(url = url, label = label)
+                },
                 onDownload = ::saveGeckoDownload
             )
         )
@@ -394,6 +404,25 @@ private fun BrowserScreen(
     var extensionMessage by remember { mutableStateOf<String?>(null) }
     var installingAddonGuid by remember { mutableStateOf<String?>(null) }
     var currentIconPath by remember { mutableStateOf<String?>(null) }
+
+    fun createBrowserTab(url: String): BrowserTabRuntime =
+        BrowserTabRuntime.create(
+            app = app,
+            url = url,
+            onHyperRoute = { pendingHyperRoute = it },
+            onHyperBridgeMessage = ::handleHyperBridgeMessage,
+            onLinkContextMenu = { linkUrl, label ->
+                linkContextMenu = LinkContextMenuState(url = linkUrl, label = label)
+            },
+            onDownload = ::saveGeckoDownload
+        )
+
+    fun openLinkInBackgroundTab(url: String) {
+        tabs.add(createBrowserTab(url))
+        linkContextMenu = null
+        showTabs = false
+        message = "已在后台标签页打开"
+    }
 
     LaunchedEffect(initialDownloadUrl) {
         initialDownloadUrl?.let { enqueueUrlDownload(it) }
@@ -722,13 +751,7 @@ private fun BrowserScreen(
                         closing.controller.close()
                         tabs.remove(closing)
                         if (tabs.isEmpty()) {
-                            val replacement = BrowserTabRuntime.create(
-                                app = app,
-                                url = GeckoSessionController.HOME_URL,
-                                onHyperRoute = { pendingHyperRoute = it },
-                                onHyperBridgeMessage = ::handleHyperBridgeMessage,
-                                onDownload = ::saveGeckoDownload
-                            )
+                            val replacement = createBrowserTab(GeckoSessionController.HOME_URL)
                             tabs.add(replacement)
                             selectedTabId = replacement.id
                         } else if (selectedTabId == id) {
@@ -736,13 +759,7 @@ private fun BrowserScreen(
                         }
                     },
                     onNewTab = {
-                        val newTab = BrowserTabRuntime.create(
-                            app = app,
-                            url = GeckoSessionController.HOME_URL,
-                            onHyperRoute = { pendingHyperRoute = it },
-                            onHyperBridgeMessage = ::handleHyperBridgeMessage,
-                            onDownload = ::saveGeckoDownload
-                        )
+                        val newTab = createBrowserTab(GeckoSessionController.HOME_URL)
                         tabs.add(newTab)
                         selectedTabId = newTab.id
                         showTabs = false
@@ -785,13 +802,7 @@ private fun BrowserScreen(
                             }
                         },
                         onNewTab = {
-                            val newTab = BrowserTabRuntime.create(
-                                app = app,
-                                url = GeckoSessionController.HOME_URL,
-                                onHyperRoute = { pendingHyperRoute = it },
-                                onHyperBridgeMessage = ::handleHyperBridgeMessage,
-                                onDownload = ::saveGeckoDownload
-                            )
+                            val newTab = createBrowserTab(GeckoSessionController.HOME_URL)
                             tabs.add(newTab)
                             selectedTabId = newTab.id
                             showTabs = false
@@ -865,6 +876,46 @@ private fun BrowserScreen(
             } else {
                 BrowserContent(controller = controller, tabId = tab.id, extensionPopup = extensionPopup, onClosePopup = app.extensions::closePopup)
             }
+        }
+        linkContextMenu?.let { menu ->
+            AlertDialog(
+                onDismissRequest = { linkContextMenu = null },
+                title = {
+                    Text(
+                        text = menu.label?.takeIf { it.isNotBlank() } ?: "链接",
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                text = {
+                    Text(
+                        text = menu.url,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { openLinkInBackgroundTab(menu.url) }) {
+                        Text("在新标签页打开")
+                    }
+                },
+                dismissButton = {
+                    Row {
+                        TextButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(menu.url))
+                                linkContextMenu = null
+                                message = "链接已复制"
+                            }
+                        ) {
+                            Text("复制链接")
+                        }
+                        TextButton(onClick = { linkContextMenu = null }) {
+                            Text("取消")
+                        }
+                    }
+                }
+            )
         }
         BrowserTip(
             message = message,
@@ -942,6 +993,7 @@ private class BrowserTabRuntime private constructor(
             url: String,
             onHyperRoute: (HyperRoute) -> Unit = {},
             onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
+            onLinkContextMenu: (String, String?) -> Unit = { _, _ -> },
             onDownload: (GeckoDownloadRequest) -> Unit = {}
         ): BrowserTabRuntime =
             BrowserTabRuntime(
@@ -951,6 +1003,7 @@ private class BrowserTabRuntime private constructor(
                     initialUrl = url,
                     onHyperRoute = onHyperRoute,
                     onHyperBridgeMessage = onHyperBridgeMessage,
+                    onLinkContextMenu = onLinkContextMenu,
                     onDownload = onDownload,
                     mediaNotificationIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
                 ),

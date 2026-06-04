@@ -43,6 +43,7 @@ class GeckoSessionController(
     existingSession: GeckoSession? = null,
     private val onHyperRoute: (HyperRoute) -> Unit = {},
     private val onHyperBridgeMessage: ((org.json.JSONObject) -> org.json.JSONObject)? = null,
+    private val onLinkContextMenu: (String, String?) -> Unit = { _, _ -> },
     private val onDownload: (GeckoDownloadRequest) -> Unit = {},
     private val mediaNotificationIntent: Intent? = null
 ) {
@@ -78,6 +79,18 @@ class GeckoSessionController(
         targetSession.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onTitleChange(session: GeckoSession, title: String?) {
                 _state.value = _state.value.copy(title = title.orEmpty())
+            }
+
+            override fun onContextMenu(
+                session: GeckoSession,
+                screenX: Int,
+                screenY: Int,
+                element: GeckoSession.ContentDelegate.ContextElement
+            ) {
+                val linkUrl = element.linkUri
+                    .takeUnless { it.isNullOrBlank() }
+                    ?: return
+                onLinkContextMenu(linkUrl, element.linkText ?: element.title)
             }
 
             override fun onCrash(session: GeckoSession) {
@@ -165,6 +178,13 @@ class GeckoSessionController(
                     return GeckoResult.fromValue(AllowOrDeny.DENY)
                 }
                 return null
+            }
+
+            override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession> {
+                if (uri.isNotBlank()) {
+                    load(uri)
+                }
+                return GeckoResult.fromValue(null)
             }
         }
         targetSession.setMediaSessionDelegate(object : MediaSession.Delegate {
