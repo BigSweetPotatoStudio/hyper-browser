@@ -230,6 +230,15 @@ class GeckoSessionController(
             ) {
                 mediaNotifications.onPositionState(session, mediaSession, state)
             }
+
+            override fun onFullscreen(
+                session: GeckoSession,
+                mediaSession: MediaSession,
+                enabled: Boolean,
+                meta: MediaSession.ElementMetadata?
+            ) {
+                mediaNotifications.onFullscreen(session, mediaSession, enabled, meta)
+            }
         })
     }
 
@@ -355,9 +364,14 @@ class GeckoSessionController(
         })
     }
 
-    fun close() {
+    fun close(closeActivePlayback: Boolean = true) {
+        val mediaNotifications = BrowserMediaNotificationController.get(appContext)
+        if (!closeActivePlayback && mediaNotifications.ownsActivePlayback(session)) {
+            attachView(null)
+            return
+        }
         HyperBridge.unregister(session)
-        BrowserMediaNotificationController.get(appContext).clearIfOwner(session)
+        mediaNotifications.clearIfOwner(session)
         runCatching { session.close() }
     }
 

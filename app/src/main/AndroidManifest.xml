@@ -3,6 +3,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
 
@@ -35,16 +37,24 @@
             android:name=".browser.BrowserMediaActionReceiver"
             android:exported="false" />
 
+        <service
+            android:name=".browser.BrowserMediaPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
         <activity
             android:name=".ui.webapp.WebAppActivity"
             android:documentLaunchMode="intoExisting"
             android:exported="true"
             android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="stateUnspecified|adjustResize" />
 
         <activity
             android:name=".ui.browser.BrowserActivity"
             android:exported="true"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="stateUnspecified|adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

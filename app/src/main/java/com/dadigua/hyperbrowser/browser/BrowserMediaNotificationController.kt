@@ -67,6 +67,13 @@ class BrowserMediaNotificationController private constructor(context: Context) {
     private var positionState: MediaSession.PositionState? = null
     private var playing: Boolean = false
     private var active: Boolean = false
+    private var fullscreenVideo: Boolean = false
+
+    val hasActivePlayback: Boolean
+        get() = active && playing
+
+    val hasActiveVideoPlayback: Boolean
+        get() = hasActivePlayback && fullscreenVideo
 
     fun onActivated(owner: GeckoSession, mediaSession: MediaSession, launchIntent: Intent?) {
         activeOwner = owner
@@ -111,6 +118,16 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         clear()
     }
 
+    fun onFullscreen(
+        owner: GeckoSession,
+        mediaSession: MediaSession,
+        enabled: Boolean,
+        elementMetadata: MediaSession.ElementMetadata?
+    ) {
+        if (!matches(owner, mediaSession)) return
+        fullscreenVideo = enabled && (elementMetadata?.videoTrackCount ?: 0) > 0
+    }
+
     fun onPositionState(owner: GeckoSession, mediaSession: MediaSession, value: MediaSession.PositionState) {
         if (!matches(owner, mediaSession)) return
         positionState = value
@@ -141,8 +158,10 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         metadata = null
         features = Feature.NONE
         positionState = null
+        fullscreenVideo = false
         androidSession.isActive = false
         notifications.cancel(MEDIA_NOTIFICATION_ID)
+        BrowserMediaPlaybackService.stop(appContext)
     }
 
     fun clearIfOwner(owner: GeckoSession) {
@@ -151,14 +170,30 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         }
     }
 
+    fun ownsActivePlayback(owner: GeckoSession): Boolean =
+        activeOwner == owner && hasActivePlayback
+
     private fun publishIfNeeded(force: Boolean = false) {
         if (!active || (!playing && !force)) return
         ensureNotificationChannel()
         androidSession.setMetadata(mediaMetadata())
         androidSession.setPlaybackState(playbackState())
-        runCatching {
-            notifications.notify(MEDIA_NOTIFICATION_ID, notification())
+        if (playing) {
+            BrowserMediaPlaybackService.refresh(appContext)
+        } else {
+            BrowserMediaPlaybackService.refresh(appContext)
+            runCatching {
+                notifications.notify(MEDIA_NOTIFICATION_ID, notification())
+            }
         }
+    }
+
+    fun foregroundNotification(): android.app.Notification? {
+        if (!active) return null
+        ensureNotificationChannel()
+        androidSession.setMetadata(mediaMetadata())
+        androidSession.setPlaybackState(playbackState())
+        return notification()
     }
 
     private fun mediaMetadata(): MediaMetadataCompat {
@@ -285,8 +320,8 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         activeOwner == owner && activeGeckoSession == mediaSession
 
     companion object {
+        const val MEDIA_NOTIFICATION_ID = 3901
         private const val MEDIA_CHANNEL_ID = "media_playback"
-        private const val MEDIA_NOTIFICATION_ID = 3901
         private const val CONTENT_REQUEST_CODE = 3902
 
         @Volatile

@@ -1,11 +1,14 @@
 package com.dadigua.hyperbrowser.ui.browser
 
 import android.Manifest
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Build
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.util.Rational
 import android.webkit.URLUtil
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -127,6 +130,7 @@ import com.dadigua.hyperbrowser.browser.DownloadStore
 import com.dadigua.hyperbrowser.browser.FaviconRepository
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.browser.BrowserSettings
+import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
@@ -162,9 +166,11 @@ private val ChromeActionIconSize = 24.sp
 
 class BrowserActivity : ComponentActivity() {
     private val externalIntents = MutableSharedFlow<ExternalBrowserIntent>(extraBufferCapacity = 1)
+    private var inPictureInPicture by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        inPictureInPicture = isInPictureInPictureMode
         val initialIntent = intent.toExternalBrowserIntent()
         val initialUrl = if (initialIntent?.download == false) {
             initialIntent.url
@@ -178,7 +184,8 @@ class BrowserActivity : ComponentActivity() {
                         app = application as HyperBrowserApp,
                         initialUrl = initialUrl,
                         initialDownloadUrl = initialIntent?.url?.takeIf { initialIntent.download },
-                        externalIntents = externalIntents
+                        externalIntents = externalIntents,
+                        inPictureInPicture = inPictureInPicture
                     )
                 }
             }
@@ -189,6 +196,28 @@ class BrowserActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         intent.toExternalBrowserIntent()?.let { externalIntents.tryEmit(it) }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        enterPictureInPictureIfMediaPlaying()
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        inPictureInPicture = isInPictureInPictureMode
+    }
+
+    private fun enterPictureInPictureIfMediaPlaying() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || isInPictureInPictureMode) return
+        if (!BrowserMediaNotificationController.get(this).hasActiveVideoPlayback) return
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+            .build()
+        runCatching { enterPictureInPictureMode(params) }
     }
 
     companion object {
@@ -238,7 +267,8 @@ private fun BrowserScreen(
     app: HyperBrowserApp,
     initialUrl: String,
     initialDownloadUrl: String?,
-    externalIntents: MutableSharedFlow<ExternalBrowserIntent>
+    externalIntents: MutableSharedFlow<ExternalBrowserIntent>,
+    inPictureInPicture: Boolean
 ) {
     var pendingHyperRoute by remember { mutableStateOf<HyperRoute?>(null) }
     var pendingHyperCommand by remember { mutableStateOf<HyperCommand?>(null) }
@@ -605,7 +635,7 @@ private fun BrowserScreen(
     }
 
     DisposableEffect(Unit) {
-        onDispose { tabs.forEach { it.controller.close() } }
+        onDispose { tabs.forEach { it.controller.close(closeActivePlayback = false) } }
     }
 
     LaunchedEffect(message) {
@@ -764,6 +794,14 @@ private fun BrowserScreen(
                         selectedTabId = newTab.id
                         showTabs = false
                     }
+                )
+            } else if (inPictureInPicture) {
+                BrowserContent(
+                    controller = controller,
+                    tabId = tab.id,
+                    extensionPopup = null,
+                    onClosePopup = app.extensions::closePopup,
+                    modifier = Modifier.weight(1f)
                 )
             } else if (!onSearchPage) {
                 val toolbar = @Composable {

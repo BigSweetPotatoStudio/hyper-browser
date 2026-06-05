@@ -1,9 +1,12 @@
 package com.dadigua.hyperbrowser.ui.webapp
 
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -32,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.dadigua.hyperbrowser.HyperBrowserApp
+import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.gecko.GeckoBrowserView
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
@@ -54,6 +58,20 @@ class WebAppActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        enterPictureInPictureIfMediaPlaying()
+    }
+
+    private fun enterPictureInPictureIfMediaPlaying() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || isInPictureInPictureMode) return
+        if (!BrowserMediaNotificationController.get(this).hasActiveVideoPlayback) return
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+            .build()
+        runCatching { enterPictureInPictureMode(params) }
     }
 
     companion object {
@@ -103,7 +121,7 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
     val pageState by controller.state.collectAsState()
 
     DisposableEffect(current.id) {
-        onDispose { controller.close() }
+        onDispose { controller.close(closeActivePlayback = false) }
     }
 
     BackHandler {
