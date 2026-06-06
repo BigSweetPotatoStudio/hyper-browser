@@ -68,6 +68,15 @@ type UpdateCheckResult = {
   update?: AvailableUpdate;
 };
 
+type UpdateDownloadState = {
+  status: "idle" | "preparing" | "permissionRequired" | "downloading" | "verifying" | "ready" | "error";
+  versionCode: number;
+  versionName: string;
+  bytesDownloaded: number;
+  totalBytes: number;
+  message?: string;
+};
+
 declare global {
   const browser: {
     runtime?: {
@@ -94,7 +103,8 @@ type HyperBrowserApi = {
   updateSearchEngine(searchEngineId: BrowserSettings["searchEngineId"], customSearchUrl?: string): Promise<BrowserSettings>;
   updateToolbarPosition(toolbarPosition: BrowserSettings["toolbarPosition"]): Promise<BrowserSettings>;
   checkUpdate(ignoreSkipped?: boolean): Promise<UpdateCheckResult>;
-  installUpdate(versionCode: number): Promise<void>;
+  installUpdate(versionCode: number): Promise<UpdateDownloadState>;
+  requestUpdateDownloadState(): Promise<UpdateDownloadState>;
   skipUpdate(versionCode: number): Promise<void>;
   clearSkippedUpdate(): Promise<void>;
   requestBookmarksData(): Promise<BookmarkItem[]>;
@@ -199,7 +209,11 @@ window.hyperBrowser = {
       .then((response) => response.data as UpdateCheckResult);
   },
   installUpdate(versionCode) {
-    return send("update.install", { versionCode: String(versionCode) }).then(() => undefined);
+    return send("update.install", { versionCode: String(versionCode) })
+      .then((response) => response.data as UpdateDownloadState);
+  },
+  requestUpdateDownloadState() {
+    return requestObject<UpdateDownloadState>("update.downloadState");
   },
   skipUpdate(versionCode) {
     return send("update.skip", { versionCode: String(versionCode) }).then(() => undefined);
@@ -245,4 +259,4 @@ window.hyperBrowser = {
   }
 };
 
-export type { AvailableUpdate, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, WebAppItem };
+export type { AvailableUpdate, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem };

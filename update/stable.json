@@ -1,28 +1,28 @@
 {
   "channel": "stable",
-  "versionCode": 2,
-  "versionName": "0.1.1",
+  "versionCode": 3,
+  "versionName": "0.1.2",
   "minSdk": 26,
-  "notes": "新增 WebRTC/H5 音频保活识别，并加入应用内更新入口。",
-  "releaseUrl": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/tag/v0.1.1-debug",
+  "notes": "优化应用内更新下载反馈：先检查安装权限，显示下载进度和通知；包含 WebRTC/H5 音频保活识别。",
+  "releaseUrl": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/tag/v0.1.2-debug",
   "assets": [
     {
       "abi": "arm64-v8a",
-      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.1-debug/app-arm64-v8a-debug.apk",
-      "sha256": "13ebaabcb57dab9c9deab01274cdf03bb9e26d1b2f438042936acfb8d06e80d4",
-      "sizeBytes": 211223218
+      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.2-debug/app-arm64-v8a-debug.apk",
+      "sha256": "de78d3611a89bab5d85b55b252eb591d9739a756e3b7d916419190b07ccaed47",
+      "sizeBytes": 211240222
     },
     {
       "abi": "armeabi-v7a",
-      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.1-debug/app-armeabi-v7a-debug.apk",
-      "sha256": "ee8a0727920cf77caac01283ad518b096ff8652feb981f8a8cddde1c8a038ac1",
-      "sizeBytes": 173525558
+      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.2-debug/app-armeabi-v7a-debug.apk",
+      "sha256": "eec227f934e5e4ebde9a6c3714299927a17e50686b2df5dde06b6f3bf47da2c3",
+      "sizeBytes": 173542562
     },
     {
       "abi": "x86_64",
-      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.1-debug/app-x86_64-debug.apk",
-      "sha256": "0c36b91c2bae3b4608e0a236e6a5c0c9374126bcfcf4de4cc34eec3ff31396fb",
-      "sizeBytes": 230086944
+      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.2-debug/app-x86_64-debug.apk",
+      "sha256": "1004cce8ee2eff32e5cc49b3b37c580c65746e4f1f64a477785e473a31dca355",
+      "sizeBytes": 230103948
     }
   ]
 }

@@ -2,10 +2,13 @@ package com.dadigua.hyperbrowser.update
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -40,9 +43,31 @@ data class UpdateCheckResult(
     val message: String = ""
 )
 
+data class UpdateDownloadState(
+    val status: String = STATUS_IDLE,
+    val versionCode: Long = 0L,
+    val versionName: String = "",
+    val bytesDownloaded: Long = 0L,
+    val totalBytes: Long = 0L,
+    val message: String = ""
+) {
+    companion object {
+        const val STATUS_IDLE = "idle"
+        const val STATUS_PREPARING = "preparing"
+        const val STATUS_PERMISSION_REQUIRED = "permissionRequired"
+        const val STATUS_DOWNLOADING = "downloading"
+        const val STATUS_VERIFYING = "verifying"
+        const val STATUS_READY = "ready"
+        const val STATUS_ERROR = "error"
+
+        fun idle() = UpdateDownloadState()
+    }
+}
+
 class AppUpdateManager(context: Context, private val settingsStore: UpdateSettingsStore) {
     private val appContext = context.applicationContext
     private val client = OkHttpClient()
+    private val notifications = NotificationManagerCompat.from(appContext)
 
     suspend fun check(ignoreSkipped: Boolean): UpdateCheckResult = withContext(Dispatchers.IO) {
         val current = currentVersion()
@@ -104,13 +129,35 @@ class AppUpdateManager(context: Context, private val settingsStore: UpdateSettin
         }
     }
 
-    suspend fun downloadAndInstall(update: AvailableUpdate): Intent = withContext(Dispatchers.IO) {
-        val file = downloadApk(update)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !appContext.packageManager.canRequestPackageInstalls()) {
-            return@withContext Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
-                .setData(Uri.parse("package:${appContext.packageName}"))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    fun canInstallPackages(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.O || appContext.packageManager.canRequestPackageInstalls()
+
+    fun installPermissionIntent(): Intent =
+        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+            .setData(Uri.parse("package:${appContext.packageName}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    suspend fun downloadAndCreateInstallIntent(
+        update: AvailableUpdate,
+        onState: (UpdateDownloadState) -> Unit
+    ): Intent = withContext(Dispatchers.IO) {
+        ensureNotificationChannel()
+        onState(update.state(UpdateDownloadState.STATUS_DOWNLOADING, message = "正在下载更新..."))
+        notifyProgress(update, 0L, update.asset.sizeBytes, completed = false)
+        val file = downloadApk(update) { bytes, total ->
+            val normalizedTotal = total.takeIf { it > 0L } ?: update.asset.sizeBytes
+            onState(
+                update.state(
+                    status = UpdateDownloadState.STATUS_DOWNLOADING,
+                    bytesDownloaded = bytes,
+                    totalBytes = normalizedTotal,
+                    message = progressMessage(bytes, normalizedTotal)
+                )
+            )
+            notifyProgress(update, bytes, normalizedTotal, completed = false)
         }
+        onState(update.state(UpdateDownloadState.STATUS_VERIFYING, totalBytes = file.length(), message = "正在校验安装包..."))
+        notifyProgress(update, file.length(), file.length(), completed = true)
         val uri = FileProvider.getUriForFile(appContext, "${appContext.packageName}.files", file)
         Intent(Intent.ACTION_VIEW)
             .setDataAndType(uri, "application/vnd.android.package-archive")
@@ -155,7 +202,22 @@ class AppUpdateManager(context: Context, private val settingsStore: UpdateSettin
         }
     }
 
-    private fun downloadApk(update: AvailableUpdate): File {
+    fun notifyUpdateError(update: AvailableUpdate, error: String) {
+        if (!canPostNotifications()) return
+        ensureNotificationChannel()
+        notifications.notify(
+            UPDATE_NOTIFICATION_ID,
+            NotificationCompat.Builder(appContext, UPDATE_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_notify_error)
+                .setContentTitle("更新下载失败")
+                .setContentText(update.versionName)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(error))
+                .setAutoCancel(true)
+                .build()
+        )
+    }
+
+    private fun downloadApk(update: AvailableUpdate, onProgress: (Long, Long) -> Unit): File {
         val directory = File(
             appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
             "updates"
@@ -166,8 +228,25 @@ class AppUpdateManager(context: Context, private val settingsStore: UpdateSettin
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("APK 下载失败：HTTP ${response.code}")
             val body = response.body ?: error("APK 下载响应为空。")
+            val totalBytes = body.contentLength().takeIf { it > 0L } ?: update.asset.sizeBytes
             file.outputStream().use { output ->
-                body.byteStream().use { input -> input.copyTo(output) }
+                body.byteStream().use { input ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var bytesCopied = 0L
+                    var lastProgressAt = 0L
+                    var read = input.read(buffer)
+                    while (read >= 0) {
+                        output.write(buffer, 0, read)
+                        bytesCopied += read
+                        val now = System.currentTimeMillis()
+                        if (now - lastProgressAt > 250L) {
+                            onProgress(bytesCopied, totalBytes)
+                            lastProgressAt = now
+                        }
+                        read = input.read(buffer)
+                    }
+                    onProgress(bytesCopied, totalBytes)
+                }
             }
         }
         val expectedSha = update.asset.sha256.trim().lowercase()
@@ -176,6 +255,65 @@ class AppUpdateManager(context: Context, private val settingsStore: UpdateSettin
             error("APK 校验失败。")
         }
         return file
+    }
+
+    private fun canPostNotifications(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                appContext,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+
+    private fun ensureNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val channel = android.app.NotificationChannel(
+            UPDATE_CHANNEL_ID,
+            "App updates",
+            android.app.NotificationManager.IMPORTANCE_LOW
+        )
+        appContext.getSystemService(android.app.NotificationManager::class.java).createNotificationChannel(channel)
+    }
+
+    private fun notifyProgress(update: AvailableUpdate, bytes: Long, total: Long, completed: Boolean) {
+        if (!canPostNotifications()) return
+        val builder = NotificationCompat.Builder(appContext, UPDATE_CHANNEL_ID)
+            .setSmallIcon(if (completed) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_sys_download)
+            .setContentTitle(if (completed) "更新下载完成" else "正在下载更新")
+            .setContentText(update.versionName)
+            .setOngoing(!completed)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(completed)
+
+        if (!completed) {
+            if (total > 0L) {
+                val percent = ((bytes * 100) / total).toInt().coerceIn(0, 100)
+                builder.setProgress(100, percent, false).setSubText("$percent%")
+            } else {
+                builder.setProgress(0, 0, true)
+            }
+        }
+        notifications.notify(UPDATE_NOTIFICATION_ID, builder.build())
+    }
+
+    private fun AvailableUpdate.state(
+        status: String,
+        bytesDownloaded: Long = 0L,
+        totalBytes: Long = asset.sizeBytes,
+        message: String
+    ): UpdateDownloadState =
+        UpdateDownloadState(
+            status = status,
+            versionCode = versionCode,
+            versionName = versionName,
+            bytesDownloaded = bytesDownloaded,
+            totalBytes = totalBytes,
+            message = message
+        )
+
+    private fun progressMessage(bytes: Long, total: Long): String {
+        if (total <= 0L) return "正在下载更新..."
+        val percent = ((bytes * 100) / total).coerceIn(0, 100)
+        return "正在下载更新... $percent%"
     }
 
     private fun sha256(file: File): String {
@@ -200,5 +338,7 @@ class AppUpdateManager(context: Context, private val settingsStore: UpdateSettin
     companion object {
         const val UPDATE_INDEX_URL =
             "https://raw.githubusercontent.com/BigSweetPotatoStudio/hyper-browser/main/update/stable.json"
+        private const val UPDATE_CHANNEL_ID = "app_updates"
+        private const val UPDATE_NOTIFICATION_ID = 4101
     }
 }

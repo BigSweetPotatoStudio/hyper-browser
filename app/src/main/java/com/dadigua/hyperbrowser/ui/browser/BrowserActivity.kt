@@ -150,6 +150,7 @@ import com.dadigua.hyperbrowser.update.AppUpdateManager
 import com.dadigua.hyperbrowser.update.AvailableUpdate
 import com.dadigua.hyperbrowser.update.UpdateAsset
 import com.dadigua.hyperbrowser.update.UpdateCheckResult
+import com.dadigua.hyperbrowser.update.UpdateDownloadState
 import com.dadigua.hyperbrowser.update.UpdateSettingsStore
 import com.dadigua.hyperbrowser.webapp.PinnedShortcutRequestResult
 import kotlinx.coroutines.delay
@@ -289,6 +290,7 @@ private fun BrowserScreen(
     var message by remember { mutableStateOf<String?>(null) }
     var checkedUpdate by remember { mutableStateOf<AvailableUpdate?>(null) }
     var pendingInstallUpdate by remember { mutableStateOf<AvailableUpdate?>(null) }
+    var updateDownloadState by remember { mutableStateOf(UpdateDownloadState.idle()) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
@@ -360,6 +362,7 @@ private fun BrowserScreen(
                 updateManager.clearSkip()
                 ok()
             }
+            "update.downloadState" -> okData(updateDownloadState.toJson())
             "update.install" -> {
                 val versionCode = payload.optString("versionCode").toLongOrNull() ?: 0L
                 val update = checkedUpdate
@@ -367,7 +370,14 @@ private fun BrowserScreen(
                     JSONObject().put("ok", false).put("error", "请先检查更新。")
                 } else {
                     pendingInstallUpdate = update
-                    ok()
+                    updateDownloadState = UpdateDownloadState(
+                        status = UpdateDownloadState.STATUS_PREPARING,
+                        versionCode = update.versionCode,
+                        versionName = update.versionName,
+                        totalBytes = update.asset.sizeBytes,
+                        message = "正在准备更新..."
+                    )
+                    okData(updateDownloadState.toJson())
                 }
             }
             "bookmarks.open" -> {
@@ -524,18 +534,54 @@ private fun BrowserScreen(
     LaunchedEffect(pendingInstallUpdate) {
         val update = pendingInstallUpdate ?: return@LaunchedEffect
         pendingInstallUpdate = null
+        if (!updateManager.canInstallPackages()) {
+            updateDownloadState = UpdateDownloadState(
+                status = UpdateDownloadState.STATUS_PERMISSION_REQUIRED,
+                versionCode = update.versionCode,
+                versionName = update.versionName,
+                totalBytes = update.asset.sizeBytes,
+                message = "请先允许 Hyper Browser 安装未知应用。"
+            )
+            message = updateDownloadState.message
+            runCatching { context.startActivity(updateManager.installPermissionIntent()) }
+                .onFailure { message = it.message ?: "无法打开安装权限设置。" }
+            return@LaunchedEffect
+        }
+
         message = "正在下载 ${update.versionName}..."
-        runCatching { updateManager.downloadAndInstall(update) }
-            .onSuccess { intent ->
-                message = if (intent.action == android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES) {
-                    "请允许安装未知应用后重新更新。"
-                } else {
-                    "下载完成，打开安装器。"
+        runCatching {
+            updateManager.downloadAndCreateInstallIntent(update) { state ->
+                scope.launch {
+                    updateDownloadState = state
+                    message = state.message
                 }
+            }
+        }
+            .onSuccess { intent ->
+                updateDownloadState = UpdateDownloadState(
+                    status = UpdateDownloadState.STATUS_READY,
+                    versionCode = update.versionCode,
+                    versionName = update.versionName,
+                    bytesDownloaded = update.asset.sizeBytes,
+                    totalBytes = update.asset.sizeBytes,
+                    message = "下载完成，打开安装器。"
+                )
+                message = updateDownloadState.message
                 runCatching { context.startActivity(intent) }
                     .onFailure { message = it.message ?: "无法打开安装器。" }
             }
-            .onFailure { message = it.message ?: "更新下载失败。" }
+            .onFailure { throwable ->
+                val error = throwable.message ?: "更新下载失败。"
+                updateDownloadState = UpdateDownloadState(
+                    status = UpdateDownloadState.STATUS_ERROR,
+                    versionCode = update.versionCode,
+                    versionName = update.versionName,
+                    totalBytes = update.asset.sizeBytes,
+                    message = error
+                )
+                updateManager.notifyUpdateError(update, error)
+                message = error
+            }
     }
 
     BackHandler {
@@ -1161,6 +1207,15 @@ private fun UpdateAsset.toJson(): JSONObject =
         .put("url", url)
         .put("sha256", sha256)
         .put("sizeBytes", sizeBytes)
+
+private fun UpdateDownloadState.toJson(): JSONObject =
+    JSONObject()
+        .put("status", status)
+        .put("versionCode", versionCode)
+        .put("versionName", versionName)
+        .put("bytesDownloaded", bytesDownloaded)
+        .put("totalBytes", totalBytes)
+        .put("message", message)
 
 private fun List<BrowserBookmark>.toBookmarksJsonString(faviconStore: FaviconRepository): String {
     val array = JSONArray()

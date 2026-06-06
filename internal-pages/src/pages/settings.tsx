@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
-import type { BrowserSettings, UpdateCheckResult } from "../hyper-browser";
+import type { BrowserSettings, UpdateCheckResult, UpdateDownloadState } from "../hyper-browser";
 
 function SettingsPage() {
   const [query, setQuery] = useState("");
@@ -11,6 +11,7 @@ function SettingsPage() {
   const [customError, setCustomError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [updateDownload, setUpdateDownload] = useState<UpdateDownloadState | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateMessage, setUpdateMessage] = useState("");
   const [searchEngineExpanded, setSearchEngineExpanded] = useState(false);
@@ -40,6 +41,19 @@ function SettingsPage() {
       })
       .catch(() => setLoadError("设置暂时不可用。"));
   }, []);
+
+  useEffect(() => {
+    if (!updateDownload || !isActiveDownloadState(updateDownload.status)) return;
+    const timer = window.setInterval(() => {
+      window.hyperBrowser.requestUpdateDownloadState()
+        .then((state) => {
+          setUpdateDownload(state);
+          if (state.message) setUpdateMessage(state.message);
+        })
+        .catch((error) => setUpdateMessage(error instanceof Error ? error.message : "更新状态不可用。"));
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [updateDownload?.status]);
 
   function updateSearchEngine(searchEngineId: BrowserSettings["searchEngineId"], nextCustomUrl: string) {
     window.hyperBrowser.updateSearchEngine(searchEngineId, nextCustomUrl)
@@ -104,9 +118,23 @@ function SettingsPage() {
     const update = updateResult?.update;
     if (!update) return;
     setUpdateMessage("正在准备下载...");
+    setUpdateDownload({
+      status: "preparing",
+      versionCode: update.versionCode,
+      versionName: update.versionName,
+      bytesDownloaded: 0,
+      totalBytes: update.asset.sizeBytes || 0,
+      message: "正在准备更新...",
+    });
     window.hyperBrowser.installUpdate(update.versionCode)
-      .then(() => setUpdateMessage("已开始下载，完成后会打开安装器。"))
-      .catch((error) => setUpdateMessage(error instanceof Error ? error.message : "更新失败。"));
+      .then((state) => {
+        setUpdateDownload(state);
+        setUpdateMessage(state.message || "已开始下载，完成后会打开安装器。");
+      })
+      .catch((error) => {
+        setUpdateDownload(null);
+        setUpdateMessage(error instanceof Error ? error.message : "更新失败。");
+      });
   }
 
   function skipUpdate() {
@@ -144,6 +172,25 @@ function SettingsPage() {
     if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
     if (value >= 1024) return `${(value / 1024).toFixed(0)} KB`;
     return `${value} B`;
+  }
+
+  function isActiveDownloadState(status: UpdateDownloadState["status"]) {
+    return status === "preparing" || status === "downloading" || status === "verifying";
+  }
+
+  function updateProgressPercent(state: UpdateDownloadState) {
+    if (!state.totalBytes || state.totalBytes <= 0) return 0;
+    return Math.min(100, Math.max(0, Math.round((state.bytesDownloaded / state.totalBytes) * 100)));
+  }
+
+  function updateActionLabel() {
+    if (updateDownload && isActiveDownloadState(updateDownload.status)) {
+      if (updateDownload.status === "downloading") return `下载中 ${updateProgressPercent(updateDownload)}%`;
+      if (updateDownload.status === "verifying") return "校验中...";
+      return "准备中...";
+    }
+    if (updateDownload?.status === "permissionRequired") return "授权后重试";
+    return updateResult?.status === "skipped" ? "仍然更新" : "立即更新";
   }
 
   return (
@@ -287,8 +334,13 @@ function SettingsPage() {
                 <button className="settings-action" type="button" onClick={() => checkUpdate(true)}>仍然查看</button>
               )}
               {updateResult?.update && (
-                <button className="settings-action primary" type="button" onClick={installUpdate}>
-                  {updateResult.status === "skipped" ? "仍然更新" : "立即更新"}
+                <button
+                  className="settings-action primary"
+                  type="button"
+                  disabled={!!updateDownload && isActiveDownloadState(updateDownload.status)}
+                  onClick={installUpdate}
+                >
+                  {updateActionLabel()}
                 </button>
               )}
               {updateResult?.update && updateResult.status !== "skipped" && (
@@ -298,6 +350,23 @@ function SettingsPage() {
                 <button className="settings-action" type="button" onClick={clearSkippedUpdate}>取消跳过</button>
               )}
             </div>
+            {updateDownload && updateDownload.status !== "idle" && (
+              <div className="settings-update-progress">
+                <div className="settings-update-progress-track">
+                  <div
+                    className="settings-update-progress-fill"
+                    style={{ width: `${updateProgressPercent(updateDownload)}%` }}
+                  />
+                </div>
+                <div className="settings-update-progress-text">
+                  <span>{updateDownload.message || (updateResult ? updateStatusLabel(updateResult) : "正在处理更新...")}</span>
+                  <span>
+                    {formatBytes(updateDownload.bytesDownloaded)}
+                    {updateDownload.totalBytes > 0 ? ` / ${formatBytes(updateDownload.totalBytes)}` : ""}
+                  </span>
+                </div>
+              </div>
+            )}
             {updateMessage && <p className="settings-message">{updateMessage}</p>}
           </div>
         )}
