@@ -6,10 +6,14 @@ import android.webkit.URLUtil
 internal data class ExternalBrowserIntent(
     val url: String?,
     val download: Boolean,
-    val showDownloads: Boolean = false
+    val showDownloads: Boolean = false,
+    val selectTabId: String? = null
 )
 
 internal fun Intent.toExternalBrowserIntent(): ExternalBrowserIntent? {
+    getStringExtra(BrowserActivity.EXTRA_SELECT_TAB_ID)?.takeIf { it.isNotBlank() }?.let {
+        return ExternalBrowserIntent(url = null, download = false, selectTabId = it)
+    }
     if (getBooleanExtra(BrowserActivity.EXTRA_SHOW_DOWNLOADS, false)) {
         return ExternalBrowserIntent(url = null, download = false, showDownloads = true)
     }

@@ -148,6 +148,7 @@ internal class BrowserTabRuntime private constructor(
             val controllerFactory = { initialUrl: String,
                 shouldLoadInitialUrl: Boolean,
                 state: GeckoSession.SessionState? ->
+                val mediaLaunchIntent = BrowserActivity.selectTabIntent(app, id)
                 GeckoSessionController(
                     context = app,
                     initialUrl = initialUrl,
@@ -167,12 +168,12 @@ internal class BrowserTabRuntime private constructor(
                         }
                     },
                     onPageStop = onPageStop,
-                    mediaNotificationIntent = app.packageManager.getLaunchIntentForPackage(app.packageName),
+                    mediaNotificationIntent = mediaLaunchIntent,
                     mediaOwnerInfo = {
                         BrowserMediaOwnerInfo(
                             id = id,
                             kind = BrowserMediaOwnerKind.BrowserTab,
-                            launchIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
+                            launchIntent = BrowserActivity.selectTabIntent(app, id)
                         )
                     }
                 )
@@ -202,10 +203,12 @@ internal class BrowserTabRuntime private constructor(
             onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
             onLinkContextMenu: (String, String?) -> Unit = { _, _ -> },
             onDownload: (GeckoDownloadRequest) -> Unit = {}
-        ): BrowserTabRuntime =
-            BrowserTabRuntime(
-                id = UUID.randomUUID().toString(),
+        ): BrowserTabRuntime {
+            val id = UUID.randomUUID().toString()
+            return BrowserTabRuntime(
+                id = id,
                 controllerFactory = { _, _, _ ->
+                    val mediaLaunchIntent = BrowserActivity.selectTabIntent(app, id)
                     GeckoSessionController(
                         context = app,
                         initialUrl = request.url,
@@ -214,14 +217,14 @@ internal class BrowserTabRuntime private constructor(
                         onHyperBridgeMessage = onHyperBridgeMessage,
                         onLinkContextMenu = onLinkContextMenu,
                         onDownload = onDownload,
-                        mediaNotificationIntent = app.packageManager.getLaunchIntentForPackage(app.packageName),
+                        mediaNotificationIntent = mediaLaunchIntent,
                         mediaOwnerInfo = {
                             BrowserMediaOwnerInfo(
                                 id = request.url,
                                 kind = BrowserMediaOwnerKind.ExtensionTab,
                                 displayName = request.title,
                                 url = request.url,
-                                launchIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
+                                launchIntent = BrowserActivity.selectTabIntent(app, id)
                             )
                         }
                     )
@@ -234,14 +237,14 @@ internal class BrowserTabRuntime private constructor(
                     onHyperBridgeMessage = onHyperBridgeMessage,
                     onLinkContextMenu = onLinkContextMenu,
                     onDownload = onDownload,
-                    mediaNotificationIntent = app.packageManager.getLaunchIntentForPackage(app.packageName),
+                    mediaNotificationIntent = BrowserActivity.selectTabIntent(app, id),
                     mediaOwnerInfo = {
                         BrowserMediaOwnerInfo(
                             id = request.url,
                             kind = BrowserMediaOwnerKind.ExtensionTab,
                             displayName = request.title,
                             url = request.url,
-                            launchIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
+                            launchIntent = BrowserActivity.selectTabIntent(app, id)
                         )
                     }
                 ),
@@ -251,6 +254,7 @@ internal class BrowserTabRuntime private constructor(
                 pendingRestoredSessionState = null,
                 engineStateAvailable = mutableStateOf(false)
             )
+        }
     }
 }
 

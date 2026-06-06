@@ -103,6 +103,7 @@ class BrowserActivity : ComponentActivity() {
                         initialUrl = initialUrl,
                         initialDownloadUrl = initialIntent?.url?.takeIf { initialIntent.download },
                         initialShowDownloads = initialIntent?.showDownloads == true,
+                        initialSelectTabId = initialIntent?.selectTabId,
                         externalIntents = externalIntents,
                         inPictureInPicture = inPictureInPicture
                     )
@@ -142,9 +143,15 @@ class BrowserActivity : ComponentActivity() {
     companion object {
         const val EXTRA_URL = "extra_url"
         const val EXTRA_SHOW_DOWNLOADS = "extra_show_downloads"
+        const val EXTRA_SELECT_TAB_ID = "extra_select_tab_id"
 
         fun intent(context: Context, url: String): Intent =
             Intent(context, BrowserActivity::class.java).putExtra(EXTRA_URL, url)
+
+        fun selectTabIntent(context: Context, tabId: String): Intent =
+            Intent(context, BrowserActivity::class.java)
+                .putExtra(EXTRA_SELECT_TAB_ID, tabId)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
 
         fun downloadsIntent(context: Context): Intent =
             Intent(context, BrowserActivity::class.java)
@@ -176,6 +183,7 @@ private fun BrowserScreen(
     initialUrl: String,
     initialDownloadUrl: String?,
     initialShowDownloads: Boolean,
+    initialSelectTabId: String?,
     externalIntents: MutableSharedFlow<ExternalBrowserIntent>,
     inPictureInPicture: Boolean
 ) {
@@ -543,6 +551,7 @@ private fun BrowserScreen(
     var selectedTabId by remember {
         mutableStateOf(
             when {
+                initialSelectTabId != null && tabs.any { it.id == initialSelectTabId } -> initialSelectTabId
                 restorePlan.selectLastTab -> tabs.last().id
                 restorePlan.selectedSavedTabId != null -> restorePlan.selectedSavedTabId
                 else -> tabs.first().id
@@ -675,7 +684,13 @@ private fun BrowserScreen(
     LaunchedEffect(externalIntents, selectedTabId, settings.searchUrlTemplate) {
         externalIntents.collect { command ->
             val commandUrl = command.url
-            if (command.showDownloads) {
+            val targetTabId = command.selectTabId?.takeIf { id -> tabs.any { it.id == id } }
+            if (targetTabId != null) {
+                selectedTabId = targetTabId
+                closePanel()
+                editingAddress = false
+                message = null
+            } else if (command.showDownloads) {
                 showPanel(BrowserPanel.Downloads)
                 editingAddress = false
                 message = null
