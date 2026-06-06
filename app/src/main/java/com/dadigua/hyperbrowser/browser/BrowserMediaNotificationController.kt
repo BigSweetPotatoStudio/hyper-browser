@@ -271,13 +271,22 @@ class BrowserMediaNotificationController private constructor(context: Context) {
     private fun publishIfNeeded(force: Boolean = false) {
         if (owners.isEmpty()) return
         ensureNotificationChannel()
+        val primaryState = primaryState()
         var posted = false
         owners.values.forEach { state ->
             updateAndroidMediaSession(state)
             if (state.active && (state.playing || force)) {
-                logControllerEvent("publish", state, "force=$force notificationId=${state.notificationId}")
+                val primary = state == primaryState && state.hasActivePlayback
+                logControllerEvent(
+                    "publish",
+                    state,
+                    "force=$force notificationId=${state.notificationId} style=${if (primary) "media" else "secondary"}"
+                )
                 runCatching {
-                    notifications.notify(state.notificationId, notification(state))
+                    notifications.notify(
+                        state.notificationId,
+                        if (primary) mediaNotification(state) else secondaryNotification(state)
+                    )
                 }
                 posted = true
             } else {
@@ -297,7 +306,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         if (!state.active) return null
         ensureNotificationChannel()
         updateAndroidMediaSession(state)
-        return ForegroundMediaNotification(state.notificationId, notification(state))
+        return ForegroundMediaNotification(state.notificationId, mediaNotification(state))
     }
 
     private fun updateAndroidMediaSession(state: PlaybackOwnerState) {
@@ -331,7 +340,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
             .build()
     }
 
-    private fun notification(state: PlaybackOwnerState): android.app.Notification {
+    private fun mediaNotification(state: PlaybackOwnerState): android.app.Notification {
         val actions = notificationActions(state)
         val compactActions = actions.indices.take(3).toList().toIntArray()
 
@@ -354,6 +363,21 @@ class BrowserMediaNotificationController private constructor(context: Context) {
             .also { builder -> actions.forEach(builder::addAction) }
             .build()
     }
+
+    private fun secondaryNotification(state: PlaybackOwnerState): android.app.Notification =
+        NotificationCompat.Builder(appContext, MEDIA_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setLargeIcon(largeIcon(state))
+            .setContentTitle(state.notificationTitle())
+            .setContentText(state.notificationText())
+            .setContentIntent(contentPendingIntent(state))
+            .setOngoing(state.playing)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .also { builder -> secondaryNotificationActions(state).forEach(builder::addAction) }
+            .build()
 
     private fun notificationActions(state: PlaybackOwnerState): List<NotificationCompat.Action> {
         if (state.mediaSession == null) {
@@ -390,6 +414,33 @@ class BrowserMediaNotificationController private constructor(context: Context) {
             }
         }
         return items.take(5)
+    }
+
+    private fun secondaryNotificationActions(state: PlaybackOwnerState): List<NotificationCompat.Action> {
+        val items = mutableListOf<NotificationCompat.Action>()
+        contentPendingIntent(state)?.let { intent ->
+            items += NotificationCompat.Action.Builder(android.R.drawable.ic_menu_view, "Open", intent).build()
+        }
+        if (state.mediaSession == null) {
+            items += action(state, android.R.drawable.ic_menu_close_clear_cancel, "Stop", BrowserMediaActionReceiver.ACTION_STOP)
+            return items
+        }
+        if (state.playing && state.hasFeature(Feature.PAUSE)) {
+            items += action(state, android.R.drawable.ic_media_pause, "Pause", BrowserMediaActionReceiver.ACTION_PAUSE)
+        } else if (!state.playing && state.hasFeature(Feature.PLAY)) {
+            items += action(state, android.R.drawable.ic_media_play, "Play", BrowserMediaActionReceiver.ACTION_PLAY)
+        }
+        if (state.hasFeature(Feature.STOP)) {
+            items += action(state, android.R.drawable.ic_menu_close_clear_cancel, "Stop", BrowserMediaActionReceiver.ACTION_STOP)
+        }
+        if (items.size == 1) {
+            items += if (state.playing) {
+                action(state, android.R.drawable.ic_media_pause, "Pause", BrowserMediaActionReceiver.ACTION_PAUSE)
+            } else {
+                action(state, android.R.drawable.ic_media_play, "Play", BrowserMediaActionReceiver.ACTION_PLAY)
+            }
+        }
+        return items.take(3)
     }
 
     private fun supportedPlaybackActions(state: PlaybackOwnerState): Long {

@@ -9,6 +9,8 @@ import android.os.IBinder
 import androidx.core.content.ContextCompat
 
 class BrowserMediaPlaybackService : Service() {
+    private var foregroundNotificationId: Int? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -28,6 +30,9 @@ class BrowserMediaPlaybackService : Service() {
             return START_NOT_STICKY
         }
 
+        if (foregroundNotificationId != null && foregroundNotificationId != notificationEntry.id) {
+            stopForegroundCompat(removeNotification = false)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 notificationEntry.id,
@@ -37,6 +42,7 @@ class BrowserMediaPlaybackService : Service() {
         } else {
             startForeground(notificationEntry.id, notificationEntry.notification)
         }
+        foregroundNotificationId = notificationEntry.id
         if (!controller.hasActivePlayback) {
             stopForegroundCompat(removeNotification = false)
             stopSelf()
@@ -51,6 +57,7 @@ class BrowserMediaPlaybackService : Service() {
             @Suppress("DEPRECATION")
             stopForeground(removeNotification)
         }
+        foregroundNotificationId = null
     }
 
     companion object {
