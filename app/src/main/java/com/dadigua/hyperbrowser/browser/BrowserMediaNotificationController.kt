@@ -23,45 +23,6 @@ class BrowserMediaNotificationController private constructor(context: Context) {
     private val appContext = context.applicationContext
     private val notifications = NotificationManagerCompat.from(appContext)
     private val faviconStore = FaviconRepository(appContext)
-    private val androidSession = MediaSessionCompat(appContext, "HyperBrowserMedia").apply {
-        setCallback(
-            object : MediaSessionCompat.Callback() {
-                override fun onPlay() {
-                    primaryState()?.mediaSession?.play()
-                }
-
-                override fun onPause() {
-                    primaryState()?.mediaSession?.pause()
-                }
-
-                override fun onStop() {
-                    val state = primaryState() ?: return
-                    state.mediaSession?.stop()
-                    removeOwner(state.owner)
-                }
-
-                override fun onSeekTo(pos: Long) {
-                    primaryState()?.mediaSession?.seekTo(pos / 1000.0, false)
-                }
-
-                override fun onSkipToNext() {
-                    primaryState()?.mediaSession?.nextTrack()
-                }
-
-                override fun onSkipToPrevious() {
-                    primaryState()?.mediaSession?.previousTrack()
-                }
-
-                override fun onFastForward() {
-                    primaryState()?.mediaSession?.seekForward()
-                }
-
-                override fun onRewind() {
-                    primaryState()?.mediaSession?.seekBackward()
-                }
-            }
-        )
-    }
 
     private val owners = linkedMapOf<GeckoSession, PlaybackOwnerState>()
     private var primaryOwner: GeckoSession? = null
@@ -78,7 +39,6 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         state.active = true
         state.touch()
         primaryOwner = owner
-        androidSession.isActive = true
         logControllerEvent("activated", state, "media=${System.identityHashCode(mediaSession)}")
         publishIfNeeded()
     }
@@ -90,18 +50,28 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         url: String,
         mediaKind: String
     ) {
+        val normalizedMediaKind = mediaKind.ifBlank { null }
+        if (!shouldPublishFallback(normalizedMediaKind) && owners[owner]?.mediaSession == null) {
+            logControllerEvent(
+                "keepAlive.deferred",
+                owners[owner],
+                "mediaKind=${normalizedMediaKind.orEmpty()} owner=${System.identityHashCode(owner)}"
+            )
+            return
+        }
         val state = stateFor(owner, ownerInfo.withPageUrl(url))
         state.active = true
         state.playing = true
         state.fallbackTitle = title.ifBlank { ownerInfo.displayName ?: "Playing media" }
         state.fallbackUrl = url.ifBlank { ownerInfo.url.orEmpty() }
-        state.fallbackMediaKind = mediaKind.ifBlank { null }
+        state.fallbackMediaKind = normalizedMediaKind
         if (state.mediaSession == null) {
             state.features = Feature.STOP
         }
         state.touch()
-        primaryOwner = owner
-        androidSession.isActive = true
+        if (primaryState()?.hasRealActivePlayback != true) {
+            primaryOwner = owner
+        }
         logControllerEvent("keepAlive.start", state, "mediaKind=${state.fallbackMediaKind.orEmpty()}")
         publishIfNeeded(force = true)
     }
@@ -259,8 +229,11 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         publishIfNeeded()
     }
 
-    fun handleAction(action: String?) {
-        val state = primaryState() ?: return
+    fun handleAction(action: String?, ownerKey: String?) {
+        val state = ownerKey
+            ?.let { key -> owners.values.firstOrNull { it.actionKey == key } }
+            ?: primaryState()
+            ?: return
         when (action) {
             BrowserMediaActionReceiver.ACTION_PLAY -> state.mediaSession?.play()
             BrowserMediaActionReceiver.ACTION_PAUSE -> state.mediaSession?.pause()
@@ -277,10 +250,12 @@ class BrowserMediaNotificationController private constructor(context: Context) {
 
     fun clear() {
         logControllerEvent("clear", null)
+        owners.values.forEach { state ->
+            notifications.cancel(state.notificationId)
+            state.release()
+        }
         owners.clear()
         primaryOwner = null
-        androidSession.isActive = false
-        notifications.cancel(MEDIA_NOTIFICATION_ID)
         BrowserMediaPlaybackService.stop(appContext)
     }
 
@@ -294,32 +269,47 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         owners[owner]?.hasActivePlayback == true
 
     private fun publishIfNeeded(force: Boolean = false) {
-        val state = primaryState() ?: return
-        if (!state.active || (!state.playing && !force)) return
-        logControllerEvent("publish", state, "force=$force notificationId=$MEDIA_NOTIFICATION_ID")
+        if (owners.isEmpty()) return
         ensureNotificationChannel()
-        androidSession.isActive = true
-        androidSession.setMetadata(mediaMetadata(state))
-        androidSession.setPlaybackState(playbackState(state))
-        if (state.playing) {
+        var posted = false
+        owners.values.forEach { state ->
+            updateAndroidMediaSession(state)
+            if (state.active && (state.playing || force)) {
+                logControllerEvent("publish", state, "force=$force notificationId=${state.notificationId}")
+                runCatching {
+                    notifications.notify(state.notificationId, notification(state))
+                }
+                posted = true
+            } else {
+                notifications.cancel(state.notificationId)
+            }
+        }
+        if (!posted) return
+        if (hasActivePlayback) {
             BrowserMediaPlaybackService.refresh(appContext)
         } else {
-            BrowserMediaPlaybackService.refresh(appContext)
-            runCatching {
-                notifications.notify(MEDIA_NOTIFICATION_ID, notification(state))
-            }
+            BrowserMediaPlaybackService.stop(appContext)
         }
     }
 
-    fun foregroundNotification(): android.app.Notification? {
+    fun foregroundNotification(): ForegroundMediaNotification? {
         val state = primaryState() ?: return null
         if (!state.active) return null
         ensureNotificationChannel()
-        androidSession.isActive = true
-        androidSession.setMetadata(mediaMetadata(state))
-        androidSession.setPlaybackState(playbackState(state))
-        return notification(state)
+        updateAndroidMediaSession(state)
+        return ForegroundMediaNotification(state.notificationId, notification(state))
     }
+
+    private fun updateAndroidMediaSession(state: PlaybackOwnerState) {
+        state.androidSession.isActive = state.active
+        state.androidSession.setMetadata(mediaMetadata(state))
+        state.androidSession.setPlaybackState(playbackState(state))
+    }
+
+    data class ForegroundMediaNotification(
+        val id: Int,
+        val notification: android.app.Notification
+    )
 
     private fun mediaMetadata(state: PlaybackOwnerState): MediaMetadataCompat =
         MediaMetadataCompat.Builder()
@@ -358,7 +348,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
             .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
             .setStyle(
                 MediaStyle()
-                    .setMediaSession(androidSession.sessionToken)
+                    .setMediaSession(state.androidSession.sessionToken)
                     .setShowActionsInCompactView(*compactActions)
             )
             .also { builder -> actions.forEach(builder::addAction) }
@@ -367,34 +357,36 @@ class BrowserMediaNotificationController private constructor(context: Context) {
 
     private fun notificationActions(state: PlaybackOwnerState): List<NotificationCompat.Action> {
         if (state.mediaSession == null) {
-            return listOf(action(android.R.drawable.ic_menu_close_clear_cancel, "Stop", BrowserMediaActionReceiver.ACTION_STOP))
+            return listOf(
+                action(state, android.R.drawable.ic_menu_close_clear_cancel, "Stop", BrowserMediaActionReceiver.ACTION_STOP)
+            )
         }
         val items = mutableListOf<NotificationCompat.Action>()
         if (state.hasFeature(Feature.SEEK_BACKWARD)) {
-            items += action(android.R.drawable.ic_media_rew, "Rewind", BrowserMediaActionReceiver.ACTION_SEEK_BACKWARD)
+            items += action(state, android.R.drawable.ic_media_rew, "Rewind", BrowserMediaActionReceiver.ACTION_SEEK_BACKWARD)
         }
         if (state.playing && state.hasFeature(Feature.PAUSE)) {
-            items += action(android.R.drawable.ic_media_pause, "Pause", BrowserMediaActionReceiver.ACTION_PAUSE)
+            items += action(state, android.R.drawable.ic_media_pause, "Pause", BrowserMediaActionReceiver.ACTION_PAUSE)
         } else if (!state.playing && state.hasFeature(Feature.PLAY)) {
-            items += action(android.R.drawable.ic_media_play, "Play", BrowserMediaActionReceiver.ACTION_PLAY)
+            items += action(state, android.R.drawable.ic_media_play, "Play", BrowserMediaActionReceiver.ACTION_PLAY)
         }
         if (state.hasFeature(Feature.SEEK_FORWARD)) {
-            items += action(android.R.drawable.ic_media_ff, "Forward", BrowserMediaActionReceiver.ACTION_SEEK_FORWARD)
+            items += action(state, android.R.drawable.ic_media_ff, "Forward", BrowserMediaActionReceiver.ACTION_SEEK_FORWARD)
         }
         if (state.hasFeature(Feature.PREVIOUS_TRACK)) {
-            items += action(android.R.drawable.ic_media_previous, "Previous", BrowserMediaActionReceiver.ACTION_PREVIOUS)
+            items += action(state, android.R.drawable.ic_media_previous, "Previous", BrowserMediaActionReceiver.ACTION_PREVIOUS)
         }
         if (state.hasFeature(Feature.NEXT_TRACK)) {
-            items += action(android.R.drawable.ic_media_next, "Next", BrowserMediaActionReceiver.ACTION_NEXT)
+            items += action(state, android.R.drawable.ic_media_next, "Next", BrowserMediaActionReceiver.ACTION_NEXT)
         }
         if (state.hasFeature(Feature.STOP)) {
-            items += action(android.R.drawable.ic_menu_close_clear_cancel, "Stop", BrowserMediaActionReceiver.ACTION_STOP)
+            items += action(state, android.R.drawable.ic_menu_close_clear_cancel, "Stop", BrowserMediaActionReceiver.ACTION_STOP)
         }
         if (items.isEmpty()) {
             items += if (state.playing) {
-                action(android.R.drawable.ic_media_pause, "Pause", BrowserMediaActionReceiver.ACTION_PAUSE)
+                action(state, android.R.drawable.ic_media_pause, "Pause", BrowserMediaActionReceiver.ACTION_PAUSE)
             } else {
-                action(android.R.drawable.ic_media_play, "Play", BrowserMediaActionReceiver.ACTION_PLAY)
+                action(state, android.R.drawable.ic_media_play, "Play", BrowserMediaActionReceiver.ACTION_PLAY)
             }
         }
         return items.take(5)
@@ -413,8 +405,17 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         return actions
     }
 
-    private fun action(icon: Int, title: String, action: String): NotificationCompat.Action =
-        NotificationCompat.Action.Builder(icon, title, BrowserMediaActionReceiver.pendingIntent(appContext, action)).build()
+    private fun action(state: PlaybackOwnerState, icon: Int, title: String, action: String): NotificationCompat.Action =
+        NotificationCompat.Action.Builder(
+            icon,
+            title,
+            BrowserMediaActionReceiver.pendingIntent(
+                appContext,
+                action,
+                state.actionKey,
+                state.actionRequestCode(action)
+            )
+        ).build()
 
     private fun contentPendingIntent(state: PlaybackOwnerState): PendingIntent? {
         val target = state.info.launchIntent
@@ -423,7 +424,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         val launchIntent = Intent(target).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return PendingIntent.getActivity(
             appContext,
-            CONTENT_REQUEST_CODE,
+            state.notificationId,
             launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -453,11 +454,16 @@ class BrowserMediaNotificationController private constructor(context: Context) {
     private fun removeOwner(owner: GeckoSession) {
         val removed = owners.remove(owner)
         logControllerEvent("removeOwner", removed, "owner=${System.identityHashCode(owner)}")
+        if (removed != null) {
+            notifications.cancel(removed.notificationId)
+            removed.release()
+        }
         if (primaryOwner == owner) {
             primaryOwner = owners.values.maxByOrNull { it.lastActiveAt }?.owner
         }
-        if (owners.values.none { it.active }) {
-            clear()
+        if (owners.isEmpty() || owners.values.none { it.active }) {
+            primaryOwner = null
+            BrowserMediaPlaybackService.stop(appContext)
         } else {
             publishIfNeeded(force = true)
         }
@@ -465,6 +471,14 @@ class BrowserMediaNotificationController private constructor(context: Context) {
 
     private fun primaryState(): PlaybackOwnerState? {
         val selected = primaryOwner?.let { owners[it] }
+        if (selected?.hasRealActivePlayback == true) return selected
+        val realPlaying = owners.values
+            .filter { it.hasRealActivePlayback }
+            .maxByOrNull { it.lastActiveAt }
+        if (realPlaying != null) {
+            primaryOwner = realPlaying.owner
+            return realPlaying
+        }
         if (selected?.hasActivePlayback == true) return selected
         val playing = owners.values
             .filter { it.hasActivePlayback }
@@ -497,6 +511,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
             append(System.identityHashCode(owner))
             append(":").append(info.kind)
             append(":").append(info.id)
+            append("#").append(notificationId)
             append("{active=").append(active)
             append(",playing=").append(playing)
             append(",media=").append(mediaSession?.let { System.identityHashCode(it) } ?: "none")
@@ -507,6 +522,17 @@ class BrowserMediaNotificationController private constructor(context: Context) {
 
     private fun largeIcon(state: PlaybackOwnerState) =
         BrowserIconComposer.badgedSiteIcon(appContext, state.iconPath(), LARGE_ICON_SIZE)
+
+    private fun ownerKey(owner: GeckoSession, info: BrowserMediaOwnerInfo): String {
+        val id = info.id.ifBlank { System.identityHashCode(owner).toString() }
+        return "${info.kind}:$id"
+    }
+
+    private fun shouldPublishFallback(mediaKind: String?): Boolean =
+        mediaKind != "audio" && mediaKind != "video"
+
+    private fun notificationIdFor(ownerKey: String): Int =
+        MEDIA_NOTIFICATION_ID_BASE + (ownerKey.hashCode() and MEDIA_NOTIFICATION_ID_MASK)
 
     private fun BrowserMediaOwnerInfo.withPageUrl(url: String): BrowserMediaOwnerInfo {
         val cleanUrl = url.ifBlank { this.url.orEmpty() }
@@ -530,6 +556,47 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         val owner: GeckoSession,
         var info: BrowserMediaOwnerInfo
     ) {
+        val actionKey: String = ownerKey(owner, info)
+        val notificationId: Int = notificationIdFor(actionKey)
+        val androidSession: MediaSessionCompat =
+            MediaSessionCompat(appContext, "HyperBrowserMedia-$notificationId").apply {
+                setCallback(
+                    object : MediaSessionCompat.Callback() {
+                        override fun onPlay() {
+                            this@PlaybackOwnerState.mediaSession?.play()
+                        }
+
+                        override fun onPause() {
+                            this@PlaybackOwnerState.mediaSession?.pause()
+                        }
+
+                        override fun onStop() {
+                            this@PlaybackOwnerState.mediaSession?.stop()
+                            removeOwner(owner)
+                        }
+
+                        override fun onSeekTo(pos: Long) {
+                            this@PlaybackOwnerState.mediaSession?.seekTo(pos / 1000.0, false)
+                        }
+
+                        override fun onSkipToNext() {
+                            this@PlaybackOwnerState.mediaSession?.nextTrack()
+                        }
+
+                        override fun onSkipToPrevious() {
+                            this@PlaybackOwnerState.mediaSession?.previousTrack()
+                        }
+
+                        override fun onFastForward() {
+                            this@PlaybackOwnerState.mediaSession?.seekForward()
+                        }
+
+                        override fun onRewind() {
+                            this@PlaybackOwnerState.mediaSession?.seekBackward()
+                        }
+                    }
+                )
+            }
         var mediaSession: MediaSession? = null
         var metadata: MediaSession.Metadata? = null
         var fallbackTitle: String? = null
@@ -545,11 +612,22 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         val hasActivePlayback: Boolean
             get() = active && playing
 
+        val hasRealActivePlayback: Boolean
+            get() = hasActivePlayback && mediaSession != null
+
         fun touch() {
             lastActiveAt = System.currentTimeMillis()
         }
 
         fun hasFeature(feature: Long): Boolean = features and feature != 0L
+
+        fun actionRequestCode(action: String): Int =
+            notificationId xor action.hashCode()
+
+        fun release() {
+            androidSession.isActive = false
+            androidSession.release()
+        }
 
         fun notificationTitle(): String =
             metadata?.title.ifNullOrBlank { fallbackTitle }
@@ -591,10 +669,10 @@ class BrowserMediaNotificationController private constructor(context: Context) {
     }
 
     companion object {
-        const val MEDIA_NOTIFICATION_ID = 3901
+        private const val MEDIA_NOTIFICATION_ID_BASE = 390100
+        private const val MEDIA_NOTIFICATION_ID_MASK = 0x0000ffff
         private const val MEDIA_CHANNEL_ID = "media_playback"
         private const val MEDIA_DEBUG_TAG = "HyperMediaDebug"
-        private const val CONTENT_REQUEST_CODE = 3902
         private const val LARGE_ICON_SIZE = 128
 
         @Volatile

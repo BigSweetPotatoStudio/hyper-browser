@@ -21,8 +21,8 @@ class BrowserMediaPlaybackService : Service() {
         }
 
         val controller = BrowserMediaNotificationController.get(this)
-        val notification = controller.foregroundNotification()
-        if (notification == null) {
+        val notificationEntry = controller.foregroundNotification()
+        if (notificationEntry == null) {
             stopForegroundCompat(removeNotification = false)
             stopSelf()
             return START_NOT_STICKY
@@ -30,12 +30,12 @@ class BrowserMediaPlaybackService : Service() {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
-                BrowserMediaNotificationController.MEDIA_NOTIFICATION_ID,
-                notification,
+                notificationEntry.id,
+                notificationEntry.notification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
             )
         } else {
-            startForeground(BrowserMediaNotificationController.MEDIA_NOTIFICATION_ID, notification)
+            startForeground(notificationEntry.id, notificationEntry.notification)
         }
         if (!controller.hasActivePlayback) {
             stopForegroundCompat(removeNotification = false)

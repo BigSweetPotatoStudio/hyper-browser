@@ -65,7 +65,9 @@ object HyperBridge {
                                 Log.w(TAG, "Rejected bridge message type=$type sender=${sender.url}")
                                 return GeckoResult.fromValue(error("Rejected bridge message.").toString())
                             }
-                            val handler = handlers[sender.session] ?: fallbackHandler.also {
+                            val handler = handlers[sender.session] ?: fallbackHandler.takeIf {
+                                canUseFallbackHandler(sender, type)
+                            }.also {
                                 if (it != null) {
                                     Log.d(TAG, "Using fallback bridge handler type=$type sender=${sender.url}")
                                 }
@@ -134,6 +136,9 @@ object HyperBridge {
         return (type == "pullRefresh.touch" || type == "media.keepAlive.start" || type == "media.keepAlive.stop") &&
             (sender.url.startsWith("https://") || sender.url.startsWith("http://"))
     }
+
+    private fun canUseFallbackHandler(sender: WebExtension.MessageSender, type: String): Boolean =
+        isInternalPageUrl(sender.url) || type == "pullRefresh.touch"
 
     private fun error(message: String): JSONObject =
         JSONObject().put("ok", false).put("error", message)

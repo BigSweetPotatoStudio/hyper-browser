@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.MediaSession
 import org.mozilla.geckoview.WebResponse
@@ -55,7 +56,7 @@ class GeckoSessionController(
     private val mediaNotificationIntent: Intent? = null,
     private val mediaOwnerInfo: () -> BrowserMediaOwnerInfo? = { null }
 ) {
-    var session: GeckoSession = existingSession ?: GeckoSession()
+    var session: GeckoSession = existingSession ?: createSession()
         private set
 
     private val appContext = context.applicationContext
@@ -455,6 +456,10 @@ class GeckoSessionController(
                 return org.json.JSONObject().put("ok", true)
             }
             "media.keepAlive.start" -> {
+                if (!isMediaKeepAliveForCurrentSession(payload)) {
+                    logIgnoredKeepAlive("start", payload)
+                    return org.json.JSONObject().put("ok", true).put("ignored", true)
+                }
                 BrowserMediaNotificationController.get(appContext).startPageKeepAlive(
                     owner = session,
                     ownerInfo = currentMediaOwnerInfo(),
@@ -465,6 +470,10 @@ class GeckoSessionController(
                 return org.json.JSONObject().put("ok", true)
             }
             "media.keepAlive.stop" -> {
+                if (!isMediaKeepAliveForCurrentSession(payload)) {
+                    logIgnoredKeepAlive("stop", payload)
+                    return org.json.JSONObject().put("ok", true).put("ignored", true)
+                }
                 BrowserMediaNotificationController.get(appContext).stopPageKeepAlive(session)
                 return org.json.JSONObject().put("ok", true)
             }
@@ -488,6 +497,31 @@ class GeckoSessionController(
                 ?: visibleUrl.takeIf { it.isNotBlank() },
             iconPath = provided?.iconPath,
             launchIntent = provided?.launchIntent ?: mediaNotificationIntent
+        )
+    }
+
+    private fun isMediaKeepAliveForCurrentSession(payload: org.json.JSONObject): Boolean {
+        val sourceUrl = payload.optString("sourceUrl")
+            .ifBlank { payload.optString("url") }
+            .ifBlank { return true }
+        val source = semanticUrlForRawUrl(sourceUrl).withoutFragment()
+        val candidates = listOf(_state.value.url, lastLoadTarget, currentRawUrl)
+            .filter { it.isNotBlank() && it != ABOUT_BLANK_URL }
+            .map { semanticUrlForRawUrl(it).withoutFragment() }
+        return candidates.any { it == source }
+    }
+
+    private fun logIgnoredKeepAlive(event: String, payload: org.json.JSONObject) {
+        Log.d(
+            MEDIA_DEBUG_TAG,
+            buildString {
+                append("keepAlive.ignored event=").append(event)
+                append(" sourceUrl=").append(payload.optString("sourceUrl"))
+                append(" payloadUrl=").append(payload.optString("url"))
+                append(" session=").append(System.identityHashCode(session))
+                append(" current=").append(_state.value.url)
+                append(" raw=").append(currentRawUrl)
+            }
         )
     }
 
@@ -545,6 +579,13 @@ class GeckoSessionController(
         mainHandler.post { recoverSession(force = false) }
     }
 
+    private fun createSession(): GeckoSession =
+        GeckoSession(
+            GeckoSessionSettings.Builder()
+                .suspendMediaWhenInactive(false)
+                .build()
+        )
+
     private fun recoverSession(force: Boolean) {
         val target = currentRecoveryTarget()
         if (force) {
@@ -553,7 +594,7 @@ class GeckoSessionController(
         HyperBridge.unregister(session)
         BrowserMediaNotificationController.get(appContext).clearIfOwner(session)
         runCatching { session.close() }
-        session = GeckoSession()
+        session = createSession()
         waitingForInitialLocation = true
         configureSession(session)
         HyperBridge.register(session, ::handleBridgeMessage, useAsFallback = onHyperBridgeMessage != null)
@@ -689,6 +730,9 @@ class GeckoSessionController(
         }
     }
 }
+
+private fun String.withoutFragment(): String =
+    substringBefore('#')
 
 private fun WebResponse.headerValue(name: String): String? {
     val wanted = name.lowercase()
