@@ -287,7 +287,10 @@ class ExtensionRepository(
 
     private suspend fun listRuntimeExtensions(): List<WebExtension> {
         val controller = GeckoRuntimeProvider.get(context).webExtensionController
-        return controller.list().await() as? List<WebExtension> ?: emptyList()
+        val result = controller.list().await()
+        return (result as? List<*>)
+            ?.filterIsInstance<WebExtension>()
+            ?: emptyList()
     }
 
     private suspend fun invokeWebExtensionMethod(methodName: String, extension: Any) {

@@ -18,7 +18,9 @@ object HyperBridge {
     private var installing = false
     private val pendingReady = mutableListOf<(WebExtension) -> Unit>()
     private val handlers = mutableMapOf<GeckoSession, (JSONObject) -> JSONObject>()
+    private val fallbackEligibleHandlers = linkedMapOf<GeckoSession, (JSONObject) -> JSONObject>()
     private var fallbackHandler: ((JSONObject) -> JSONObject)? = null
+    private var fallbackSession: GeckoSession? = null
 
     fun ensureInstalled(context: Context, onReady: (WebExtension) -> Unit = {}) {
         extension?.let {
@@ -65,7 +67,7 @@ object HyperBridge {
                             }
                             val handler = handlers[sender.session] ?: fallbackHandler.also {
                                 if (it != null) {
-                                    Log.w(TAG, "Using fallback bridge handler type=$type sender=${sender.url}")
+                                    Log.d(TAG, "Using fallback bridge handler type=$type sender=${sender.url}")
                                 }
                             }
                             if (handler == null) {
@@ -92,14 +94,29 @@ object HyperBridge {
             })
     }
 
-    fun register(session: GeckoSession, handler: (JSONObject) -> JSONObject) {
+    fun register(session: GeckoSession, handler: (JSONObject) -> JSONObject, useAsFallback: Boolean = true) {
         handlers[session] = handler
-        fallbackHandler = handler
+        if (useAsFallback) {
+            fallbackEligibleHandlers.remove(session)
+            fallbackEligibleHandlers[session] = handler
+            fallbackSession = session
+            fallbackHandler = handler
+        }
     }
 
     fun unregister(session: GeckoSession) {
         handlers.remove(session)
-        if (handlers.isEmpty()) fallbackHandler = null
+        fallbackEligibleHandlers.remove(session)
+        if (fallbackSession == session) {
+            val fallback = fallbackEligibleHandlers.entries.lastOrNull()
+            fallbackSession = fallback?.key
+            fallbackHandler = fallback?.value
+        }
+        if (handlers.isEmpty()) {
+            fallbackEligibleHandlers.clear()
+            fallbackSession = null
+            fallbackHandler = null
+        }
     }
 
     fun pageUrl(page: String): String? =

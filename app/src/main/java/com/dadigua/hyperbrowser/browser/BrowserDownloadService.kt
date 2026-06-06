@@ -152,7 +152,7 @@ class BrowserDownloadService : Service() {
             }
             target.finish()
             val normalizedTotal = totalBytes.takeIf { it > 0L } ?: bytesCopied
-            store.markCompleted(entry.id, savedUri?.toString(), bytesCopied, normalizedTotal)
+            store.markCompleted(entry.id, savedUri.toString(), bytesCopied, normalizedTotal)
             store.observeDownloads().value.firstOrNull { it.id == entry.id }?.let { publishFinal(it) }
         }.getOrElse { throwable ->
             savedUri?.let { runCatching { contentResolver.delete(it, null, null) } }

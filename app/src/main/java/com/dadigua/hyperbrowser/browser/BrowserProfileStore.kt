@@ -51,10 +51,25 @@ data class BrowserSettings(
     }
 }
 
+data class SavedBrowserTab(
+    val id: String,
+    val title: String,
+    val url: String,
+    val input: String,
+    val iconPath: String? = null,
+    val loaded: Boolean = true
+)
+
+data class SavedBrowserTabs(
+    val selectedTabId: String?,
+    val tabs: List<SavedBrowserTab>
+)
+
 class BrowserProfileStore(context: Context) {
     private val historyFile = File(context.filesDir, "browser_history.json")
     private val bookmarksFile = File(context.filesDir, "browser_bookmarks.json")
     private val settingsFile = File(context.filesDir, "browser_settings.json")
+    private val tabsFile = File(context.filesDir, "browser_tabs.json")
     private val historyState = MutableStateFlow(loadHistory())
     private val bookmarksState = MutableStateFlow(loadBookmarks())
     private val settingsState = MutableStateFlow(loadSettings())
@@ -62,6 +77,15 @@ class BrowserProfileStore(context: Context) {
     fun observeHistory(): StateFlow<List<BrowserHistoryEntry>> = historyState
     fun observeBookmarks(): StateFlow<List<BrowserBookmark>> = bookmarksState
     fun observeSettings(): StateFlow<BrowserSettings> = settingsState
+
+    fun loadSavedTabs(): SavedBrowserTabs {
+        if (!tabsFile.exists()) return SavedBrowserTabs(selectedTabId = null, tabs = emptyList())
+        return BrowserTabPersistenceCodec.decode(tabsFile.readText())
+    }
+
+    fun saveTabs(state: SavedBrowserTabs) {
+        tabsFile.writeText(BrowserTabPersistenceCodec.encode(state))
+    }
 
     fun recordVisit(url: String, title: String, iconPath: String? = null) {
         if (url.isBlank()) return

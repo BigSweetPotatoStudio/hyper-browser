@@ -41,6 +41,7 @@ class GeckoSessionController(
     context: Context,
     initialUrl: String,
     existingSession: GeckoSession? = null,
+    loadInitialUrl: Boolean = true,
     private val onHyperRoute: (HyperRoute) -> Unit = {},
     private val onHyperBridgeMessage: ((org.json.JSONObject) -> org.json.JSONObject)? = null,
     private val onLinkContextMenu: (String, String?) -> Unit = { _, _ -> },
@@ -68,10 +69,12 @@ class GeckoSessionController(
 
     init {
         configureSession(session)
-        HyperBridge.register(session, ::handleBridgeMessage)
+        HyperBridge.register(session, ::handleBridgeMessage, useAsFallback = onHyperBridgeMessage != null)
         if (existingSession == null) {
             session.open(runtime)
-            load(initialUrl)
+            if (loadInitialUrl) {
+                load(initialUrl)
+            }
         }
     }
 
@@ -444,7 +447,7 @@ class GeckoSessionController(
         runCatching { session.close() }
         session = GeckoSession()
         configureSession(session)
-        HyperBridge.register(session, ::handleBridgeMessage)
+        HyperBridge.register(session, ::handleBridgeMessage, useAsFallback = onHyperBridgeMessage != null)
         session.open(runtime)
         view?.setSession(session)
         _sessionChangeVersion.value = _sessionChangeVersion.value + 1
