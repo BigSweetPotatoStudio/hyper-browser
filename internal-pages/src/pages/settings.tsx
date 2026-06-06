@@ -111,6 +111,16 @@ function SettingsPage() {
       .then((result) => {
         setUpdateResult(result);
         setUpdateMessage(result.message || updateStatusLabel(result));
+        return window.hyperBrowser.requestUpdateDownloadState()
+          .then((state) => {
+            if (result.update && state.versionCode === result.update.versionCode && state.status !== "idle") {
+              setUpdateDownload(state);
+              if (state.status === "permissionRequired" || state.status === "ready" || state.status === "error") {
+                setUpdateMessage(state.message || updateDownloadMessage(state));
+              }
+            }
+          })
+          .catch(() => undefined);
       })
       .catch((error) => setUpdateMessage(error instanceof Error ? error.message : "检查更新失败。"))
       .finally(() => setUpdateChecking(false));
@@ -194,6 +204,8 @@ function SettingsPage() {
       return "准备中...";
     }
     if (updateDownload?.status === "permissionRequired") return "授权后重试";
+    if (updateDownload?.status === "ready") return "安装更新";
+    if (updateDownload?.status === "error") return "重新下载";
     return updateResult?.status === "skipped" ? "仍然更新" : "立即更新";
   }
 
@@ -203,7 +215,7 @@ function SettingsPage() {
       case "permissionRequired": return "请先允许 Hyper Browser 安装未知应用。";
       case "downloading": return `正在下载更新... ${updateProgressPercent(state)}%`;
       case "verifying": return "正在校验安装包...";
-      case "ready": return "下载完成，打开安装器。";
+      case "ready": return "下载完成，点击安装。";
       case "error": return state.message || "更新下载失败。";
       default: return "";
     }

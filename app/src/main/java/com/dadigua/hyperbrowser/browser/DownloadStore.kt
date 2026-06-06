@@ -34,6 +34,10 @@ class DownloadStore(context: android.content.Context) {
 
     fun observeDownloads(): StateFlow<List<BrowserDownloadEntry>> = state
 
+    fun refreshFromDisk() {
+        state.value = sorted(load())
+    }
+
     fun create(
         name: String,
         sourceUrl: String,
@@ -107,9 +111,12 @@ class DownloadStore(context: android.content.Context) {
     }
 
     private fun update(items: List<BrowserDownloadEntry>) {
-        state.value = items.take(200)
+        state.value = sorted(items)
         save(state.value)
     }
+
+    private fun sorted(items: List<BrowserDownloadEntry>): List<BrowserDownloadEntry> =
+        items.sortedByDescending { it.createdAt }.take(200)
 
     private fun load(): List<BrowserDownloadEntry> {
         if (!file.exists()) return emptyList()

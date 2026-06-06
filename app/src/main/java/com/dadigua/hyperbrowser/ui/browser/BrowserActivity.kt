@@ -120,6 +120,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
 import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.browser.BrowserBookmark
 import com.dadigua.hyperbrowser.browser.BrowserDownloadEntry
@@ -179,7 +180,7 @@ class BrowserActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         inPictureInPicture = isInPictureInPictureMode
         val initialIntent = intent.toExternalBrowserIntent()
-        val initialUrl = if (initialIntent?.download == false) {
+        val initialUrl = if (initialIntent?.download == false && initialIntent.url != null) {
             initialIntent.url
         } else {
             GeckoSessionController.HOME_URL
@@ -191,6 +192,7 @@ class BrowserActivity : ComponentActivity() {
                         app = application as HyperBrowserApp,
                         initialUrl = initialUrl,
                         initialDownloadUrl = initialIntent?.url?.takeIf { initialIntent.download },
+                        initialShowDownloads = initialIntent?.showDownloads == true,
                         externalIntents = externalIntents,
                         inPictureInPicture = inPictureInPicture
                     )
@@ -229,15 +231,22 @@ class BrowserActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_URL = "extra_url"
+        const val EXTRA_SHOW_DOWNLOADS = "extra_show_downloads"
 
         fun intent(context: Context, url: String): Intent =
             Intent(context, BrowserActivity::class.java).putExtra(EXTRA_URL, url)
+
+        fun downloadsIntent(context: Context): Intent =
+            Intent(context, BrowserActivity::class.java)
+                .putExtra(EXTRA_SHOW_DOWNLOADS, true)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     }
 }
 
 private data class ExternalBrowserIntent(
-    val url: String,
-    val download: Boolean
+    val url: String?,
+    val download: Boolean,
+    val showDownloads: Boolean = false
 )
 
 private data class LinkContextMenuState(
@@ -246,6 +255,9 @@ private data class LinkContextMenuState(
 )
 
 private fun Intent.toExternalBrowserIntent(): ExternalBrowserIntent? {
+    if (getBooleanExtra(BrowserActivity.EXTRA_SHOW_DOWNLOADS, false)) {
+        return ExternalBrowserIntent(url = null, download = false, showDownloads = true)
+    }
     getStringExtra(BrowserActivity.EXTRA_URL)?.takeIf { it.isNotBlank() }?.let {
         return ExternalBrowserIntent(it, download = false)
     }
@@ -274,6 +286,7 @@ private fun BrowserScreen(
     app: HyperBrowserApp,
     initialUrl: String,
     initialDownloadUrl: String?,
+    initialShowDownloads: Boolean,
     externalIntents: MutableSharedFlow<ExternalBrowserIntent>,
     inPictureInPicture: Boolean
 ) {
@@ -289,8 +302,9 @@ private fun BrowserScreen(
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
     var checkedUpdate by remember { mutableStateOf<AvailableUpdate?>(null) }
-    var pendingInstallUpdate by remember { mutableStateOf<AvailableUpdate?>(null) }
     var updateDownloadState by remember { mutableStateOf(UpdateDownloadState.idle()) }
+    var updateDownloadEntry by remember { mutableStateOf<BrowserDownloadEntry?>(null) }
+    var updateInstallInFlight by remember { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
@@ -314,10 +328,77 @@ private fun BrowserScreen(
         scope.launch {
             message = "Saving ${request.fileName}..."
             runCatching { downloadHandler.saveResponse(request, downloadHandler.canPostNotifications()) }
-                .onSuccess { message = "Downloaded: ${it.name}" }
+                .onSuccess { message = "Download queued: ${it.name}" }
                 .onFailure { message = it.message ?: "Download failed." }
         }
     }
+
+    fun beginUpdateInstall(update: AvailableUpdate): UpdateDownloadState {
+        if (updateInstallInFlight && updateDownloadState.versionCode == update.versionCode) {
+            return updateDownloadState
+        }
+
+        if (!updateManager.canInstallPackages()) {
+            updateDownloadState = UpdateDownloadState(
+                status = UpdateDownloadState.STATUS_PERMISSION_REQUIRED,
+                versionCode = update.versionCode,
+                versionName = update.versionName,
+                totalBytes = update.asset.sizeBytes,
+                message = "请先允许 Hyper Browser 安装未知应用。"
+            )
+            message = updateDownloadState.message
+            runCatching { context.startActivity(updateManager.installPermissionIntent()) }
+                .onFailure { message = it.message ?: "无法打开安装权限设置。" }
+            return updateDownloadState
+        }
+
+        updateInstallInFlight = true
+        updateDownloadState = UpdateDownloadState(
+            status = UpdateDownloadState.STATUS_PREPARING,
+            versionCode = update.versionCode,
+            versionName = update.versionName,
+            totalBytes = update.asset.sizeBytes,
+            message = "正在准备更新..."
+        )
+        requestDownloadNotificationsIfNeeded()
+        message = "已开始下载 ${update.versionName}。"
+
+        (context as BrowserActivity).lifecycleScope.launch {
+            runCatching {
+                updateManager.startOrResumeDownload(update)
+            }
+                .onSuccess { state ->
+                    updateDownloadState = state
+                    if (state.status == UpdateDownloadState.STATUS_READY) {
+                        message = state.message
+                        runCatching { updateManager.createInstallIntentIfReady(update) }
+                            .onSuccess { intent ->
+                                if (intent != null) {
+                                    runCatching { context.startActivity(intent) }
+                                        .onFailure { message = it.message ?: "无法打开安装器。" }
+                                }
+                            }
+                            .onFailure { message = it.message ?: "无法打开安装器。" }
+                    }
+                }
+                .onFailure { throwable ->
+                    val error = throwable.message ?: "更新下载失败。"
+                    updateDownloadState = UpdateDownloadState(
+                        status = UpdateDownloadState.STATUS_ERROR,
+                        versionCode = update.versionCode,
+                        versionName = update.versionName,
+                        totalBytes = update.asset.sizeBytes,
+                        message = error
+                    )
+                    updateManager.notifyUpdateError(update, error)
+                    message = error
+                }
+            updateInstallInFlight = false
+        }
+
+        return updateDownloadState
+    }
+
     fun handleHyperBridgeMessage(message: JSONObject): JSONObject {
         val payload = message.optJSONObject("payload") ?: JSONObject()
         return when (message.optString("type")) {
@@ -362,22 +443,18 @@ private fun BrowserScreen(
                 updateManager.clearSkip()
                 ok()
             }
-            "update.downloadState" -> okData(updateDownloadState.toJson())
+            "update.downloadState" -> {
+                val state = runBlocking { updateManager.refreshDownloadState() }
+                updateDownloadState = state
+                okData(state.toJson())
+            }
             "update.install" -> {
                 val versionCode = payload.optString("versionCode").toLongOrNull() ?: 0L
                 val update = checkedUpdate
                 if (update == null || update.versionCode != versionCode) {
                     JSONObject().put("ok", false).put("error", "请先检查更新。")
                 } else {
-                    pendingInstallUpdate = update
-                    updateDownloadState = UpdateDownloadState(
-                        status = UpdateDownloadState.STATUS_PREPARING,
-                        versionCode = update.versionCode,
-                        versionName = update.versionName,
-                        totalBytes = update.asset.sizeBytes,
-                        message = "正在准备更新..."
-                    )
-                    okData(updateDownloadState.toJson())
+                    okData(beginUpdateInstall(update).toJson())
                 }
             }
             "bookmarks.open" -> {
@@ -470,7 +547,7 @@ private fun BrowserScreen(
     var showSearch by remember { mutableStateOf(false) }
     var showBookmarks by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
-    var showDownloads by remember { mutableStateOf(false) }
+    var showDownloads by remember { mutableStateOf(initialShowDownloads) }
     var showExtensions by remember { mutableStateOf(false) }
     var editingAddress by remember { mutableStateOf(false) }
     var extensionQuery by remember { mutableStateOf("ublock") }
@@ -498,17 +575,32 @@ private fun BrowserScreen(
         message = "已在后台标签页打开"
     }
 
+    fun isActiveUpdateDownload(state: UpdateDownloadState): Boolean =
+        state.status == UpdateDownloadState.STATUS_PREPARING ||
+            state.status == UpdateDownloadState.STATUS_DOWNLOADING ||
+            state.status == UpdateDownloadState.STATUS_VERIFYING
+
     LaunchedEffect(initialDownloadUrl) {
         initialDownloadUrl?.let { enqueueUrlDownload(it) }
     }
 
     LaunchedEffect(externalIntents, selectedTabId, settings.searchUrlTemplate) {
         externalIntents.collect { command ->
-            if (command.download) {
-                enqueueUrlDownload(command.url)
-            } else {
-                tab.input = command.url
-                controller.load(command.url, settings.searchUrlTemplate)
+            val commandUrl = command.url
+            if (command.showDownloads) {
+                showSearch = false
+                showBookmarks = false
+                showHistory = false
+                showDownloads = true
+                showExtensions = false
+                showTabs = false
+                editingAddress = false
+                message = null
+            } else if (command.download && commandUrl != null) {
+                enqueueUrlDownload(commandUrl)
+            } else if (commandUrl != null) {
+                tab.input = commandUrl
+                controller.load(commandUrl, settings.searchUrlTemplate)
                 showSearch = false
                 showBookmarks = false
                 showHistory = false
@@ -523,7 +615,7 @@ private fun BrowserScreen(
 
     LaunchedEffect(showDownloads, downloads) {
         while (showDownloads || downloads.any {
-                it.downloadManagerId != null && (it.status == DownloadStatus.Running || it.status == DownloadStatus.Queued)
+                it.status == DownloadStatus.Running || it.status == DownloadStatus.Queued
             }
         ) {
             downloadHandler.refreshSystemDownloads()
@@ -531,54 +623,12 @@ private fun BrowserScreen(
         }
     }
 
-    LaunchedEffect(pendingInstallUpdate) {
-        val update = pendingInstallUpdate ?: return@LaunchedEffect
-        pendingInstallUpdate = null
-        if (!updateManager.canInstallPackages()) {
-            updateDownloadState = UpdateDownloadState(
-                status = UpdateDownloadState.STATUS_PERMISSION_REQUIRED,
-                versionCode = update.versionCode,
-                versionName = update.versionName,
-                totalBytes = update.asset.sizeBytes,
-                message = "请先允许 Hyper Browser 安装未知应用。"
-            )
-            message = updateDownloadState.message
-            runCatching { context.startActivity(updateManager.installPermissionIntent()) }
-                .onFailure { message = it.message ?: "无法打开安装权限设置。" }
-            return@LaunchedEffect
+    LaunchedEffect(showDownloads, updateDownloadState.status) {
+        while (showDownloads || isActiveUpdateDownload(updateDownloadState)) {
+            updateDownloadState = updateManager.refreshDownloadState()
+            updateDownloadEntry = updateManager.currentDownloadEntry()
+            delay(1000)
         }
-
-        message = "已开始下载 ${update.versionName}。"
-        runCatching {
-            updateManager.downloadAndCreateInstallIntent(update) { state ->
-                updateDownloadState = state
-            }
-        }
-            .onSuccess { intent ->
-                updateDownloadState = UpdateDownloadState(
-                    status = UpdateDownloadState.STATUS_READY,
-                    versionCode = update.versionCode,
-                    versionName = update.versionName,
-                    bytesDownloaded = update.asset.sizeBytes,
-                    totalBytes = update.asset.sizeBytes,
-                    message = "下载完成，打开安装器。"
-                )
-                message = updateDownloadState.message
-                runCatching { context.startActivity(intent) }
-                    .onFailure { message = it.message ?: "无法打开安装器。" }
-            }
-            .onFailure { throwable ->
-                val error = throwable.message ?: "更新下载失败。"
-                updateDownloadState = UpdateDownloadState(
-                    status = UpdateDownloadState.STATUS_ERROR,
-                    versionCode = update.versionCode,
-                    versionName = update.versionName,
-                    totalBytes = update.asset.sizeBytes,
-                    message = error
-                )
-                updateManager.notifyUpdateError(update, error)
-                message = error
-            }
     }
 
     BackHandler {
@@ -785,22 +835,53 @@ private fun BrowserScreen(
                 )
             } else if (showDownloads) {
                 DownloadsPage(
-                    downloads = downloads,
+                    downloads = listOfNotNull(updateDownloadEntry) + downloads,
                     onBack = { showDownloads = false },
                     onOpen = { entry ->
-                        val openIntent = downloadHandler.openIntent(entry)
-                        if (openIntent == null) {
-                            message = "File is not ready."
+                        if (entry.id == AppUpdateManager.APP_UPDATE_DOWNLOAD_ID) {
+                            scope.launch {
+                                val state = updateManager.refreshDownloadState()
+                                updateDownloadState = state
+                                updateDownloadEntry = updateManager.currentDownloadEntry()
+                                if (state.status == UpdateDownloadState.STATUS_READY) {
+                                    val installIntent = updateManager.createInstallIntentForReadyDownload()
+                                    if (installIntent == null) {
+                                        message = "安装包不可用。"
+                                    } else {
+                                        runCatching { context.startActivity(installIntent) }
+                                            .onFailure { message = it.message ?: "无法打开安装器。" }
+                                    }
+                                } else if (state.status == UpdateDownloadState.STATUS_ERROR) {
+                                    message = state.message.ifBlank { "更新下载失败。" }
+                                } else {
+                                    message = state.message.ifBlank { "更新正在下载。" }
+                                }
+                            }
                         } else {
-                            runCatching { context.startActivity(openIntent) }
-                                .onFailure { message = it.message ?: "No app can open this file." }
+                            val openIntent = downloadHandler.openIntent(entry)
+                            if (openIntent == null) {
+                                message = "File is not ready."
+                            } else {
+                                runCatching { context.startActivity(openIntent) }
+                                    .onFailure { message = it.message ?: "No app can open this file." }
+                            }
                         }
                     },
                     onRemove = { entry, deleteFile ->
                         scope.launch {
-                            runCatching { downloadHandler.delete(entry, deleteFile) }
-                                .onSuccess { message = "Download removed." }
-                                .onFailure { message = it.message ?: "Unable to remove download." }
+                            if (entry.id == AppUpdateManager.APP_UPDATE_DOWNLOAD_ID) {
+                                runCatching { updateManager.clearDownload(deleteFile) }
+                                    .onSuccess {
+                                        updateDownloadState = UpdateDownloadState.idle()
+                                        updateDownloadEntry = null
+                                        message = "Download removed."
+                                    }
+                                    .onFailure { message = it.message ?: "Unable to remove download." }
+                            } else {
+                                runCatching { downloadHandler.delete(entry, deleteFile) }
+                                    .onSuccess { message = "Download removed." }
+                                    .onFailure { message = it.message ?: "Unable to remove download." }
+                            }
                         }
                     }
                 )
@@ -2340,6 +2421,7 @@ private fun DownloadsPage(
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    val orderedDownloads = remember(downloads) { downloads.sortedByDescending { it.createdAt } }
     var pendingDelete by remember { mutableStateOf<BrowserDownloadEntry?>(null) }
     var deleteFile by remember { mutableStateOf(true) }
 
@@ -2368,7 +2450,7 @@ private fun DownloadsPage(
         }
         HorizontalDivider(color = Color(0xFFDADCE3))
 
-        if (downloads.isEmpty()) {
+        if (orderedDownloads.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(
                     modifier = Modifier.padding(28.dp),
@@ -2390,7 +2472,7 @@ private fun DownloadsPage(
             }
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(downloads, key = { it.id }) { entry ->
+                items(orderedDownloads, key = { it.id }) { entry ->
                     DownloadRow(
                         entry = entry,
                         onOpen = { onOpen(entry) },
