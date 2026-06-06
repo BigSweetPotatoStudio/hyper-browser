@@ -42,10 +42,13 @@ class GeckoSessionController(
     initialUrl: String,
     existingSession: GeckoSession? = null,
     loadInitialUrl: Boolean = true,
+    restoredSessionState: GeckoSession.SessionState? = null,
     private val onHyperRoute: (HyperRoute) -> Unit = {},
     private val onHyperBridgeMessage: ((org.json.JSONObject) -> org.json.JSONObject)? = null,
     private val onLinkContextMenu: (String, String?) -> Unit = { _, _ -> },
     private val onDownload: (GeckoDownloadRequest) -> Unit = {},
+    private val onSessionStateChange: (GeckoSession.SessionState) -> Unit = {},
+    private val onPageStop: (Boolean) -> Unit = {},
     private val mediaNotificationIntent: Intent? = null
 ) {
     var session: GeckoSession = existingSession ?: GeckoSession()
@@ -57,6 +60,7 @@ class GeckoSessionController(
     private val _sessionChangeVersion = MutableStateFlow(0)
     private var currentRawUrl: String = initialUrl
     private var lastLoadTarget: String = initialUrl
+    private var waitingForInitialLocation = existingSession == null && initialUrl != ABOUT_BLANK_URL
     private var view: GeckoView? = null
     private var sessionCrashed = false
     private var automaticRecoveryTarget: String? = null
@@ -72,7 +76,13 @@ class GeckoSessionController(
         HyperBridge.register(session, ::handleBridgeMessage, useAsFallback = onHyperBridgeMessage != null)
         if (existingSession == null) {
             session.open(runtime)
-            if (loadInitialUrl) {
+            val restored = restoredSessionState?.takeIf { loadInitialUrl }?.let { state ->
+                runCatching {
+                    session.restoreState(GeckoSession.SessionState(state))
+                    true
+                }.getOrDefault(false)
+            } ?: false
+            if (!restored && loadInitialUrl) {
                 load(initialUrl)
             }
         }
@@ -136,6 +146,14 @@ class GeckoSessionController(
                     sessionCrashed = false
                     automaticRecoveryTarget = null
                 }
+                onPageStop(success)
+            }
+
+            override fun onSessionStateChange(
+                session: GeckoSession,
+                state: GeckoSession.SessionState
+            ) {
+                onSessionStateChange(GeckoSession.SessionState(state))
             }
         }
         targetSession.navigationDelegate = object : GeckoSession.NavigationDelegate {
@@ -147,6 +165,12 @@ class GeckoSessionController(
             ) {
                 val rawUrl = url.orEmpty()
                 currentRawUrl = rawUrl
+                if (shouldIgnoreInitialAboutBlank(rawUrl, _state.value.url, waitingForInitialLocation)) {
+                    return
+                }
+                if (rawUrl != ABOUT_BLANK_URL) {
+                    waitingForInitialLocation = false
+                }
                 val target = semanticUrlForRawUrl(rawUrl)
                 if (target.isBlank()) return
                 _state.value = _state.value.copy(
@@ -336,6 +360,22 @@ class GeckoSessionController(
             .onFailure { recoverSession(force = true) }
     }
 
+    fun flushSessionState() {
+        runCatching { session.flushSessionState() }
+    }
+
+    fun restore(state: GeckoSession.SessionState, visibleUrl: String): Boolean {
+        lastLoadTarget = visibleUrl
+        waitingForInitialLocation = visibleUrl != ABOUT_BLANK_URL
+        sessionCrashed = false
+        automaticRecoveryTarget = null
+        _state.value = _state.value.copy(url = visibleUrl, insecureHttp = visibleUrl.startsWith("http://"))
+        return runCatching {
+            session.restoreState(GeckoSession.SessionState(state))
+            true
+        }.getOrDefault(false)
+    }
+
     fun attachView(view: GeckoView?) {
         this.view = view
     }
@@ -446,6 +486,7 @@ class GeckoSessionController(
         BrowserMediaNotificationController.get(appContext).clearIfOwner(session)
         runCatching { session.close() }
         session = GeckoSession()
+        waitingForInitialLocation = true
         configureSession(session)
         HyperBridge.register(session, ::handleBridgeMessage, useAsFallback = onHyperBridgeMessage != null)
         session.open(runtime)
@@ -462,12 +503,13 @@ class GeckoSessionController(
         val visibleUrl = _state.value.url
         return when {
             visibleUrl.isNotBlank() -> visibleUrl
-            currentRawUrl.isNotBlank() -> semanticUrlForRawUrl(currentRawUrl)
+            currentRawUrl.isNotBlank() && currentRawUrl != ABOUT_BLANK_URL -> semanticUrlForRawUrl(currentRawUrl)
             else -> lastLoadTarget
         }
     }
 
     companion object {
+        internal const val ABOUT_BLANK_URL = "about:blank"
         const val HOME_URL = "hyper://home"
         const val SEARCH_URL = "hyper://search"
         const val SETTINGS_URL = "hyper://settings"
@@ -507,6 +549,16 @@ class GeckoSessionController(
                 isAppsDocumentUrl(url) || isBookmarksDocumentUrl(url) || isHistoryDocumentUrl(url)
         fun isBrowserLoadableUrl(url: String): Boolean =
             url.startsWith("http://") || url.startsWith("https://") || url.startsWith("moz-extension://")
+
+        internal fun shouldIgnoreInitialAboutBlank(
+            rawUrl: String,
+            visibleUrl: String,
+            waitingForInitialLocation: Boolean
+        ): Boolean =
+            waitingForInitialLocation &&
+                rawUrl == ABOUT_BLANK_URL &&
+                visibleUrl.isNotBlank() &&
+                visibleUrl != ABOUT_BLANK_URL
 
         fun normalizeUrl(input: String, searchUrlTemplate: String? = null): String {
             val value = input.trim()

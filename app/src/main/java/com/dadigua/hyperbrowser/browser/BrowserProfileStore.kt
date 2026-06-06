@@ -1,11 +1,14 @@
 package com.dadigua.hyperbrowser.browser
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import kotlin.math.roundToInt
 
 data class BrowserHistoryEntry(
     val url: String,
@@ -70,6 +73,8 @@ class BrowserProfileStore(context: Context) {
     private val bookmarksFile = File(context.filesDir, "browser_bookmarks.json")
     private val settingsFile = File(context.filesDir, "browser_settings.json")
     private val tabsFile = File(context.filesDir, "browser_tabs.json")
+    private val tabSessionStateDir = File(context.filesDir, "browser_tab_states")
+    private val tabThumbnailDir = File(context.filesDir, "browser_tab_thumbnails")
     private val historyState = MutableStateFlow(loadHistory())
     private val bookmarksState = MutableStateFlow(loadBookmarks())
     private val settingsState = MutableStateFlow(loadSettings())
@@ -85,6 +90,76 @@ class BrowserProfileStore(context: Context) {
 
     fun saveTabs(state: SavedBrowserTabs) {
         tabsFile.writeText(BrowserTabPersistenceCodec.encode(state))
+    }
+
+    fun loadTabSessionState(tabId: String): String? {
+        val file = tabSessionStateFile(tabId) ?: return null
+        if (!file.exists()) return null
+        return runCatching { file.readText().takeIf { it.isNotBlank() } }.getOrNull()
+    }
+
+    fun saveTabSessionState(tabId: String, state: String) {
+        val file = tabSessionStateFile(tabId) ?: return
+        if (state.isBlank()) {
+            runCatching { file.delete() }
+            return
+        }
+        tabSessionStateDir.mkdirs()
+        file.writeText(state)
+    }
+
+    fun deleteTabSessionState(tabId: String) {
+        val file = tabSessionStateFile(tabId) ?: return
+        runCatching { file.delete() }
+    }
+
+    fun pruneTabSessionStates(keptTabIds: Set<String>) {
+        if (!tabSessionStateDir.exists()) return
+        val keptFileNames = keptTabIds.mapNotNull(::tabSessionStateFileName).toSet()
+        tabSessionStateDir.listFiles()?.forEach { file ->
+            if (file.isFile && file.name !in keptFileNames) {
+                runCatching { file.delete() }
+            }
+        }
+    }
+
+    fun loadTabThumbnail(tabId: String): Bitmap? {
+        val file = tabThumbnailFile(tabId) ?: return null
+        if (!file.exists() || file.length() <= 0) return null
+        return runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
+    }
+
+    fun saveTabThumbnail(tabId: String, bitmap: Bitmap) {
+        if (bitmap.width <= 0 || bitmap.height <= 0) return
+        val file = tabThumbnailFile(tabId) ?: return
+        tabThumbnailDir.mkdirs()
+        val thumbnail = scaledTabThumbnail(bitmap)
+        runCatching {
+            val saved = file.outputStream().use { out ->
+                thumbnail.compress(Bitmap.CompressFormat.JPEG, 82, out)
+            }
+            if (!saved) file.delete()
+        }.onFailure {
+            runCatching { file.delete() }
+        }
+        if (thumbnail !== bitmap) {
+            thumbnail.recycle()
+        }
+    }
+
+    fun deleteTabThumbnail(tabId: String) {
+        val file = tabThumbnailFile(tabId) ?: return
+        runCatching { file.delete() }
+    }
+
+    fun pruneTabThumbnails(keptTabIds: Set<String>) {
+        if (!tabThumbnailDir.exists()) return
+        val keptFileNames = keptTabIds.mapNotNull(::tabThumbnailFileName).toSet()
+        tabThumbnailDir.listFiles()?.forEach { file ->
+            if (file.isFile && file.name !in keptFileNames) {
+                runCatching { file.delete() }
+            }
+        }
     }
 
     fun recordVisit(url: String, title: String, iconPath: String? = null) {
@@ -291,5 +366,52 @@ class BrowserProfileStore(context: Context) {
                 .put("toolbarPosition", settings.toolbarPosition)
                 .toString()
         )
+    }
+
+    private fun tabSessionStateFile(tabId: String): File? {
+        val fileName = tabSessionStateFileName(tabId) ?: return null
+        return File(tabSessionStateDir, fileName)
+    }
+
+    private fun tabThumbnailFile(tabId: String): File? {
+        val fileName = tabThumbnailFileName(tabId) ?: return null
+        return File(tabThumbnailDir, fileName)
+    }
+
+    private fun tabSessionStateFileName(tabId: String): String? =
+        tabFileName(tabId, extension = "session")
+
+    private fun tabThumbnailFileName(tabId: String): String? =
+        tabFileName(tabId, extension = "jpg")
+
+    private fun tabFileName(tabId: String, extension: String): String? {
+        if (tabId.isBlank()) return null
+        val safeId = tabId.map { char ->
+            when {
+                char.isLetterOrDigit() || char == '-' || char == '_' || char == '.' -> char
+                else -> '_'
+            }
+        }.joinToString("")
+        return "$safeId.$extension"
+    }
+
+    private fun scaledTabThumbnail(bitmap: Bitmap): Bitmap {
+        val scale = minOf(
+            TAB_THUMBNAIL_MAX_WIDTH.toFloat() / bitmap.width,
+            TAB_THUMBNAIL_MAX_HEIGHT.toFloat() / bitmap.height,
+            1f
+        )
+        if (scale >= 1f) return bitmap
+        return Bitmap.createScaledBitmap(
+            bitmap,
+            (bitmap.width * scale).roundToInt().coerceAtLeast(1),
+            (bitmap.height * scale).roundToInt().coerceAtLeast(1),
+            true
+        )
+    }
+
+    private companion object {
+        const val TAB_THUMBNAIL_MAX_WIDTH = 480
+        const val TAB_THUMBNAIL_MAX_HEIGHT = 720
     }
 }

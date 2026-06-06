@@ -1,6 +1,8 @@
 package com.dadigua.hyperbrowser.gecko
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GeckoSessionControllerTest {
@@ -74,6 +76,39 @@ class GeckoSessionControllerTest {
             GeckoSessionController.normalizeUrl(
                 input = "hello world",
                 searchUrlTemplate = "https://search.example/"
+            )
+        )
+    }
+
+    @Test
+    fun initialAboutBlankIsIgnoredWhenAVisibleRestoreUrlExists() {
+        assertTrue(
+            GeckoSessionController.shouldIgnoreInitialAboutBlank(
+                rawUrl = "about:blank",
+                visibleUrl = "https://example.com",
+                waitingForInitialLocation = true
+            )
+        )
+    }
+
+    @Test
+    fun aboutBlankIsNotIgnoredAfterInitialLocationSettles() {
+        assertFalse(
+            GeckoSessionController.shouldIgnoreInitialAboutBlank(
+                rawUrl = "about:blank",
+                visibleUrl = "https://example.com",
+                waitingForInitialLocation = false
+            )
+        )
+    }
+
+    @Test
+    fun initialAboutBlankIsNotIgnoredWhenItIsTheVisibleTarget() {
+        assertFalse(
+            GeckoSessionController.shouldIgnoreInitialAboutBlank(
+                rawUrl = "about:blank",
+                visibleUrl = "about:blank",
+                waitingForInitialLocation = true
             )
         )
     }

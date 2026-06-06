@@ -69,14 +69,18 @@ import com.dadigua.hyperbrowser.update.AvailableUpdate
 import com.dadigua.hyperbrowser.update.UpdateDownloadState
 import com.dadigua.hyperbrowser.update.UpdateSettingsStore
 import com.dadigua.hyperbrowser.webapp.PinnedShortcutRequestResult
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
+import org.mozilla.geckoview.GeckoSession
+import java.util.UUID
 
 class BrowserActivity : ComponentActivity() {
     private val externalIntents = MutableSharedFlow<ExternalBrowserIntent>(extraBufferCapacity = 1)
@@ -164,6 +168,8 @@ private enum class BrowserPanel {
     Tabs
 }
 
+private const val TAB_THUMBNAIL_PAGE_STOP_REFRESH_DELAY_MS = 700L
+
 @Composable
 private fun BrowserScreen(
     app: HyperBrowserApp,
@@ -184,6 +190,7 @@ private fun BrowserScreen(
     val downloadHandler = remember { DownloadHandler(app, downloadStore) }
     val updateManager = remember { AppUpdateManager(app, UpdateSettingsStore(app)) }
     val scope = rememberCoroutineScope()
+    val thumbnailRefreshRequests = remember { MutableSharedFlow<String>(extraBufferCapacity = 16) }
     var message by remember { mutableStateOf<String?>(null) }
     var checkedUpdate by remember { mutableStateOf<AvailableUpdate?>(null) }
     var updateDownloadState by remember { mutableStateOf(UpdateDownloadState.idle()) }
@@ -437,6 +444,38 @@ private fun BrowserScreen(
         }
     }
     var linkContextMenu by remember { mutableStateOf<LinkContextMenuState?>(null) }
+    fun refreshTabThumbnail(
+        tab: BrowserTabRuntime,
+        shouldApply: () -> Boolean = { true },
+        onFinished: () -> Unit = {}
+    ) {
+        tab.capturePixels { bitmap ->
+            if (bitmap != null && shouldApply()) {
+                tab.thumbnail = bitmap
+                scope.launch(Dispatchers.IO) {
+                    profileStore.saveTabThumbnail(tab.id, bitmap)
+                }
+            }
+            onFinished()
+        }
+    }
+
+    fun loadValidatedSessionState(tabId: String?, url: String): GeckoSession.SessionState? {
+        if (tabId == null || !shouldPersistEngineSessionStateUri(url)) return null
+        val rawState = profileStore.loadTabSessionState(tabId) ?: return null
+        val state = runCatching { GeckoSession.SessionState.fromString(rawState) }
+            .getOrNull()
+            ?: run {
+                profileStore.deleteTabSessionState(tabId)
+                return null
+            }
+        if (currentUriForEngineSessionState(state) != url) {
+            profileStore.deleteTabSessionState(tabId)
+            return null
+        }
+        return state
+    }
+
     fun createBrowserTab(
         url: String,
         id: String? = null,
@@ -444,22 +483,37 @@ private fun BrowserScreen(
         title: String? = null,
         iconPath: String? = null,
         loadImmediately: Boolean = true
-    ): BrowserTabRuntime =
-        BrowserTabRuntime.create(
+    ): BrowserTabRuntime {
+        val tabId = id ?: UUID.randomUUID().toString()
+        val restoredSessionState = loadValidatedSessionState(id, url)
+        val restoredThumbnail = id?.let { profileStore.loadTabThumbnail(it) }
+        return BrowserTabRuntime.create(
             app = app,
             url = url,
-            id = id ?: java.util.UUID.randomUUID().toString(),
+            id = tabId,
             initialInput = input,
             initialTitle = title,
             initialIconPath = iconPath,
             loadImmediately = loadImmediately,
+            restoredSessionState = restoredSessionState,
             onHyperRoute = { pendingHyperRoute = it },
             onHyperBridgeMessage = ::handleHyperBridgeMessage,
             onLinkContextMenu = { linkUrl, label ->
                 linkContextMenu = LinkContextMenuState(url = linkUrl, label = label)
             },
-            onDownload = ::saveGeckoDownload
-        )
+            onDownload = ::saveGeckoDownload,
+            onEngineSessionStateChange = { state ->
+                state?.let { profileStore.saveTabSessionState(tabId, it) }
+            },
+            onPageStop = { success ->
+                if (success) {
+                    thumbnailRefreshRequests.tryEmit(tabId)
+                }
+            }
+        ).also { tab ->
+            restoredThumbnail?.let { tab.thumbnail = it }
+        }
+    }
 
     val launchUrl = remember(initialUrl, initialDownloadUrl, initialShowDownloads) {
         initialUrl.takeIf {
@@ -506,7 +560,8 @@ private fun BrowserScreen(
     val showTabs = activePanel == BrowserPanel.Tabs
     val selectedIndex = tabs.indexOfFirst { it.id == selectedTabId }.takeIf { it >= 0 } ?: 0
     val tab = tabs.getOrNull(selectedIndex) ?: tabs.first()
-    val controller = tab.controller
+    val currentSelectedTabId = rememberUpdatedState(selectedTabId)
+    val controller = tab.ensureController()
     val pageState by controller.state.collectAsState()
     val onHomePage = GeckoSessionController.isHomeUrl(pageState.url)
     val onSearchPage = GeckoSessionController.isSearchUrl(pageState.url)
@@ -553,6 +608,9 @@ private fun BrowserScreen(
                 tabs = tabs.mapNotNull { it.toSavedTab() }.take(50)
             )
         )
+        val keptTabIds = tabs.map { it.id }.toSet()
+        profileStore.pruneTabSessionStates(keptTabIds)
+        profileStore.pruneTabThumbnails(keptTabIds)
     }
     val persistBrowserTabsForLifecycle by rememberUpdatedState(newValue = { persistBrowserTabs() })
 
@@ -564,12 +622,27 @@ private fun BrowserScreen(
         tab.loadIfNeeded(settings.searchUrlTemplate)
     }
 
-    LaunchedEffect(tabs.map { it.id }) {
-        val watchedTabs = tabs.toList()
+    LaunchedEffect(thumbnailRefreshRequests) {
+        thumbnailRefreshRequests.collectLatest { tabId ->
+            delay(TAB_THUMBNAIL_PAGE_STOP_REFRESH_DELAY_MS)
+            if (currentSelectedTabId.value != tabId) return@collectLatest
+            val targetTab = tabs.firstOrNull { it.id == tabId } ?: return@collectLatest
+            if (!targetTab.hasController) return@collectLatest
+            refreshTabThumbnail(
+                tab = targetTab,
+                shouldApply = { currentSelectedTabId.value == targetTab.id }
+            )
+        }
+    }
+
+    LaunchedEffect(tabs.map { it.id to it.controller }) {
+        val watchedTabs = tabs.mapNotNull { watchedTab ->
+            watchedTab.controller?.let { watchedTab to it }
+        }
         coroutineScope {
-            watchedTabs.forEach { watchedTab ->
+            watchedTabs.forEach { (watchedTab, watchedController) ->
                 launch {
-                    watchedTab.controller.state
+                    watchedController.state
                         .map { it.url to it.title }
                         .distinctUntilChanged()
                         .collect { (url, title) ->
@@ -589,6 +662,7 @@ private fun BrowserScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                tabs.forEach { tab -> tab.flushSessionState() }
                 persistBrowserTabsForLifecycle()
             }
         }
@@ -787,7 +861,7 @@ private fun BrowserScreen(
     DisposableEffect(Unit) {
         onDispose {
             persistBrowserTabs()
-            tabs.forEach { it.controller.close(closeActivePlayback = false) }
+            tabs.forEach { it.close(closeActivePlayback = false) }
         }
     }
 
@@ -962,7 +1036,9 @@ private fun BrowserScreen(
                     onClose = { id ->
                         val closing = tabs.firstOrNull { it.id == id } ?: return@TabTray
                         val oldIndex = tabs.indexOf(closing)
-                        closing.controller.close()
+                        closing.close()
+                        profileStore.deleteTabSessionState(closing.id)
+                        profileStore.deleteTabThumbnail(closing.id)
                         tabs.remove(closing)
                         if (tabs.isEmpty()) {
                             val replacement = createBrowserTab(GeckoSessionController.HOME_URL)
@@ -1018,8 +1094,7 @@ private fun BrowserScreen(
                         onForward = controller::goForward,
                         onReload = controller::reload,
                         onShowTabs = {
-                            controller.capturePixels { bitmap ->
-                                bitmap?.let { tab.thumbnail = it }
+                            refreshTabThumbnail(tab) {
                                 showPanel(BrowserPanel.Tabs)
                             }
                         },

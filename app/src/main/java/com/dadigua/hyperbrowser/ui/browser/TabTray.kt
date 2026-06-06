@@ -81,7 +81,7 @@ internal fun TabTray(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(tabs, key = { it.id }) { tab ->
-                        val pageState by tab.controller.state.collectAsState()
+                        val pageState = tabPageState(tab)
                         ChromeTabListRow(
                             tab = tab,
                             pageState = pageState,
@@ -102,7 +102,7 @@ internal fun TabTray(
                     horizontalArrangement = Arrangement.spacedBy(18.dp)
                 ) {
                     items(tabs, key = { it.id }) { tab ->
-                        val pageState by tab.controller.state.collectAsState()
+                        val pageState = tabPageState(tab)
                         ChromeTabCard(
                             tab = tab,
                             pageState = pageState,
@@ -119,6 +119,16 @@ internal fun TabTray(
             }
         }
     }
+}
+
+@Composable
+private fun tabPageState(tab: BrowserTabRuntime): GeckoPageState {
+    val controller = tab.controller
+    if (controller != null) {
+        val pageState by controller.state.collectAsState()
+        return pageState
+    }
+    return tab.snapshotPageState()
 }
 
 private enum class TabTrayMode {
@@ -205,6 +215,7 @@ private fun ChromeTabCard(
 ) {
     val displayTitle = pageState.title.ifBlank { tab.restoredTitle.orEmpty() }
     val displayUrl = pageState.url.ifBlank { tab.input }
+    val showRestorableLabel = shouldShowRestorableLabel(tab.hasController, tab.hasEngineState)
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(28.dp),
@@ -283,6 +294,14 @@ private fun ChromeTabCard(
                         )
                     }
                 }
+                if (showRestorableLabel) {
+                    RestorableLabel(
+                        selected = selected,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(10.dp)
+                    )
+                }
             }
         }
     }
@@ -299,6 +318,7 @@ private fun ChromeTabListRow(
 ) {
     val displayTitle = pageState.title.ifBlank { tab.restoredTitle.orEmpty() }
     val displayUrl = pageState.url.ifBlank { tab.input }
+    val showRestorableLabel = shouldShowRestorableLabel(tab.hasController, tab.hasEngineState)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -326,17 +346,45 @@ private fun ChromeTabListRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
-            Text(
-                displayUrl,
-                color = if (selected) Color(0xFFE8EAED) else Color(0xFF6F737B),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    displayUrl,
+                    modifier = Modifier.weight(1f),
+                    color = if (selected) Color(0xFFE8EAED) else Color(0xFF6F737B),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (showRestorableLabel) {
+                    RestorableLabel(selected = selected)
+                }
+            }
         }
         IconButton(onClick = onClose, modifier = Modifier.size(44.dp)) {
             Text("×", fontSize = 28.sp, lineHeight = 28.sp, color = if (selected) Color.White else Color(0xFF202124))
         }
     }
+}
+
+@Composable
+private fun RestorableLabel(
+    selected: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Text(
+        text = "可恢复",
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (selected) Color.White.copy(alpha = 0.92f) else Color(0xFFE8F0FE))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        color = if (selected) Color(0xFF5669A6) else Color(0xFF4F5D7A),
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1
+    )
 }
 
 @Composable
