@@ -548,13 +548,10 @@ private fun BrowserScreen(
             return@LaunchedEffect
         }
 
-        message = "正在下载 ${update.versionName}..."
+        message = "已开始下载 ${update.versionName}。"
         runCatching {
             updateManager.downloadAndCreateInstallIntent(update) { state ->
-                scope.launch {
-                    updateDownloadState = state
-                    message = state.message
-                }
+                updateDownloadState = state
             }
         }
             .onSuccess { intent ->

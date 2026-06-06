@@ -139,24 +139,25 @@ class AppUpdateManager(context: Context, private val settingsStore: UpdateSettin
 
     suspend fun downloadAndCreateInstallIntent(
         update: AvailableUpdate,
-        onState: (UpdateDownloadState) -> Unit
+        onState: suspend (UpdateDownloadState) -> Unit
     ): Intent = withContext(Dispatchers.IO) {
         ensureNotificationChannel()
-        onState(update.state(UpdateDownloadState.STATUS_DOWNLOADING, message = "正在下载更新..."))
+        emitState(update.state(UpdateDownloadState.STATUS_DOWNLOADING, message = "正在下载更新..."), onState)
         notifyProgress(update, 0L, update.asset.sizeBytes, completed = false)
         val file = downloadApk(update) { bytes, total ->
             val normalizedTotal = total.takeIf { it > 0L } ?: update.asset.sizeBytes
-            onState(
+            emitState(
                 update.state(
                     status = UpdateDownloadState.STATUS_DOWNLOADING,
                     bytesDownloaded = bytes,
                     totalBytes = normalizedTotal,
                     message = progressMessage(bytes, normalizedTotal)
-                )
+                ),
+                onState
             )
             notifyProgress(update, bytes, normalizedTotal, completed = false)
         }
-        onState(update.state(UpdateDownloadState.STATUS_VERIFYING, totalBytes = file.length(), message = "正在校验安装包..."))
+        emitState(update.state(UpdateDownloadState.STATUS_VERIFYING, totalBytes = file.length(), message = "正在校验安装包..."), onState)
         notifyProgress(update, file.length(), file.length(), completed = true)
         val uri = FileProvider.getUriForFile(appContext, "${appContext.packageName}.files", file)
         Intent(Intent.ACTION_VIEW)
@@ -217,7 +218,7 @@ class AppUpdateManager(context: Context, private val settingsStore: UpdateSettin
         )
     }
 
-    private fun downloadApk(update: AvailableUpdate, onProgress: (Long, Long) -> Unit): File {
+    private suspend fun downloadApk(update: AvailableUpdate, onProgress: suspend (Long, Long) -> Unit): File {
         val directory = File(
             appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
             "updates"
@@ -314,6 +315,15 @@ class AppUpdateManager(context: Context, private val settingsStore: UpdateSettin
         if (total <= 0L) return "正在下载更新..."
         val percent = ((bytes * 100) / total).coerceIn(0, 100)
         return "正在下载更新... $percent%"
+    }
+
+    private suspend fun emitState(
+        state: UpdateDownloadState,
+        onState: suspend (UpdateDownloadState) -> Unit
+    ) {
+        withContext(Dispatchers.Main.immediate) {
+            onState(state)
+        }
     }
 
     private fun sha256(file: File): String {

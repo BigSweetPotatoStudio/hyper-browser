@@ -48,7 +48,9 @@ function SettingsPage() {
       window.hyperBrowser.requestUpdateDownloadState()
         .then((state) => {
           setUpdateDownload(state);
-          if (state.message) setUpdateMessage(state.message);
+          if (state.status === "permissionRequired" || state.status === "ready" || state.status === "error") {
+            setUpdateMessage(state.message || updateDownloadMessage(state));
+          }
         })
         .catch((error) => setUpdateMessage(error instanceof Error ? error.message : "更新状态不可用。"));
     }, 500);
@@ -117,7 +119,7 @@ function SettingsPage() {
   function installUpdate() {
     const update = updateResult?.update;
     if (!update) return;
-    setUpdateMessage("正在准备下载...");
+    setUpdateMessage("已开始下载更新。");
     setUpdateDownload({
       status: "preparing",
       versionCode: update.versionCode,
@@ -129,7 +131,9 @@ function SettingsPage() {
     window.hyperBrowser.installUpdate(update.versionCode)
       .then((state) => {
         setUpdateDownload(state);
-        setUpdateMessage(state.message || "已开始下载，完成后会打开安装器。");
+        if (state.status === "permissionRequired" || state.status === "ready" || state.status === "error") {
+          setUpdateMessage(state.message || updateDownloadMessage(state));
+        }
       })
       .catch((error) => {
         setUpdateDownload(null);
@@ -191,6 +195,18 @@ function SettingsPage() {
     }
     if (updateDownload?.status === "permissionRequired") return "授权后重试";
     return updateResult?.status === "skipped" ? "仍然更新" : "立即更新";
+  }
+
+  function updateDownloadMessage(state: UpdateDownloadState) {
+    switch (state.status) {
+      case "preparing": return "正在准备更新...";
+      case "permissionRequired": return "请先允许 Hyper Browser 安装未知应用。";
+      case "downloading": return `正在下载更新... ${updateProgressPercent(state)}%`;
+      case "verifying": return "正在校验安装包...";
+      case "ready": return "下载完成，打开安装器。";
+      case "error": return state.message || "更新下载失败。";
+      default: return "";
+    }
   }
 
   return (
@@ -359,7 +375,7 @@ function SettingsPage() {
                   />
                 </div>
                 <div className="settings-update-progress-text">
-                  <span>{updateDownload.message || (updateResult ? updateStatusLabel(updateResult) : "正在处理更新...")}</span>
+                  <span>{updateDownloadMessage(updateDownload) || (updateResult ? updateStatusLabel(updateResult) : "正在处理更新...")}</span>
                   <span>
                     {formatBytes(updateDownload.bytesDownloaded)}
                     {updateDownload.totalBytes > 0 ? ` / ${formatBytes(updateDownload.totalBytes)}` : ""}
@@ -367,7 +383,9 @@ function SettingsPage() {
                 </div>
               </div>
             )}
-            {updateMessage && <p className="settings-message">{updateMessage}</p>}
+            {updateMessage && (!updateDownload || !isActiveDownloadState(updateDownload.status)) && (
+              <p className="settings-message">{updateMessage}</p>
+            )}
           </div>
         )}
         {loadError && <p className="settings-message">{loadError}</p>}
