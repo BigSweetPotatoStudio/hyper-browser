@@ -9,15 +9,13 @@ import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.RectF
 import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.util.Base64
 import com.dadigua.hyperbrowser.R
+import com.dadigua.hyperbrowser.browser.BrowserIconComposer
 import com.dadigua.hyperbrowser.browser.FaviconRepository
 import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.ui.webapp.WebAppActivity
@@ -180,31 +178,7 @@ class WebAppRepository(
         val base = iconPathFor(webApp)
             ?.let { BitmapFactory.decodeFile(it) }
             ?: return null
-        val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(output)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        val radius = size * 0.22f
-        val bounds = RectF(0f, 0f, size.toFloat(), size.toFloat())
-        canvas.drawBitmap(base, null, bounds, paint)
-
-        val badgeSize = (size * 0.34f).toInt()
-        val badgeMargin = (size * 0.04f).toInt()
-        val badgeLeft = size - badgeSize - badgeMargin
-        val badgeTop = size - badgeSize - badgeMargin
-        val badgeRect = RectF(
-            badgeLeft.toFloat(),
-            badgeTop.toFloat(),
-            (badgeLeft + badgeSize).toFloat(),
-            (badgeTop + badgeSize).toFloat()
-        )
-        val badgeBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-        canvas.drawRoundRect(badgeRect, badgeSize * 0.24f, badgeSize * 0.24f, badgeBg)
-        val badge = BitmapFactory.decodeResource(context.resources, R.drawable.ic_launcher_foreground)
-            ?: BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher)
-        if (badge != null && !badge.isRecycled) {
-            canvas.drawBitmap(badge, null, badgeRect, paint)
-        }
-        return output
+        return BrowserIconComposer.badgedSiteIcon(context, base, size)
     }
 
     private fun scopeFor(url: String): String {

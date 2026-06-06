@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.mozilla.geckoview.AllowOrDeny
@@ -18,6 +19,8 @@ import java.net.URLEncoder
 import java.io.InputStream
 import com.dadigua.hyperbrowser.browser.DownloadHandler
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
+import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
+import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
 
 data class GeckoPageState(
     val title: String = "",
@@ -49,7 +52,8 @@ class GeckoSessionController(
     private val onDownload: (GeckoDownloadRequest) -> Unit = {},
     private val onSessionStateChange: (GeckoSession.SessionState) -> Unit = {},
     private val onPageStop: (Boolean) -> Unit = {},
-    private val mediaNotificationIntent: Intent? = null
+    private val mediaNotificationIntent: Intent? = null,
+    private val mediaOwnerInfo: () -> BrowserMediaOwnerInfo? = { null }
 ) {
     var session: GeckoSession = existingSession ?: GeckoSession()
         private set
@@ -219,10 +223,12 @@ class GeckoSessionController(
                 get() = BrowserMediaNotificationController.get(appContext)
 
             override fun onActivated(session: GeckoSession, mediaSession: MediaSession) {
-                mediaNotifications.onActivated(session, mediaSession, mediaNotificationIntent)
+                logMediaDelegateEvent("activated", session, mediaSession)
+                mediaNotifications.onActivated(session, mediaSession, currentMediaOwnerInfo())
             }
 
             override fun onDeactivated(session: GeckoSession, mediaSession: MediaSession) {
+                logMediaDelegateEvent("deactivated", session, mediaSession)
                 mediaNotifications.onDeactivated(session, mediaSession)
             }
 
@@ -231,22 +237,32 @@ class GeckoSessionController(
                 mediaSession: MediaSession,
                 meta: MediaSession.Metadata
             ) {
+                logMediaDelegateEvent(
+                    event = "metadata",
+                    session = session,
+                    mediaSession = mediaSession,
+                    detail = "title=${meta.title.orEmpty()} artist=${meta.artist.orEmpty()}"
+                )
                 mediaNotifications.onMetadata(session, mediaSession, meta)
             }
 
             override fun onFeatures(session: GeckoSession, mediaSession: MediaSession, features: Long) {
+                logMediaDelegateEvent("features", session, mediaSession, "features=$features")
                 mediaNotifications.onFeatures(session, mediaSession, features)
             }
 
             override fun onPlay(session: GeckoSession, mediaSession: MediaSession) {
+                logMediaDelegateEvent("play", session, mediaSession)
                 mediaNotifications.onPlay(session, mediaSession)
             }
 
             override fun onPause(session: GeckoSession, mediaSession: MediaSession) {
+                logMediaDelegateEvent("pause", session, mediaSession)
                 mediaNotifications.onPause(session, mediaSession)
             }
 
             override fun onStop(session: GeckoSession, mediaSession: MediaSession) {
+                logMediaDelegateEvent("stop", session, mediaSession)
                 mediaNotifications.onStop(session, mediaSession)
             }
 
@@ -255,6 +271,12 @@ class GeckoSessionController(
                 mediaSession: MediaSession,
                 state: MediaSession.PositionState
             ) {
+                logMediaDelegateEvent(
+                    event = "position",
+                    session = session,
+                    mediaSession = mediaSession,
+                    detail = "position=${state.position} duration=${state.duration} rate=${state.playbackRate}"
+                )
                 mediaNotifications.onPositionState(session, mediaSession, state)
             }
 
@@ -264,6 +286,12 @@ class GeckoSessionController(
                 enabled: Boolean,
                 meta: MediaSession.ElementMetadata?
             ) {
+                logMediaDelegateEvent(
+                    event = "fullscreen",
+                    session = session,
+                    mediaSession = mediaSession,
+                    detail = "enabled=$enabled videoTracks=${meta?.videoTrackCount ?: 0}"
+                )
                 mediaNotifications.onFullscreen(session, mediaSession, enabled, meta)
             }
         })
@@ -429,7 +457,7 @@ class GeckoSessionController(
             "media.keepAlive.start" -> {
                 BrowserMediaNotificationController.get(appContext).startPageKeepAlive(
                     owner = session,
-                    launchIntent = mediaNotificationIntent,
+                    ownerInfo = currentMediaOwnerInfo(),
                     title = payload.optString("title"),
                     url = payload.optString("url"),
                     mediaKind = payload.optString("mediaKind")
@@ -443,6 +471,46 @@ class GeckoSessionController(
         }
         return onHyperBridgeMessage?.invoke(message)
             ?: org.json.JSONObject().put("ok", false).put("error", "No bridge handler for session.")
+    }
+
+    private fun currentMediaOwnerInfo(): BrowserMediaOwnerInfo {
+        val pageState = _state.value
+        val provided = mediaOwnerInfo()
+        val visibleUrl = pageState.url
+            .ifBlank { lastLoadTarget }
+            .ifBlank { currentRawUrl }
+        return BrowserMediaOwnerInfo(
+            id = provided?.id ?: "session-${System.identityHashCode(session)}",
+            kind = provided?.kind ?: BrowserMediaOwnerKind.BrowserTab,
+            displayName = provided?.displayName
+                ?: pageState.title.takeIf { it.isNotBlank() },
+            url = provided?.url
+                ?: visibleUrl.takeIf { it.isNotBlank() },
+            iconPath = provided?.iconPath,
+            launchIntent = provided?.launchIntent ?: mediaNotificationIntent
+        )
+    }
+
+    private fun logMediaDelegateEvent(
+        event: String,
+        session: GeckoSession,
+        mediaSession: MediaSession,
+        detail: String = ""
+    ) {
+        val info = currentMediaOwnerInfo()
+        Log.d(
+            MEDIA_DEBUG_TAG,
+            buildString {
+                append("gecko event=").append(event)
+                append(" session=").append(System.identityHashCode(session))
+                append(" media=").append(System.identityHashCode(mediaSession))
+                append(" ownerId=").append(info.id)
+                append(" kind=").append(info.kind)
+                append(" title=").append(info.displayName.orEmpty())
+                append(" url=").append(info.url.orEmpty())
+                if (detail.isNotBlank()) append(" ").append(detail)
+            }
+        )
     }
 
     private fun resetContentTouchState() {
@@ -523,6 +591,7 @@ class GeckoSessionController(
         private const val BOOKMARKS_ASSET_URL = "resource://android/assets/bookmarks.html"
         private const val HISTORY_ASSET_URL = "resource://android/assets/history.html"
         private const val CONTENT_TOUCH_STATE_TTL_MS = 700L
+        private const val MEDIA_DEBUG_TAG = "HyperMediaDebug"
 
         fun isHomeUrl(url: String): Boolean = url == HOME_URL
         fun isSearchUrl(url: String): Boolean = url == SEARCH_URL

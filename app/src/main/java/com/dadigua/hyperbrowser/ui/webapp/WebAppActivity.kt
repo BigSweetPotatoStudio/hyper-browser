@@ -36,6 +36,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
+import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
+import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
 import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.gecko.GeckoBrowserView
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
@@ -115,7 +117,17 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
         GeckoSessionController(
             context = app,
             initialUrl = current.startUrl,
-            mediaNotificationIntent = WebAppActivity.intent(app, current.id, true)
+            mediaNotificationIntent = WebAppActivity.intent(app, current.id, true),
+            mediaOwnerInfo = {
+                BrowserMediaOwnerInfo(
+                    id = "webapp-${current.id}",
+                    kind = BrowserMediaOwnerKind.WebApp,
+                    displayName = current.name,
+                    url = current.startUrl,
+                    iconPath = current.iconPath,
+                    launchIntent = WebAppActivity.intent(app, current.id, true)
+                )
+            }
         )
     }
     val pageState by controller.state.collectAsState()

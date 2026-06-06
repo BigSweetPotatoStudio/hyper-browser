@@ -7,6 +7,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.extensions.ExtensionNewTabRequest
+import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
+import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
 import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
@@ -165,7 +167,14 @@ internal class BrowserTabRuntime private constructor(
                         }
                     },
                     onPageStop = onPageStop,
-                    mediaNotificationIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
+                    mediaNotificationIntent = app.packageManager.getLaunchIntentForPackage(app.packageName),
+                    mediaOwnerInfo = {
+                        BrowserMediaOwnerInfo(
+                            id = id,
+                            kind = BrowserMediaOwnerKind.BrowserTab,
+                            launchIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
+                        )
+                    }
                 )
             }
             return BrowserTabRuntime(
@@ -205,7 +214,16 @@ internal class BrowserTabRuntime private constructor(
                         onHyperBridgeMessage = onHyperBridgeMessage,
                         onLinkContextMenu = onLinkContextMenu,
                         onDownload = onDownload,
-                        mediaNotificationIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
+                        mediaNotificationIntent = app.packageManager.getLaunchIntentForPackage(app.packageName),
+                        mediaOwnerInfo = {
+                            BrowserMediaOwnerInfo(
+                                id = request.url,
+                                kind = BrowserMediaOwnerKind.ExtensionTab,
+                                displayName = request.title,
+                                url = request.url,
+                                launchIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
+                            )
+                        }
                     )
                 },
                 initialController = GeckoSessionController(
@@ -216,7 +234,16 @@ internal class BrowserTabRuntime private constructor(
                     onHyperBridgeMessage = onHyperBridgeMessage,
                     onLinkContextMenu = onLinkContextMenu,
                     onDownload = onDownload,
-                    mediaNotificationIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
+                    mediaNotificationIntent = app.packageManager.getLaunchIntentForPackage(app.packageName),
+                    mediaOwnerInfo = {
+                        BrowserMediaOwnerInfo(
+                            id = request.url,
+                            kind = BrowserMediaOwnerKind.ExtensionTab,
+                            displayName = request.title,
+                            url = request.url,
+                            launchIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
+                        )
+                    }
                 ),
                 input = request.url,
                 restoredTitle = request.title,
