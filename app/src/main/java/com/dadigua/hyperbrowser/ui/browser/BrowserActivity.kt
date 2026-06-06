@@ -5,9 +5,12 @@ import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
-import android.os.Build
 import android.graphics.Bitmap
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Rational
 import android.webkit.URLUtil
 import android.widget.Toast
@@ -399,6 +402,38 @@ private fun BrowserScreen(
         return updateDownloadState
     }
 
+    fun isIgnoringBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        val powerManager = context.getSystemService(PowerManager::class.java) ?: return false
+        return powerManager.isIgnoringBatteryOptimizations(context.packageName)
+    }
+
+    fun openBatteryOptimizationSettings(): Boolean {
+        val packageUri = Uri.parse("package:${context.packageName}")
+        val intents = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !isIgnoringBatteryOptimizations()) {
+                add(
+                    Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                        .setData(packageUri)
+                )
+            }
+            add(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(packageUri)
+            )
+        }
+        for (intent in intents) {
+            val launchIntent = intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (launchIntent.resolveActivity(context.packageManager) == null) continue
+            runCatching {
+                context.startActivity(launchIntent)
+            }.onSuccess {
+                return true
+            }
+        }
+        return false
+    }
+
     fun handleHyperBridgeMessage(message: JSONObject): JSONObject {
         val payload = message.optJSONObject("payload") ?: JSONObject()
         return when (message.optString("type")) {
@@ -428,6 +463,14 @@ private fun BrowserScreen(
                 profileStore.updateToolbarPosition(payload.optString("toolbarPosition"))
                 okData(profileStore.observeSettings().value.toJson())
             }
+            "settings.batteryOptimizationState" -> okData(
+                JSONObject().put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
+            )
+            "settings.openBatteryOptimization" -> okData(
+                JSONObject()
+                    .put("opened", openBatteryOptimizationSettings())
+                    .put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
+            )
             "update.check" -> {
                 val result = runBlocking {
                     updateManager.check(ignoreSkipped = payload.optString("ignoreSkipped") == "true")

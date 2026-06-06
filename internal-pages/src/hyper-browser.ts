@@ -77,6 +77,11 @@ type UpdateDownloadState = {
   message?: string;
 };
 
+type BatteryOptimizationState = {
+  ignoringBatteryOptimizations: boolean;
+  opened?: boolean;
+};
+
 declare global {
   const browser: {
     runtime?: {
@@ -102,6 +107,8 @@ type HyperBrowserApi = {
   requestSettingsData(): Promise<BrowserSettings>;
   updateSearchEngine(searchEngineId: BrowserSettings["searchEngineId"], customSearchUrl?: string): Promise<BrowserSettings>;
   updateToolbarPosition(toolbarPosition: BrowserSettings["toolbarPosition"]): Promise<BrowserSettings>;
+  requestBatteryOptimizationState(): Promise<BatteryOptimizationState>;
+  openBatteryOptimizationSettings(): Promise<BatteryOptimizationState>;
   checkUpdate(ignoreSkipped?: boolean): Promise<UpdateCheckResult>;
   installUpdate(versionCode: number): Promise<UpdateDownloadState>;
   requestUpdateDownloadState(): Promise<UpdateDownloadState>;
@@ -204,6 +211,12 @@ window.hyperBrowser = {
     return send("settings.toolbarPosition.update", { toolbarPosition })
       .then((response) => response.data as BrowserSettings);
   },
+  requestBatteryOptimizationState() {
+    return requestObject<BatteryOptimizationState>("settings.batteryOptimizationState");
+  },
+  openBatteryOptimizationSettings() {
+    return requestObject<BatteryOptimizationState>("settings.openBatteryOptimization");
+  },
   checkUpdate(ignoreSkipped = false) {
     return send("update.check", { ignoreSkipped: ignoreSkipped ? "true" : "false" })
       .then((response) => response.data as UpdateCheckResult);
@@ -259,4 +272,4 @@ window.hyperBrowser = {
   }
 };
 
-export type { AvailableUpdate, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem };
+export type { AvailableUpdate, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem };

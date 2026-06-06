@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
-import type { BrowserSettings, UpdateCheckResult, UpdateDownloadState } from "../hyper-browser";
+import type { BatteryOptimizationState, BrowserSettings, UpdateCheckResult, UpdateDownloadState } from "../hyper-browser";
 
 function SettingsPage() {
   const [query, setQuery] = useState("");
@@ -12,10 +12,14 @@ function SettingsPage() {
   const [loadError, setLoadError] = useState("");
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
   const [updateDownload, setUpdateDownload] = useState<UpdateDownloadState | null>(null);
+  const [batteryOptimization, setBatteryOptimization] = useState<BatteryOptimizationState | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
+  const [batteryMessage, setBatteryMessage] = useState("");
   const [updateMessage, setUpdateMessage] = useState("");
   const [searchEngineExpanded, setSearchEngineExpanded] = useState(false);
   const [toolbarExpanded, setToolbarExpanded] = useState(false);
+  const [backgroundRuntimeExpanded, setBackgroundRuntimeExpanded] = useState(false);
+  const [updateSettingsExpanded, setUpdateSettingsExpanded] = useState(false);
   const customInputRef = useRef<HTMLInputElement | null>(null);
   const showSearchEngine = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -26,6 +30,11 @@ function SettingsPage() {
     const needle = query.trim().toLowerCase();
     if (!needle) return true;
     return "地址栏 工具栏 位置 顶部 底部".includes(needle);
+  }, [query]);
+  const showBackgroundRuntime = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    return "后台运行 电池 省电 锁屏 下载 音乐 视频 播放 battery background".includes(needle);
   }, [query]);
   const showUpdateSettings = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -40,6 +49,9 @@ function SettingsPage() {
         setCustomDraft(value.customSearchUrl);
       })
       .catch(() => setLoadError("设置暂时不可用。"));
+    window.hyperBrowser.requestBatteryOptimizationState()
+      .then((value) => setBatteryOptimization(value))
+      .catch(() => setBatteryMessage("电池设置状态暂时不可用。"));
   }, []);
 
   useEffect(() => {
@@ -98,6 +110,22 @@ function SettingsPage() {
     window.hyperBrowser.updateToolbarPosition(toolbarPosition)
       .then((value) => setSettings(value))
       .catch(() => setLoadError("设置暂时不可用。"));
+  }
+
+  function openBatteryOptimizationSettings() {
+    setBatteryMessage("");
+    window.hyperBrowser.openBatteryOptimizationSettings()
+      .then((state) => {
+        setBatteryOptimization(state);
+        if (!state.opened) {
+          setBatteryMessage("无法自动打开系统设置，请在系统设置中手动允许后台运行。");
+        }
+      })
+      .catch((error) => setBatteryMessage(error instanceof Error ? error.message : "无法打开电池设置。"));
+  }
+
+  function batteryOptimizationLabel() {
+    return batteryOptimization?.ignoringBatteryOptimizations ? "已允许" : "受系统省电影响";
   }
 
   function toolbarPositionLabel(toolbarPosition?: BrowserSettings["toolbarPosition"]) {
@@ -296,7 +324,7 @@ function SettingsPage() {
               </div>
             )}
           </div>
-        ) : !showToolbarPosition && !showUpdateSettings ? (
+        ) : !showToolbarPosition && !showBackgroundRuntime && !showUpdateSettings ? (
           <div className="settings-empty">没有匹配的设置。</div>
         ) : null}
         {showToolbarPosition && (
@@ -332,71 +360,106 @@ function SettingsPage() {
             )}
           </div>
         )}
+        {showBackgroundRuntime && (
+          <div className="settings-card settings-card-spaced">
+            <button
+              className="settings-row settings-row-button"
+              type="button"
+              aria-expanded={backgroundRuntimeExpanded}
+              onClick={() => setBackgroundRuntimeExpanded((expanded) => !expanded)}
+            >
+              <span className="settings-row-title">后台运行</span>
+              <span className="settings-row-value">{batteryOptimizationLabel()}</span>
+            </button>
+            {backgroundRuntimeExpanded && (
+              <>
+                <p className="settings-message">
+                  如果锁屏后下载、音乐播放或视频播放被系统中断，可将 Hyper Browser 设为电池无限制或允许后台运行。
+                </p>
+                <div className="settings-actions">
+                  <button className="settings-action" type="button" onClick={openBatteryOptimizationSettings}>
+                    打开电池设置
+                  </button>
+                </div>
+                {batteryMessage && <p className="settings-message">{batteryMessage}</p>}
+              </>
+            )}
+          </div>
+        )}
         {showUpdateSettings && (
           <div className="settings-card settings-card-spaced">
-            <div className="settings-row">
+            <button
+              className="settings-row settings-row-button"
+              type="button"
+              aria-expanded={updateSettingsExpanded}
+              onClick={() => setUpdateSettingsExpanded((expanded) => !expanded)}
+            >
               <span className="settings-row-title">应用更新</span>
               <span className="settings-row-value">
                 {updateResult ? `${updateResult.currentVersionName} · ${updateStatusLabel(updateResult)}` : "GitHub Release"}
               </span>
-            </div>
-            {updateResult?.update && (
-              <div className="settings-options">
-                <div className="settings-option">
-                  <span>{updateResult.update.versionName}</span>
-                  <span>
-                    {updateResult.update.asset.abi}
-                    {formatBytes(updateResult.update.asset.sizeBytes) ? ` · ${formatBytes(updateResult.update.asset.sizeBytes)}` : ""}
-                  </span>
-                </div>
-                {updateResult.update.notes && (
-                  <p className="settings-message">{updateResult.update.notes}</p>
+            </button>
+            {updateSettingsExpanded && (
+              <>
+                {updateResult?.update && (
+                  <div className="settings-options">
+                    <div className="settings-option">
+                      <span>{updateResult.update.versionName}</span>
+                      <span>
+                        {updateResult.update.asset.abi}
+                        {formatBytes(updateResult.update.asset.sizeBytes) ? ` · ${formatBytes(updateResult.update.asset.sizeBytes)}` : ""}
+                      </span>
+                    </div>
+                    {updateResult.update.notes && (
+                      <p className="settings-message">{updateResult.update.notes}</p>
+                    )}
+                  </div>
                 )}
-              </div>
-            )}
-            <div className="settings-actions">
-              <button className="settings-action" type="button" disabled={updateChecking} onClick={() => checkUpdate(false)}>
-                {updateChecking ? "检查中..." : "检查更新"}
-              </button>
-              {updateResult?.status === "skipped" && (
-                <button className="settings-action" type="button" onClick={() => checkUpdate(true)}>仍然查看</button>
-              )}
-              {updateResult?.update && (
-                <button
-                  className="settings-action primary"
-                  type="button"
-                  disabled={!!updateDownload && isActiveDownloadState(updateDownload.status)}
-                  onClick={installUpdate}
-                >
-                  {updateActionLabel()}
-                </button>
-              )}
-              {updateResult?.update && updateResult.status !== "skipped" && (
-                <button className="settings-action" type="button" onClick={skipUpdate}>跳过此版本</button>
-              )}
-              {updateResult?.skippedVersionCode > 0 && (
-                <button className="settings-action" type="button" onClick={clearSkippedUpdate}>取消跳过</button>
-              )}
-            </div>
-            {updateDownload && updateDownload.status !== "idle" && (
-              <div className="settings-update-progress">
-                <div className="settings-update-progress-track">
-                  <div
-                    className="settings-update-progress-fill"
-                    style={{ width: `${updateProgressPercent(updateDownload)}%` }}
-                  />
+                <div className="settings-actions">
+                  <button className="settings-action" type="button" disabled={updateChecking} onClick={() => checkUpdate(false)}>
+                    {updateChecking ? "检查中..." : "检查更新"}
+                  </button>
+                  {updateResult?.status === "skipped" && (
+                    <button className="settings-action" type="button" onClick={() => checkUpdate(true)}>仍然查看</button>
+                  )}
+                  {updateResult?.update && (
+                    <button
+                      className="settings-action primary"
+                      type="button"
+                      disabled={!!updateDownload && isActiveDownloadState(updateDownload.status)}
+                      onClick={installUpdate}
+                    >
+                      {updateActionLabel()}
+                    </button>
+                  )}
+                  {updateResult?.update && updateResult.status !== "skipped" && (
+                    <button className="settings-action" type="button" onClick={skipUpdate}>跳过此版本</button>
+                  )}
+                  {updateResult?.skippedVersionCode > 0 && (
+                    <button className="settings-action" type="button" onClick={clearSkippedUpdate}>取消跳过</button>
+                  )}
                 </div>
-                <div className="settings-update-progress-text">
-                  <span>{updateDownloadMessage(updateDownload) || (updateResult ? updateStatusLabel(updateResult) : "正在处理更新...")}</span>
-                  <span>
-                    {formatBytes(updateDownload.bytesDownloaded)}
-                    {updateDownload.totalBytes > 0 ? ` / ${formatBytes(updateDownload.totalBytes)}` : ""}
-                  </span>
-                </div>
-              </div>
-            )}
-            {updateMessage && (!updateDownload || !isActiveDownloadState(updateDownload.status)) && (
-              <p className="settings-message">{updateMessage}</p>
+                {updateDownload && updateDownload.status !== "idle" && (
+                  <div className="settings-update-progress">
+                    <div className="settings-update-progress-track">
+                      <div
+                        className="settings-update-progress-fill"
+                        style={{ width: `${updateProgressPercent(updateDownload)}%` }}
+                      />
+                    </div>
+                    <div className="settings-update-progress-text">
+                      <span>{updateDownloadMessage(updateDownload) || (updateResult ? updateStatusLabel(updateResult) : "正在处理更新...")}</span>
+                      <span>
+                        {formatBytes(updateDownload.bytesDownloaded)}
+                        {updateDownload.totalBytes > 0 ? ` / ${formatBytes(updateDownload.totalBytes)}` : ""}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {updateMessage && (!updateDownload || !isActiveDownloadState(updateDownload.status)) && (
+                  <p className="settings-message">{updateMessage}</p>
+                )}
+              </>
             )}
           </div>
         )}

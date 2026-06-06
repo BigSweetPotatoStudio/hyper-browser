@@ -963,6 +963,14 @@ a {
   padding: 14px 18px 0;
 }
 
+.settings-card > .settings-actions:last-child {
+  padding-bottom: 14px;
+}
+
+.settings-card > .settings-message:last-child {
+  margin-bottom: 14px;
+}
+
 .settings-action {
   min-height: 38px;
   border: 1px solid #cfd4dc;
@@ -988,6 +996,10 @@ a {
   display: grid;
   gap: 8px;
   padding: 12px 18px 0;
+}
+
+.settings-card > .settings-update-progress:last-child {
+  padding-bottom: 14px;
 }
 
 .settings-update-progress-track {
