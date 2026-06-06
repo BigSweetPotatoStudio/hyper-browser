@@ -58,11 +58,20 @@ object HyperBridge {
                             }
                             val request = message as? JSONObject
                                 ?: return GeckoResult.fromValue(error("Invalid bridge payload.").toString())
+                            val type = request.optString("type")
                             if (!isTrustedSender(sender, request)) {
+                                Log.w(TAG, "Rejected bridge message type=$type sender=${sender.url}")
                                 return GeckoResult.fromValue(error("Rejected bridge message.").toString())
                             }
-                            val handler = handlers[sender.session] ?: fallbackHandler
-                                ?: return GeckoResult.fromValue(error("No bridge handler for session.").toString())
+                            val handler = handlers[sender.session] ?: fallbackHandler.also {
+                                if (it != null) {
+                                    Log.w(TAG, "Using fallback bridge handler type=$type sender=${sender.url}")
+                                }
+                            }
+                            if (handler == null) {
+                                Log.w(TAG, "No bridge handler type=$type sender=${sender.url}")
+                                return GeckoResult.fromValue(error("No bridge handler for session.").toString())
+                            }
                             return GeckoResult.fromValue(handler(request).toString())
                         }
                     },

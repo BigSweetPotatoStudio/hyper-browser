@@ -719,7 +719,16 @@ private fun BrowserScreen(
 
     LaunchedEffect(extensionNewTabRequest) {
         extensionNewTabRequest?.let { request ->
-            val newTab = BrowserTabRuntime.fromExtensionRequest(app, request)
+            val newTab = BrowserTabRuntime.fromExtensionRequest(
+                app = app,
+                request = request,
+                onHyperRoute = { pendingHyperRoute = it },
+                onHyperBridgeMessage = ::handleHyperBridgeMessage,
+                onLinkContextMenu = { url, label ->
+                    linkContextMenu = LinkContextMenuState(url = url, label = label)
+                },
+                onDownload = ::saveGeckoDownload
+            )
             tabs.add(newTab)
             selectedTabId = newTab.id
             showTabs = false
@@ -1266,13 +1275,24 @@ private class BrowserTabRuntime private constructor(
                 input = url
             )
 
-        fun fromExtensionRequest(app: HyperBrowserApp, request: ExtensionNewTabRequest): BrowserTabRuntime =
+        fun fromExtensionRequest(
+            app: HyperBrowserApp,
+            request: ExtensionNewTabRequest,
+            onHyperRoute: (HyperRoute) -> Unit = {},
+            onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
+            onLinkContextMenu: (String, String?) -> Unit = { _, _ -> },
+            onDownload: (GeckoDownloadRequest) -> Unit = {}
+        ): BrowserTabRuntime =
             BrowserTabRuntime(
                 id = UUID.randomUUID().toString(),
                 controller = GeckoSessionController(
                     context = app,
                     initialUrl = request.url,
                     existingSession = request.session,
+                    onHyperRoute = onHyperRoute,
+                    onHyperBridgeMessage = onHyperBridgeMessage,
+                    onLinkContextMenu = onLinkContextMenu,
+                    onDownload = onDownload,
                     mediaNotificationIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
                 ),
                 input = request.url
