@@ -63,6 +63,8 @@ class BrowserMediaNotificationController private constructor(context: Context) {
     private var activeGeckoSession: MediaSession? = null
     private var activeLaunchIntent: Intent? = null
     private var metadata: MediaSession.Metadata? = null
+    private var fallbackTitle: String? = null
+    private var fallbackText: String? = null
     private var features: Long = Feature.NONE
     private var positionState: MediaSession.PositionState? = null
     private var playing: Boolean = false
@@ -80,8 +82,35 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         activeGeckoSession = mediaSession
         activeLaunchIntent = launchIntent
         active = true
+        fallbackTitle = null
+        fallbackText = null
         androidSession.isActive = true
         publishIfNeeded()
+    }
+
+    fun startPageKeepAlive(owner: GeckoSession, launchIntent: Intent?, title: String, url: String, mediaKind: String) {
+        activeOwner = owner
+        activeGeckoSession = null
+        activeLaunchIntent = launchIntent
+        active = true
+        playing = true
+        metadata = null
+        features = Feature.PAUSE or Feature.STOP
+        positionState = null
+        fullscreenVideo = false
+        fallbackTitle = title.ifBlank { "Playing media" }
+        fallbackText = listOfNotNull(
+            mediaKind.ifBlank { null },
+            url.ifBlank { null }
+        ).joinToString(" · ").ifBlank { "Hyper Browser" }
+        androidSession.isActive = true
+        publishIfNeeded(force = true)
+    }
+
+    fun stopPageKeepAlive(owner: GeckoSession) {
+        if (activeOwner == owner && activeGeckoSession == null) {
+            clear()
+        }
     }
 
     fun onDeactivated(owner: GeckoSession, mediaSession: MediaSession) {
@@ -156,6 +185,8 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         activeGeckoSession = null
         activeLaunchIntent = null
         metadata = null
+        fallbackTitle = null
+        fallbackText = null
         features = Feature.NONE
         positionState = null
         fullscreenVideo = false
@@ -219,11 +250,11 @@ class BrowserMediaNotificationController private constructor(context: Context) {
     }
 
     private fun notification(): android.app.Notification {
-        val title = metadata?.title?.ifBlank { null } ?: "Playing media"
+        val title = metadata?.title?.ifBlank { null } ?: fallbackTitle ?: "Playing media"
         val text = listOfNotNull(
             metadata?.artist?.ifBlank { null },
             metadata?.album?.ifBlank { null }
-        ).joinToString(" · ").ifBlank { "Hyper Browser" }
+        ).joinToString(" · ").ifBlank { fallbackText ?: "Hyper Browser" }
         val actions = notificationActions()
         val compactActions = actions.indices.take(3).toList().toIntArray()
 

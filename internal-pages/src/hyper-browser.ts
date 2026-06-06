@@ -44,6 +44,30 @@ type BrowserSettings = {
   toolbarPosition: "top" | "bottom";
 };
 
+type UpdateAsset = {
+  abi: string;
+  url: string;
+  sha256?: string;
+  sizeBytes?: number;
+};
+
+type AvailableUpdate = {
+  versionCode: number;
+  versionName: string;
+  notes?: string;
+  releaseUrl?: string;
+  asset: UpdateAsset;
+};
+
+type UpdateCheckResult = {
+  status: "available" | "skipped" | "upToDate" | "unsupported" | "error";
+  currentVersionCode: number;
+  currentVersionName: string;
+  skippedVersionCode: number;
+  message?: string;
+  update?: AvailableUpdate;
+};
+
 declare global {
   const browser: {
     runtime?: {
@@ -69,6 +93,10 @@ type HyperBrowserApi = {
   requestSettingsData(): Promise<BrowserSettings>;
   updateSearchEngine(searchEngineId: BrowserSettings["searchEngineId"], customSearchUrl?: string): Promise<BrowserSettings>;
   updateToolbarPosition(toolbarPosition: BrowserSettings["toolbarPosition"]): Promise<BrowserSettings>;
+  checkUpdate(ignoreSkipped?: boolean): Promise<UpdateCheckResult>;
+  installUpdate(versionCode: number): Promise<void>;
+  skipUpdate(versionCode: number): Promise<void>;
+  clearSkippedUpdate(): Promise<void>;
   requestBookmarksData(): Promise<BookmarkItem[]>;
   requestHistoryData(): Promise<HistoryItem[]>;
   openBookmark(url: string): void;
@@ -166,6 +194,19 @@ window.hyperBrowser = {
     return send("settings.toolbarPosition.update", { toolbarPosition })
       .then((response) => response.data as BrowserSettings);
   },
+  checkUpdate(ignoreSkipped = false) {
+    return send("update.check", { ignoreSkipped: ignoreSkipped ? "true" : "false" })
+      .then((response) => response.data as UpdateCheckResult);
+  },
+  installUpdate(versionCode) {
+    return send("update.install", { versionCode: String(versionCode) }).then(() => undefined);
+  },
+  skipUpdate(versionCode) {
+    return send("update.skip", { versionCode: String(versionCode) }).then(() => undefined);
+  },
+  clearSkippedUpdate() {
+    return send("update.clearSkip").then(() => undefined);
+  },
   requestBookmarksData() {
     return requestData<BookmarkItem>("data.bookmarks");
   },
@@ -204,4 +245,4 @@ window.hyperBrowser = {
   }
 };
 
-export type { BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, WebAppItem };
+export type { AvailableUpdate, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, WebAppItem };

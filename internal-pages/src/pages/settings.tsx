@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
-import type { BrowserSettings } from "../hyper-browser";
+import type { BrowserSettings, UpdateCheckResult } from "../hyper-browser";
 
 function SettingsPage() {
   const [query, setQuery] = useState("");
@@ -10,6 +10,9 @@ function SettingsPage() {
   const [customDraft, setCustomDraft] = useState("");
   const [customError, setCustomError] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState("");
   const [searchEngineExpanded, setSearchEngineExpanded] = useState(false);
   const [toolbarExpanded, setToolbarExpanded] = useState(false);
   const customInputRef = useRef<HTMLInputElement | null>(null);
@@ -22,6 +25,11 @@ function SettingsPage() {
     const needle = query.trim().toLowerCase();
     if (!needle) return true;
     return "地址栏 工具栏 位置 顶部 底部".includes(needle);
+  }, [query]);
+  const showUpdateSettings = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    return "更新 update 版本 github release apk".includes(needle);
   }, [query]);
 
   useEffect(() => {
@@ -78,6 +86,64 @@ function SettingsPage() {
 
   function toolbarPositionLabel(toolbarPosition?: BrowserSettings["toolbarPosition"]) {
     return toolbarPosition === "bottom" ? "底部" : "顶部";
+  }
+
+  function checkUpdate(ignoreSkipped = false) {
+    setUpdateChecking(true);
+    setUpdateMessage("正在检查更新...");
+    window.hyperBrowser.checkUpdate(ignoreSkipped)
+      .then((result) => {
+        setUpdateResult(result);
+        setUpdateMessage(result.message || updateStatusLabel(result));
+      })
+      .catch((error) => setUpdateMessage(error instanceof Error ? error.message : "检查更新失败。"))
+      .finally(() => setUpdateChecking(false));
+  }
+
+  function installUpdate() {
+    const update = updateResult?.update;
+    if (!update) return;
+    setUpdateMessage("正在准备下载...");
+    window.hyperBrowser.installUpdate(update.versionCode)
+      .then(() => setUpdateMessage("已开始下载，完成后会打开安装器。"))
+      .catch((error) => setUpdateMessage(error instanceof Error ? error.message : "更新失败。"));
+  }
+
+  function skipUpdate() {
+    const update = updateResult?.update;
+    if (!update) return;
+    window.hyperBrowser.skipUpdate(update.versionCode)
+      .then(() => {
+        setUpdateResult({ ...updateResult, status: "skipped", skippedVersionCode: update.versionCode });
+        setUpdateMessage(`已跳过 ${update.versionName}。`);
+      })
+      .catch((error) => setUpdateMessage(error instanceof Error ? error.message : "跳过失败。"));
+  }
+
+  function clearSkippedUpdate() {
+    window.hyperBrowser.clearSkippedUpdate()
+      .then(() => {
+        setUpdateResult((result) => result ? { ...result, skippedVersionCode: 0, status: result.update ? "available" : result.status } : result);
+        setUpdateMessage("已取消跳过版本。");
+      })
+      .catch((error) => setUpdateMessage(error instanceof Error ? error.message : "取消跳过失败。"));
+  }
+
+  function updateStatusLabel(result: UpdateCheckResult) {
+    switch (result.status) {
+      case "available": return "发现新版本。";
+      case "skipped": return "此版本已被跳过。";
+      case "upToDate": return "当前已是最新版本。";
+      case "unsupported": return "当前设备不支持这个版本。";
+      default: return "检查更新失败。";
+    }
+  }
+
+  function formatBytes(value?: number) {
+    if (!value || value <= 0) return "";
+    if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+    if (value >= 1024) return `${(value / 1024).toFixed(0)} KB`;
+    return `${value} B`;
   }
 
   return (
@@ -155,7 +221,7 @@ function SettingsPage() {
               </div>
             )}
           </div>
-        ) : !showToolbarPosition ? (
+        ) : !showToolbarPosition && !showUpdateSettings ? (
           <div className="settings-empty">没有匹配的设置。</div>
         ) : null}
         {showToolbarPosition && (
@@ -189,6 +255,50 @@ function SettingsPage() {
                 </button>
               </div>
             )}
+          </div>
+        )}
+        {showUpdateSettings && (
+          <div className="settings-card settings-card-spaced">
+            <div className="settings-row">
+              <span className="settings-row-title">应用更新</span>
+              <span className="settings-row-value">
+                {updateResult ? `${updateResult.currentVersionName} · ${updateStatusLabel(updateResult)}` : "GitHub Release"}
+              </span>
+            </div>
+            {updateResult?.update && (
+              <div className="settings-options">
+                <div className="settings-option">
+                  <span>{updateResult.update.versionName}</span>
+                  <span>
+                    {updateResult.update.asset.abi}
+                    {formatBytes(updateResult.update.asset.sizeBytes) ? ` · ${formatBytes(updateResult.update.asset.sizeBytes)}` : ""}
+                  </span>
+                </div>
+                {updateResult.update.notes && (
+                  <p className="settings-message">{updateResult.update.notes}</p>
+                )}
+              </div>
+            )}
+            <div className="settings-actions">
+              <button className="settings-action" type="button" disabled={updateChecking} onClick={() => checkUpdate(false)}>
+                {updateChecking ? "检查中..." : "检查更新"}
+              </button>
+              {updateResult?.status === "skipped" && (
+                <button className="settings-action" type="button" onClick={() => checkUpdate(true)}>仍然查看</button>
+              )}
+              {updateResult?.update && (
+                <button className="settings-action primary" type="button" onClick={installUpdate}>
+                  {updateResult.status === "skipped" ? "仍然更新" : "立即更新"}
+                </button>
+              )}
+              {updateResult?.update && updateResult.status !== "skipped" && (
+                <button className="settings-action" type="button" onClick={skipUpdate}>跳过此版本</button>
+              )}
+              {updateResult?.skippedVersionCode > 0 && (
+                <button className="settings-action" type="button" onClick={clearSkippedUpdate}>取消跳过</button>
+              )}
+            </div>
+            {updateMessage && <p className="settings-message">{updateMessage}</p>}
           </div>
         )}
         {loadError && <p className="settings-message">{loadError}</p>}

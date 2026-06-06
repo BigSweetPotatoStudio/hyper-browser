@@ -1,0 +1,28 @@
+{
+  "channel": "stable",
+  "versionCode": 2,
+  "versionName": "0.1.1",
+  "minSdk": 26,
+  "notes": "新增 WebRTC/H5 音频保活识别，并加入应用内更新入口。",
+  "releaseUrl": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/tag/v0.1.1-debug",
+  "assets": [
+    {
+      "abi": "arm64-v8a",
+      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.1-debug/app-arm64-v8a-debug.apk",
+      "sha256": "13ebaabcb57dab9c9deab01274cdf03bb9e26d1b2f438042936acfb8d06e80d4",
+      "sizeBytes": 211223218
+    },
+    {
+      "abi": "armeabi-v7a",
+      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.1-debug/app-armeabi-v7a-debug.apk",
+      "sha256": "ee8a0727920cf77caac01283ad518b096ff8652feb981f8a8cddde1c8a038ac1",
+      "sizeBytes": 173525558
+    },
+    {
+      "abi": "x86_64",
+      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.1-debug/app-x86_64-debug.apk",
+      "sha256": "0c36b91c2bae3b4608e0a236e6a5c0c9374126bcfcf4de4cc34eec3ff31396fb",
+      "sizeBytes": 230086944
+    }
+  ]
+}

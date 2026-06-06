@@ -105,7 +105,7 @@ object HyperBridge {
     private fun isTrustedSender(sender: WebExtension.MessageSender, request: JSONObject): Boolean {
         if (isInternalPageUrl(sender.url)) return true
         val type = request.optString("type")
-        return type == "pullRefresh.touch" &&
+        return (type == "pullRefresh.touch" || type == "media.keepAlive.start" || type == "media.keepAlive.stop") &&
             (sender.url.startsWith("https://") || sender.url.startsWith("http://"))
     }
 

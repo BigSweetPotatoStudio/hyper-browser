@@ -24,7 +24,8 @@
         "https://*/*"
       ],
       "js": [
-        "pull-refresh-content.js"
+        "pull-refresh-content.js",
+        "media-keepalive-content.js"
       ],
       "run_at": "document_start",
       "all_frames": true

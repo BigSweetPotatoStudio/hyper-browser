@@ -377,10 +377,26 @@ class GeckoSessionController(
 
     private fun handleBridgeMessage(message: org.json.JSONObject): org.json.JSONObject {
         val payload = message.optJSONObject("payload") ?: org.json.JSONObject()
-        if (message.optString("type") == "pullRefresh.touch") {
-            contentTouchCanScrollUp = payload.optBoolean("canScrollUp", false)
-            lastContentTouchStateAt = SystemClock.uptimeMillis()
-            return org.json.JSONObject().put("ok", true)
+        when (message.optString("type")) {
+            "pullRefresh.touch" -> {
+                contentTouchCanScrollUp = payload.optBoolean("canScrollUp", false)
+                lastContentTouchStateAt = SystemClock.uptimeMillis()
+                return org.json.JSONObject().put("ok", true)
+            }
+            "media.keepAlive.start" -> {
+                BrowserMediaNotificationController.get(appContext).startPageKeepAlive(
+                    owner = session,
+                    launchIntent = mediaNotificationIntent,
+                    title = payload.optString("title"),
+                    url = payload.optString("url"),
+                    mediaKind = payload.optString("mediaKind")
+                )
+                return org.json.JSONObject().put("ok", true)
+            }
+            "media.keepAlive.stop" -> {
+                BrowserMediaNotificationController.get(appContext).stopPageKeepAlive(session)
+                return org.json.JSONObject().put("ok", true)
+            }
         }
         return onHyperBridgeMessage?.invoke(message)
             ?: org.json.JSONObject().put("ok", false).put("error", "No bridge handler for session.")

@@ -146,10 +146,16 @@ import com.dadigua.hyperbrowser.gecko.HyperCommand
 import com.dadigua.hyperbrowser.gecko.HyperRoute
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
 import com.dadigua.hyperbrowser.ui.webapp.WebAppActivity
+import com.dadigua.hyperbrowser.update.AppUpdateManager
+import com.dadigua.hyperbrowser.update.AvailableUpdate
+import com.dadigua.hyperbrowser.update.UpdateAsset
+import com.dadigua.hyperbrowser.update.UpdateCheckResult
+import com.dadigua.hyperbrowser.update.UpdateSettingsStore
 import com.dadigua.hyperbrowser.webapp.PinnedShortcutRequestResult
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoView
@@ -278,8 +284,11 @@ private fun BrowserScreen(
     val faviconStore = remember { FaviconRepository(app) }
     val downloadStore = remember { DownloadStore(app) }
     val downloadHandler = remember { DownloadHandler(app, downloadStore) }
+    val updateManager = remember { AppUpdateManager(app, UpdateSettingsStore(app)) }
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
+    var checkedUpdate by remember { mutableStateOf<AvailableUpdate?>(null) }
+    var pendingInstallUpdate by remember { mutableStateOf<AvailableUpdate?>(null) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
@@ -335,6 +344,31 @@ private fun BrowserScreen(
             "settings.toolbarPosition.update" -> {
                 profileStore.updateToolbarPosition(payload.optString("toolbarPosition"))
                 okData(profileStore.observeSettings().value.toJson())
+            }
+            "update.check" -> {
+                val result = runBlocking {
+                    updateManager.check(ignoreSkipped = payload.optString("ignoreSkipped") == "true")
+                }
+                checkedUpdate = result.update
+                okData(result.toJson())
+            }
+            "update.skip" -> {
+                updateManager.skip(payload.optString("versionCode").toLongOrNull() ?: 0L)
+                ok()
+            }
+            "update.clearSkip" -> {
+                updateManager.clearSkip()
+                ok()
+            }
+            "update.install" -> {
+                val versionCode = payload.optString("versionCode").toLongOrNull() ?: 0L
+                val update = checkedUpdate
+                if (update == null || update.versionCode != versionCode) {
+                    JSONObject().put("ok", false).put("error", "请先检查更新。")
+                } else {
+                    pendingInstallUpdate = update
+                    ok()
+                }
             }
             "bookmarks.open" -> {
                 pendingHyperCommand = HyperCommand.Bookmarks.Open(payload.optString("url"))
@@ -485,6 +519,23 @@ private fun BrowserScreen(
             downloadHandler.refreshSystemDownloads()
             delay(1000)
         }
+    }
+
+    LaunchedEffect(pendingInstallUpdate) {
+        val update = pendingInstallUpdate ?: return@LaunchedEffect
+        pendingInstallUpdate = null
+        message = "正在下载 ${update.versionName}..."
+        runCatching { updateManager.downloadAndInstall(update) }
+            .onSuccess { intent ->
+                message = if (intent.action == android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES) {
+                    "请允许安装未知应用后重新更新。"
+                } else {
+                    "下载完成，打开安装器。"
+                }
+                runCatching { context.startActivity(intent) }
+                    .onFailure { message = it.message ?: "无法打开安装器。" }
+            }
+            .onFailure { message = it.message ?: "更新下载失败。" }
     }
 
     BackHandler {
@@ -1084,6 +1135,32 @@ private fun BrowserSettings.toJson(): JSONObject =
         .put("searchEngineName", searchEngineName)
         .put("customSearchUrl", customSearchUrl)
         .put("toolbarPosition", toolbarPosition)
+
+private fun UpdateCheckResult.toJson(): JSONObject =
+    JSONObject()
+        .put("status", status)
+        .put("currentVersionCode", currentVersionCode)
+        .put("currentVersionName", currentVersionName)
+        .put("skippedVersionCode", skippedVersionCode)
+        .put("message", message)
+        .apply {
+            update?.let { put("update", it.toJson()) }
+        }
+
+private fun AvailableUpdate.toJson(): JSONObject =
+    JSONObject()
+        .put("versionCode", versionCode)
+        .put("versionName", versionName)
+        .put("notes", notes)
+        .put("releaseUrl", releaseUrl)
+        .put("asset", asset.toJson())
+
+private fun UpdateAsset.toJson(): JSONObject =
+    JSONObject()
+        .put("abi", abi)
+        .put("url", url)
+        .put("sha256", sha256)
+        .put("sizeBytes", sizeBytes)
 
 private fun List<BrowserBookmark>.toBookmarksJsonString(faviconStore: FaviconRepository): String {
     val array = JSONArray()
