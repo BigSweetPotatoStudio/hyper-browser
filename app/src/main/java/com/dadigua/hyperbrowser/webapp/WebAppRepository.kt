@@ -175,10 +175,12 @@ class WebAppRepository(
     private fun shortcutId(id: String): String = "webapp-$id"
 
     private fun webAppIconBitmap(webApp: WebAppDefinition, size: Int): Bitmap? {
-        val base = iconPathFor(webApp)
-            ?.let { BitmapFactory.decodeFile(it) }
-            ?: return null
-        return BrowserIconComposer.badgedSiteIcon(context, base, size)
+        return BrowserIconComposer.badgedSiteIcon(
+            context,
+            iconPathFor(webApp),
+            webApp.startUrl,
+            size
+        )
     }
 
     private fun scopeFor(url: String): String {

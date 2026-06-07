@@ -1,12 +1,19 @@
 (function () {
   const nativeApp = "hyperBrowser";
   const START_TYPE = "media.keepAlive.start";
+  const PAUSE_TYPE = "media.keepAlive.pause";
   const STOP_TYPE = "media.keepAlive.stop";
-  let active = false;
+  let playbackState = "stopped";
   let lastSignature = "";
   let lastSentAt = 0;
 
-  function canSend() {
+  function canSendNative() {
+    return typeof browser !== "undefined" &&
+      browser.runtime &&
+      typeof browser.runtime.sendNativeMessage === "function";
+  }
+
+  function canSendViaBackground() {
     return typeof browser !== "undefined" &&
       browser.runtime &&
       typeof browser.runtime.sendMessage === "function";
@@ -29,9 +36,32 @@
       !!media.currentSrc;
   }
 
-  function activeMediaElements() {
-    return Array.from(document.querySelectorAll("audio,video"))
-      .filter(isPlayingCandidate);
+  function hasKnownMediaSource(media) {
+    return hasLiveAudioTrack(media) ||
+      media.readyState >= HTMLMediaElement.HAVE_METADATA ||
+      !!media.currentSrc ||
+      !!media.src;
+  }
+
+  function isPausedCandidate(media) {
+    return !!media && media.paused && !media.ended && hasKnownMediaSource(media);
+  }
+
+  function mediaElements() {
+    return Array.from(document.querySelectorAll("audio,video"));
+  }
+
+  function currentMediaState() {
+    const items = mediaElements();
+    const playing = items.find(isPlayingCandidate);
+    if (playing) {
+      return { state: "playing", type: START_TYPE, media: playing };
+    }
+    const paused = items.find(isPausedCandidate);
+    if (paused && playbackState !== "stopped") {
+      return { state: "paused", type: PAUSE_TYPE, media: paused };
+    }
+    return null;
   }
 
   function describeMedia(media) {
@@ -43,37 +73,64 @@
     };
   }
 
-  function send(type, payload) {
-    if (!canSend()) return;
-    browser.runtime.sendMessage({
+  function nativeMessage(type, payload) {
+    return {
+      type,
+      payload: {
+        ...(payload || {}),
+        sourceUrl: payload && payload.sourceUrl ? payload.sourceUrl : location.href,
+      },
+    };
+  }
+
+  function backgroundMessage(type, payload) {
+    return {
       nativeApp,
       type,
-      payload: payload || {},
-    }).catch(() => {});
+      payload: {
+        ...(payload || {}),
+        sourceUrl: payload && payload.sourceUrl ? payload.sourceUrl : location.href,
+      },
+    };
+  }
+
+  function sendViaBackground(type, payload) {
+    if (!canSendViaBackground()) return Promise.resolve();
+    return browser.runtime.sendMessage(backgroundMessage(type, payload));
+  }
+
+  function send(type, payload) {
+    if (canSendNative()) {
+      browser.runtime.sendNativeMessage(nativeApp, nativeMessage(type, payload))
+        .catch(() => sendViaBackground(type, payload))
+        .catch(() => {});
+      return;
+    }
+    sendViaBackground(type, payload).catch(() => {});
   }
 
   function refresh(force) {
-    const items = activeMediaElements();
-    if (items.length === 0) {
-      if (active) {
-        active = false;
+    const current = currentMediaState();
+    if (!current) {
+      if (playbackState !== "stopped") {
+        playbackState = "stopped";
         lastSignature = "";
         send(STOP_TYPE, { url: location.href });
       }
       return;
     }
 
-    const payload = describeMedia(items[0]);
-    const signature = `${payload.mediaKind}|${payload.title}|${payload.url}`;
+    const payload = describeMedia(current.media);
+    const signature = `${current.state}|${payload.mediaKind}|${payload.title}|${payload.url}`;
     const now = Date.now();
-    if (!force && active && signature === lastSignature && now - lastSentAt < 3000) {
+    if (!force && signature === lastSignature && now - lastSentAt < 3000) {
       return;
     }
 
-    active = true;
+    playbackState = current.state;
     lastSignature = signature;
     lastSentAt = now;
-    send(START_TYPE, payload);
+    send(current.type, payload);
   }
 
   function scheduleRefresh(force) {
@@ -90,12 +147,6 @@
     subtree: true,
     attributes: true,
     attributeFilter: ["src"],
-  });
-
-  window.addEventListener("pagehide", () => {
-    if (active) {
-      send(STOP_TYPE, { url: location.href });
-    }
   });
 
   window.setInterval(() => refresh(false), 3000);

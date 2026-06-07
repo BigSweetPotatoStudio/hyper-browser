@@ -7,10 +7,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.extensions.ExtensionNewTabRequest
+import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
+import com.dadigua.hyperbrowser.browser.closeBrowserMediaPlaybackOwner
 import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
+import com.dadigua.hyperbrowser.gecko.GeckoSessionCloseResult
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.HyperRoute
 import org.mozilla.geckoview.GeckoSession
@@ -19,11 +22,13 @@ import java.util.UUID
 
 internal class BrowserTabRuntime private constructor(
     val id: String,
+    private val app: HyperBrowserApp,
     private val controllerFactory: (
         initialUrl: String,
         loadInitialUrl: Boolean,
         restoredSessionState: GeckoSession.SessionState?
     ) -> GeckoSessionController,
+    private val mediaOwnerInfo: () -> BrowserMediaOwnerInfo,
     initialController: GeckoSessionController?,
     input: String,
     restoredTitle: String?,
@@ -109,9 +114,17 @@ internal class BrowserTabRuntime private constructor(
     }
 
     fun close(closeActivePlayback: Boolean = true) {
-        controller?.close(closeActivePlayback)
-        controller = null
+        val result = controller?.close(closeActivePlayback) ?: GeckoSessionCloseResult.Closed
+        if (closeActivePlayback) {
+            closeDetachedPlaybackForOwner()
+        }
+        if (result == GeckoSessionCloseResult.Closed) {
+            controller = null
+        }
     }
+
+    fun hasActivePlayback(): Boolean =
+        BrowserMediaNotificationController.get(app).ownsActivePlayback(mediaOwnerInfo())
 
     fun toSavedTab() =
         savedBrowserTabFromSnapshot(
@@ -190,6 +203,14 @@ internal class BrowserTabRuntime private constructor(
                 restoredTitle = initialTitle,
                 pendingLoadUrl = url.takeUnless { loadImmediately },
                 pendingRestoredSessionState = restoredSessionState.takeUnless { loadImmediately },
+                app = app,
+                mediaOwnerInfo = {
+                    BrowserMediaOwnerInfo(
+                        id = id,
+                        kind = BrowserMediaOwnerKind.BrowserTab,
+                        launchIntent = BrowserActivity.selectTabIntent(app, id)
+                    )
+                },
                 engineStateAvailable = engineStateAvailable
             ).also { tab ->
                 tab.iconPath = initialIconPath
@@ -207,6 +228,7 @@ internal class BrowserTabRuntime private constructor(
             val id = UUID.randomUUID().toString()
             return BrowserTabRuntime(
                 id = id,
+                app = app,
                 controllerFactory = { _, _, _ ->
                     val mediaLaunchIntent = BrowserActivity.selectTabIntent(app, id)
                     GeckoSessionController(
@@ -227,6 +249,15 @@ internal class BrowserTabRuntime private constructor(
                                 launchIntent = BrowserActivity.selectTabIntent(app, id)
                             )
                         }
+                    )
+                },
+                mediaOwnerInfo = {
+                    BrowserMediaOwnerInfo(
+                        id = request.url,
+                        kind = BrowserMediaOwnerKind.ExtensionTab,
+                        displayName = request.title,
+                        url = request.url,
+                        launchIntent = BrowserActivity.selectTabIntent(app, id)
                     )
                 },
                 initialController = GeckoSessionController(
@@ -255,6 +286,10 @@ internal class BrowserTabRuntime private constructor(
                 engineStateAvailable = mutableStateOf(false)
             )
         }
+    }
+
+    private fun closeDetachedPlaybackForOwner() {
+        closeBrowserMediaPlaybackOwner(app, mediaOwnerInfo())
     }
 }
 

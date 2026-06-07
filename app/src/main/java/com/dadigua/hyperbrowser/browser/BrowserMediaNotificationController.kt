@@ -81,15 +81,47 @@ class BrowserMediaNotificationController private constructor(context: Context) {
             logControllerEvent("keepAlive.stop.missing", null, "owner=${System.identityHashCode(owner)}")
             return
         }
+        if (state.mediaSession == null) {
+            logControllerEvent("keepAlive.stop", state, "fallback-only")
+            removeOwner(owner)
+            return
+        }
         state.fallbackTitle = null
         state.fallbackUrl = null
         state.fallbackMediaKind = null
         logControllerEvent("keepAlive.stop", state)
-        if (state.mediaSession == null) {
-            removeOwner(owner)
-        } else {
-            publishIfNeeded(force = true)
+        publishIfNeeded(force = true)
+    }
+
+    fun pausePageKeepAlive(
+        owner: GeckoSession,
+        ownerInfo: BrowserMediaOwnerInfo,
+        title: String,
+        url: String,
+        mediaKind: String
+    ) {
+        val state = owners[owner] ?: run {
+            logControllerEvent("keepAlive.pause.missing", null, "owner=${System.identityHashCode(owner)}")
+            return
         }
+        val normalizedMediaKind = mediaKind.ifBlank { null }
+        if (!shouldPublishFallback(normalizedMediaKind) && state.mediaSession == null) {
+            logControllerEvent(
+                "keepAlive.pause.deferred",
+                state,
+                "mediaKind=${normalizedMediaKind.orEmpty()} fallback-only"
+            )
+            return
+        }
+        state.info = state.info.merge(ownerInfo.withPageUrl(url))
+        state.active = true
+        state.playing = false
+        state.fallbackTitle = title.ifBlank { state.fallbackTitle ?: ownerInfo.displayName ?: "Playing media" }
+        state.fallbackUrl = url.ifBlank { state.fallbackUrl ?: ownerInfo.url.orEmpty() }
+        state.fallbackMediaKind = normalizedMediaKind ?: state.fallbackMediaKind
+        state.touch()
+        logControllerEvent("keepAlive.pause", state, "mediaKind=${state.fallbackMediaKind.orEmpty()}")
+        publishIfNeeded(force = true)
     }
 
     fun onDeactivated(owner: GeckoSession, mediaSession: MediaSession) {
@@ -237,10 +269,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         when (action) {
             BrowserMediaActionReceiver.ACTION_PLAY -> state.mediaSession?.play()
             BrowserMediaActionReceiver.ACTION_PAUSE -> state.mediaSession?.pause()
-            BrowserMediaActionReceiver.ACTION_STOP -> {
-                state.mediaSession?.stop()
-                removeOwner(state.owner)
-            }
+            BrowserMediaActionReceiver.ACTION_STOP -> Unit
             BrowserMediaActionReceiver.ACTION_SEEK_FORWARD -> state.mediaSession?.seekForward()
             BrowserMediaActionReceiver.ACTION_SEEK_BACKWARD -> state.mediaSession?.seekBackward()
             BrowserMediaActionReceiver.ACTION_NEXT -> state.mediaSession?.nextTrack()
@@ -256,7 +285,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         }
         owners.clear()
         primaryOwner = null
-        BrowserMediaPlaybackService.stop(appContext)
+        BrowserMediaPlaybackService.stop(appContext, removeNotification = true)
     }
 
     fun clearIfOwner(owner: GeckoSession) {
@@ -265,8 +294,25 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         }
     }
 
+    fun clearIfOwner(ownerInfo: BrowserMediaOwnerInfo) {
+        owners.values
+            .filter { it.matchesOwner(ownerInfo) }
+            .map { it.owner }
+            .toList()
+            .forEach(::removeOwner)
+    }
+
     fun ownsActivePlayback(owner: GeckoSession): Boolean =
         owners[owner]?.hasActivePlayback == true
+
+    fun ownsActivePlayback(ownerInfo: BrowserMediaOwnerInfo): Boolean =
+        owners.values.any { it.matchesOwner(ownerInfo) && it.hasActivePlayback }
+
+    fun sessionsForOwner(ownerInfo: BrowserMediaOwnerInfo): List<GeckoSession> =
+        owners.values
+            .filter { it.matchesOwner(ownerInfo) }
+            .map { it.owner }
+            .distinct()
 
     private fun publishIfNeeded(force: Boolean = false) {
         if (owners.isEmpty()) return
@@ -276,7 +322,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         owners.values.forEach { state ->
             updateAndroidMediaSession(state)
             if (state.active && (state.playing || force)) {
-                val primary = state == primaryState && state.hasActivePlayback
+                val primary = state == primaryState && state.active
                 logControllerEvent(
                     "publish",
                     state,
@@ -381,9 +427,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
 
     private fun notificationActions(state: PlaybackOwnerState): List<NotificationCompat.Action> {
         if (state.mediaSession == null) {
-            return listOf(
-                action(state, android.R.drawable.ic_menu_close_clear_cancel, "Stop", BrowserMediaActionReceiver.ACTION_STOP)
-            )
+            return emptyList()
         }
         val items = mutableListOf<NotificationCompat.Action>()
         if (state.hasFeature(Feature.SEEK_BACKWARD)) {
@@ -403,9 +447,6 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         if (state.hasFeature(Feature.NEXT_TRACK)) {
             items += action(state, android.R.drawable.ic_media_next, "Next", BrowserMediaActionReceiver.ACTION_NEXT)
         }
-        if (state.hasFeature(Feature.STOP)) {
-            items += action(state, android.R.drawable.ic_menu_close_clear_cancel, "Stop", BrowserMediaActionReceiver.ACTION_STOP)
-        }
         if (items.isEmpty()) {
             items += if (state.playing) {
                 action(state, android.R.drawable.ic_media_pause, "Pause", BrowserMediaActionReceiver.ACTION_PAUSE)
@@ -422,16 +463,12 @@ class BrowserMediaNotificationController private constructor(context: Context) {
             items += NotificationCompat.Action.Builder(android.R.drawable.ic_menu_view, "Open", intent).build()
         }
         if (state.mediaSession == null) {
-            items += action(state, android.R.drawable.ic_menu_close_clear_cancel, "Stop", BrowserMediaActionReceiver.ACTION_STOP)
             return items
         }
         if (state.playing && state.hasFeature(Feature.PAUSE)) {
             items += action(state, android.R.drawable.ic_media_pause, "Pause", BrowserMediaActionReceiver.ACTION_PAUSE)
         } else if (!state.playing && state.hasFeature(Feature.PLAY)) {
             items += action(state, android.R.drawable.ic_media_play, "Play", BrowserMediaActionReceiver.ACTION_PLAY)
-        }
-        if (state.hasFeature(Feature.STOP)) {
-            items += action(state, android.R.drawable.ic_menu_close_clear_cancel, "Stop", BrowserMediaActionReceiver.ACTION_STOP)
         }
         if (items.size == 1) {
             items += if (state.playing) {
@@ -447,7 +484,6 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         var actions = 0L
         if (state.hasFeature(Feature.PLAY)) actions = actions or PlaybackStateCompat.ACTION_PLAY
         if (state.hasFeature(Feature.PAUSE)) actions = actions or PlaybackStateCompat.ACTION_PAUSE
-        if (state.hasFeature(Feature.STOP)) actions = actions or PlaybackStateCompat.ACTION_STOP
         if (state.hasFeature(Feature.SEEK_TO)) actions = actions or PlaybackStateCompat.ACTION_SEEK_TO
         if (state.hasFeature(Feature.SEEK_FORWARD)) actions = actions or PlaybackStateCompat.ACTION_FAST_FORWARD
         if (state.hasFeature(Feature.SEEK_BACKWARD)) actions = actions or PlaybackStateCompat.ACTION_REWIND
@@ -514,7 +550,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         }
         if (owners.isEmpty() || owners.values.none { it.active }) {
             primaryOwner = null
-            BrowserMediaPlaybackService.stop(appContext)
+            BrowserMediaPlaybackService.stop(appContext, removeNotification = true)
         } else {
             publishIfNeeded(force = true)
         }
@@ -580,12 +616,11 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         )
 
     private fun ownerKey(owner: GeckoSession, info: BrowserMediaOwnerInfo): String {
-        val id = info.id.ifBlank { System.identityHashCode(owner).toString() }
-        return "${info.kind}:$id"
+        return info.mediaOwnerKey(System.identityHashCode(owner))
     }
 
     private fun shouldPublishFallback(mediaKind: String?): Boolean =
-        mediaKind != "audio" && mediaKind != "video"
+        mediaKind == FALLBACK_MEDIA_KIND_WEBRTC_AUDIO
 
     private fun notificationIdFor(ownerKey: String): Int =
         MEDIA_NOTIFICATION_ID_BASE + (ownerKey.hashCode() and MEDIA_NOTIFICATION_ID_MASK)
@@ -627,8 +662,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
                         }
 
                         override fun onStop() {
-                            this@PlaybackOwnerState.mediaSession?.stop()
-                            removeOwner(owner)
+                            // Closing the owning tab/WebApp is the only in-app stop boundary.
                         }
 
                         override fun onSeekTo(pos: Long) {
@@ -685,9 +719,12 @@ class BrowserMediaNotificationController private constructor(context: Context) {
             androidSession.release()
         }
 
+        fun matchesOwner(ownerInfo: BrowserMediaOwnerInfo): Boolean =
+            ownerKey(owner, info) == ownerKey(owner, ownerInfo)
+
         fun notificationTitle(): String =
-            metadata?.title.ifNullOrBlank { fallbackTitle }
-                ?: info.displayName.ifNullOrBlank { siteLabel() }
+            metadata?.title.ifNullOrBlank { null }
+                ?: fallbackNotificationTitle()
                 ?: "Playing media"
 
         fun notificationText(): String {
@@ -702,12 +739,8 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         fun ownerDisplayText(): String =
             listOfNotNull(
                 fallbackMediaKind,
-                info.displayName.ifNullOrBlank { siteLabel() },
-                when (info.kind) {
-                    BrowserMediaOwnerKind.WebApp -> "WebApp"
-                    BrowserMediaOwnerKind.ExtensionTab -> "Extension"
-                    BrowserMediaOwnerKind.BrowserTab -> "Hyper Browser"
-                }
+                ownerContextText(),
+                ownerKindLabel()
             ).joinToString(" · ").ifBlank { "Hyper Browser" }
 
         fun iconPath(): String? =
@@ -722,6 +755,41 @@ class BrowserMediaNotificationController private constructor(context: Context) {
             bestUrl()?.let { url ->
                 runCatching { Uri.parse(url).host?.removePrefix("www.") }.getOrNull()
             }
+
+        private fun fallbackNotificationTitle(): String? =
+            when (info.kind) {
+                BrowserMediaOwnerKind.WebApp -> info.displayName
+                    .ifNullOrBlank { fallbackTitle }
+                    .ifNullOrBlank { bestUrl() }
+                    .ifNullOrBlank { siteLabel() }
+                BrowserMediaOwnerKind.BrowserTab -> fallbackTitle
+                    .ifNullOrBlank { info.displayName }
+                    .ifNullOrBlank { bestUrl() }
+                    .ifNullOrBlank { siteLabel() }
+                BrowserMediaOwnerKind.ExtensionTab -> bestUrl()
+                    .ifNullOrBlank { info.displayName }
+                    .ifNullOrBlank { fallbackTitle }
+                    .ifNullOrBlank { siteLabel() }
+            }
+
+        private fun ownerContextText(): String? {
+            val primaryTitle = notificationTitle().trim()
+            val candidates = when (info.kind) {
+                BrowserMediaOwnerKind.WebApp -> listOf(fallbackTitle, siteLabel(), bestUrl(), info.displayName)
+                BrowserMediaOwnerKind.BrowserTab -> listOf(fallbackTitle, info.displayName, siteLabel(), bestUrl())
+                BrowserMediaOwnerKind.ExtensionTab -> listOf(bestUrl(), info.displayName, fallbackTitle, siteLabel())
+            }
+            return candidates
+                .mapNotNull { it?.takeIf { value -> value.isNotBlank() } }
+                .firstOrNull { it.trim() != primaryTitle }
+        }
+
+        private fun ownerKindLabel(): String =
+            when (info.kind) {
+                BrowserMediaOwnerKind.WebApp -> "WebApp"
+                BrowserMediaOwnerKind.ExtensionTab -> "Extension"
+                BrowserMediaOwnerKind.BrowserTab -> "Hyper Browser"
+            }
     }
 
     companion object {
@@ -729,6 +797,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         private const val MEDIA_NOTIFICATION_ID_MASK = 0x0000ffff
         private const val MEDIA_CHANNEL_ID = "media_playback"
         private const val MEDIA_DEBUG_TAG = "HyperMediaDebug"
+        private const val FALLBACK_MEDIA_KIND_WEBRTC_AUDIO = "webrtc-audio"
         private const val LARGE_ICON_SIZE = 128
 
         @Volatile

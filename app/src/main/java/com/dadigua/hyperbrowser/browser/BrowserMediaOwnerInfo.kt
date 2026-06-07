@@ -16,3 +16,8 @@ data class BrowserMediaOwnerInfo(
     val iconPath: String? = null,
     val launchIntent: Intent? = null
 )
+
+internal fun BrowserMediaOwnerInfo.mediaOwnerKey(fallbackIdentity: Int): String {
+    val ownerId = id.ifBlank { fallbackIdentity.toString() }
+    return "$kind:$ownerId"
+}

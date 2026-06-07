@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Hyper Browser Internal Pages",
-  "version": "1.2",
+  "version": "1.6",
   "browser_specific_settings": {
     "gecko": {
       "id": "hyper-browser-internal@dadigua.com"
@@ -9,6 +9,7 @@
   },
   "permissions": [
     "nativeMessaging",
+    "nativeMessagingFromContent",
     "geckoViewAddons",
     "<all_urls>"
   ],

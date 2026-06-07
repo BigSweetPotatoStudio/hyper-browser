@@ -21,6 +21,13 @@ object HyperBridge {
     private val fallbackEligibleHandlers = linkedMapOf<GeckoSession, (JSONObject) -> JSONObject>()
     private var fallbackHandler: ((JSONObject) -> JSONObject)? = null
     private var fallbackSession: GeckoSession? = null
+    private val messageDelegate = object : WebExtension.MessageDelegate {
+        override fun onMessage(
+            nativeApp: String,
+            message: Any,
+            sender: WebExtension.MessageSender
+        ): GeckoResult<Any> = handleNativeMessage(nativeApp, message, sender)
+    }
 
     fun ensureInstalled(context: Context, onReady: (WebExtension) -> Unit = {}) {
         extension?.let {
@@ -48,44 +55,13 @@ object HyperBridge {
                     Log.e(TAG, "Internal extension install returned null")
                     return@accept
                 }
-                installed.setMessageDelegate(
-                    object : WebExtension.MessageDelegate {
-                        override fun onMessage(
-                            nativeApp: String,
-                            message: Any,
-                            sender: WebExtension.MessageSender
-                        ): GeckoResult<Any> {
-                            if (nativeApp != NATIVE_APP) {
-                                return GeckoResult.fromValue(error("Rejected bridge message.").toString())
-                            }
-                            val request = message as? JSONObject
-                                ?: return GeckoResult.fromValue(error("Invalid bridge payload.").toString())
-                            val type = request.optString("type")
-                            if (!isTrustedSender(sender, request)) {
-                                Log.w(TAG, "Rejected bridge message type=$type sender=${sender.url}")
-                                return GeckoResult.fromValue(error("Rejected bridge message.").toString())
-                            }
-                            val handler = handlers[sender.session] ?: fallbackHandler.takeIf {
-                                canUseFallbackHandler(sender, type)
-                            }.also {
-                                if (it != null) {
-                                    Log.d(TAG, "Using fallback bridge handler type=$type sender=${sender.url}")
-                                }
-                            }
-                            if (handler == null) {
-                                Log.w(TAG, "No bridge handler type=$type sender=${sender.url}")
-                                return GeckoResult.fromValue(error("No bridge handler for session.").toString())
-                            }
-                            return GeckoResult.fromValue(handler(request).toString())
-                        }
-                    },
-                    NATIVE_APP
-                )
+                installed.setMessageDelegate(messageDelegate, NATIVE_APP)
                 val callbacks = synchronized(this) {
                     extension = installed
                     installing = false
                     pendingReady.toList().also { pendingReady.clear() }
                 }
+                handlers.keys.forEach { attachSessionDelegate(it, installed) }
                 callbacks.forEach { it(installed) }
             }, { throwable ->
                 synchronized(this) {
@@ -104,6 +80,7 @@ object HyperBridge {
             fallbackSession = session
             fallbackHandler = handler
         }
+        attachSessionDelegate(session)
     }
 
     fun unregister(session: GeckoSession) {
@@ -119,6 +96,7 @@ object HyperBridge {
             fallbackSession = null
             fallbackHandler = null
         }
+        detachSessionDelegate(session)
     }
 
     fun pageUrl(page: String): String? =
@@ -130,10 +108,60 @@ object HyperBridge {
     fun isInternalPageUrl(url: String): Boolean =
         extension?.metaData?.baseUrl?.let { url.startsWith(it) } == true
 
+    private fun handleNativeMessage(
+        nativeApp: String,
+        message: Any,
+        sender: WebExtension.MessageSender
+    ): GeckoResult<Any> {
+        if (nativeApp != NATIVE_APP) {
+            return GeckoResult.fromValue(error("Rejected bridge message.").toString())
+        }
+        val request = message as? JSONObject
+            ?: return GeckoResult.fromValue(error("Invalid bridge payload.").toString())
+        val type = request.optString("type")
+        if (!isTrustedSender(sender, request)) {
+            Log.w(TAG, "Rejected bridge message type=$type sender=${sender.url}")
+            return GeckoResult.fromValue(error("Rejected bridge message.").toString())
+        }
+        val handler = handlers[sender.session] ?: fallbackHandler.takeIf {
+            canUseFallbackHandler(sender, type)
+        }.also {
+            if (it != null) {
+                Log.d(TAG, "Using fallback bridge handler type=$type sender=${sender.url}")
+            }
+        }
+        if (handler == null) {
+            Log.w(TAG, "No bridge handler type=$type sender=${sender.url}")
+            return GeckoResult.fromValue(error("No bridge handler for session.").toString())
+        }
+        return GeckoResult.fromValue(handler(request).toString())
+    }
+
+    private fun attachSessionDelegate(session: GeckoSession, installed: WebExtension? = extension) {
+        installed ?: return
+        runCatching {
+            session.webExtensionController.setMessageDelegate(installed, messageDelegate, NATIVE_APP)
+        }.onFailure { throwable ->
+            Log.w(TAG, "Failed to attach session bridge delegate", throwable)
+        }
+    }
+
+    private fun detachSessionDelegate(session: GeckoSession) {
+        val installed = extension ?: return
+        runCatching {
+            session.webExtensionController.setMessageDelegate(installed, null, NATIVE_APP)
+        }.onFailure { throwable ->
+            Log.w(TAG, "Failed to detach session bridge delegate", throwable)
+        }
+    }
+
     private fun isTrustedSender(sender: WebExtension.MessageSender, request: JSONObject): Boolean {
         if (isInternalPageUrl(sender.url)) return true
         val type = request.optString("type")
-        return (type == "pullRefresh.touch" || type == "media.keepAlive.start" || type == "media.keepAlive.stop") &&
+        return (type == "pullRefresh.touch" ||
+            type == "media.keepAlive.start" ||
+            type == "media.keepAlive.pause" ||
+            type == "media.keepAlive.stop") &&
             (sender.url.startsWith("https://") || sender.url.startsWith("http://"))
     }
 

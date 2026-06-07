@@ -16,7 +16,9 @@ class BrowserMediaPlaybackService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                stopForegroundCompat(removeNotification = false)
+                stopForegroundCompat(
+                    removeNotification = intent.getBooleanExtra(EXTRA_REMOVE_NOTIFICATION, false)
+                )
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -25,7 +27,7 @@ class BrowserMediaPlaybackService : Service() {
         val controller = BrowserMediaNotificationController.get(this)
         val notificationEntry = controller.foregroundNotification()
         if (notificationEntry == null) {
-            stopForegroundCompat(removeNotification = false)
+            stopForegroundCompat(removeNotification = true)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -63,6 +65,7 @@ class BrowserMediaPlaybackService : Service() {
     companion object {
         private const val ACTION_REFRESH = "com.dadigua.hyperbrowser.media.service.REFRESH"
         private const val ACTION_STOP = "com.dadigua.hyperbrowser.media.service.STOP"
+        private const val EXTRA_REMOVE_NOTIFICATION = "com.dadigua.hyperbrowser.media.service.REMOVE_NOTIFICATION"
 
         fun refresh(context: Context) {
             val intent = Intent(context.applicationContext, BrowserMediaPlaybackService::class.java)
@@ -70,9 +73,10 @@ class BrowserMediaPlaybackService : Service() {
             runCatching { ContextCompat.startForegroundService(context.applicationContext, intent) }
         }
 
-        fun stop(context: Context) {
+        fun stop(context: Context, removeNotification: Boolean = false) {
             val intent = Intent(context.applicationContext, BrowserMediaPlaybackService::class.java)
                 .setAction(ACTION_STOP)
+                .putExtra(EXTRA_REMOVE_NOTIFICATION, removeNotification)
             runCatching { context.applicationContext.startService(intent) }
         }
     }

@@ -38,17 +38,21 @@ import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
+import com.dadigua.hyperbrowser.browser.closeBrowserMediaPlaybackOwner
 import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.gecko.GeckoBrowserView
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
 
 class WebAppActivity : ComponentActivity() {
+    private var activeWebAppId: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val webAppId = intent.getStringExtra(EXTRA_WEB_APP_ID)
             ?: intent.data?.lastPathSegment
             ?: return finish()
+        activeWebAppId = webAppId
         setContent {
             HyperBrowserTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -60,6 +64,21 @@ class WebAppActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        if (isFinishing) {
+            activeWebAppId?.let { webAppId ->
+                closeBrowserMediaPlaybackOwner(
+                    application as HyperBrowserApp,
+                    BrowserMediaOwnerInfo(
+                        id = ownerId(webAppId),
+                        kind = BrowserMediaOwnerKind.WebApp
+                    )
+                )
+            }
+        }
+        super.onDestroy()
     }
 
     override fun onUserLeaveHint() {
@@ -78,6 +97,8 @@ class WebAppActivity : ComponentActivity() {
 
     companion object {
         private const val EXTRA_WEB_APP_ID = "extra_web_app_id"
+
+        fun ownerId(webAppId: String): String = "webapp-$webAppId"
 
         fun intent(context: Context, webAppId: String, asDocument: Boolean): Intent {
             val flags = if (asDocument) {
@@ -120,7 +141,7 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
             mediaNotificationIntent = WebAppActivity.intent(app, current.id, true),
             mediaOwnerInfo = {
                 BrowserMediaOwnerInfo(
-                    id = "webapp-${current.id}",
+                    id = WebAppActivity.ownerId(current.id),
                     kind = BrowserMediaOwnerKind.WebApp,
                     displayName = current.name,
                     url = current.startUrl,
