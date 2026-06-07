@@ -572,7 +572,12 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         }
 
     private fun largeIcon(state: PlaybackOwnerState) =
-        BrowserIconComposer.badgedSiteIcon(appContext, state.iconPath(), LARGE_ICON_SIZE)
+        BrowserIconComposer.badgedSiteIcon(
+            appContext,
+            state.iconPath(),
+            state.fallbackUrl.ifNullOrBlank { state.info.url },
+            LARGE_ICON_SIZE
+        )
 
     private fun ownerKey(owner: GeckoSession, info: BrowserMediaOwnerInfo): String {
         val id = info.id.ifBlank { System.identityHashCode(owner).toString() }
