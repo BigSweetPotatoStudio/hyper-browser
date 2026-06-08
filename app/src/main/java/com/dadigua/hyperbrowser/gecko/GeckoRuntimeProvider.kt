@@ -20,7 +20,7 @@ object GeckoRuntimeProvider {
             runtime ?: GeckoRuntime.create(
                 appContext,
                 GeckoRuntimeSettings.Builder()
-                    .remoteDebuggingEnabled(true)
+                    .remoteDebuggingEnabled(appContext.isDebuggable())
                     .consoleOutput(appContext.isDebuggable())
                     .configFilePath(ensureGeckoConfig(appContext).absolutePath)
                     .build()

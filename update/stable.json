@@ -3,14 +3,7 @@
   "versionCode": 4,
   "versionName": "0.1.3",
   "minSdk": 26,
-  "notes": "修复更新下载完成后未打开安装器的问题，并减少下载过程中的重复提示。",
-  "releaseUrl": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/tag/v0.1.3-debug",
-  "assets": [
-    {
-      "abi": "arm64-v8a",
-      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.3-debug/app-arm64-v8a-debug.apk",
-      "sha256": "e50107dc04af6075b7837192976683152396ea6dad7f4d93ec8066783a49e834",
-      "sizeBytes": 211240366
-    }
-  ]
+  "notes": "当前稳定更新索引尚未发布 signed release APK。发版后请按 docs/RELEASE.md 填入每个 ABI 的正式资产。",
+  "releaseUrl": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases",
+  "assets": []
 }

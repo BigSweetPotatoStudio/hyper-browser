@@ -296,7 +296,7 @@ popup 容器高度必须覆盖 WebExtension 内容的可交互区域。不要让
 
 扩展 popup 内部打开控制面板/选项页时，行为要像浏览器扩展：在浏览器中新建 tab 打开 `moz-extension://.../dashboard.html#...` 这类页面，并关闭当前 popup。实现上不能只接 `WebExtension.TabDelegate.onNewTab`；popup 自己的 `GeckoSession` 也要接 `NavigationDelegate.onNewSession`，并在必要时拦截导航到 `optionsPageUrl` 的 `onLoadRequest`。
 
-调试 GeckoView 内部页面或扩展 popup 时，不要长期靠 adb 坐标盲点。当前 `GeckoRuntimeProvider` 已启用 `GeckoRuntimeSettings.Builder().remoteDebuggingEnabled(true)`；优先用桌面 Firefox 打开 `about:debugging` 连接 Android 设备，检查目标页面/popup 的 DOM、Console、Network、click 事件和 `window.open` / `browser.tabs.create` 行为。`uiautomator` 适合确认外层 Compose 层级、文本和最终验收，不适合定位 GeckoView 内部事件是否触发。
+调试 GeckoView 内部页面或扩展 popup 时，不要长期靠 adb 坐标盲点。当前 `GeckoRuntimeProvider` 只会在 debuggable 构建中启用 Gecko remote debugging；调试 debug 包时优先用桌面 Firefox 打开 `about:debugging` 连接 Android 设备，检查目标页面/popup 的 DOM、Console、Network、click 事件和 `window.open` / `browser.tabs.create` 行为。`uiautomator` 适合确认外层 Compose 层级、文本和最终验收，不适合定位 GeckoView 内部事件是否触发。
 
 ## 数据存储
 

@@ -4,6 +4,36 @@ Hyper Browser 是一个 Android 原生浏览器和 WebApp 容器项目，使用 
 
 它不是普通 Demo 浏览器。当前目标是做一个接近 Chrome Android 基础交互的浏览器壳：能打开普通网页、管理多标签、保存书签和历史、处理下载、把任意 URL 安装成类 App 容器，并支持 GeckoView WebExtension。
 
+## 项目状态
+
+当前项目处于 alpha 阶段，适合开发者、测试用户和对 GeckoView Android 浏览器壳感兴趣的人试用。它还不是经过大规模安全审计的稳定浏览器。
+
+公开发布包通过 GitHub Releases 分发，APK 按 CPU 架构拆分：
+
+- `arm64-v8a`：大多数现代 Android 手机。
+- `armeabi-v7a`：较老的 32 位 Android 设备。
+- `x86_64`：部分模拟器和 x86 Android 设备。
+
+如果不确定设备架构，优先尝试 `arm64-v8a`。安装 APK 时需要允许当前安装来源安装未知应用。
+
+## 项目文档
+
+- [隐私说明](PRIVACY.md)
+- [安全策略](SECURITY.md)
+- [贡献指南](CONTRIBUTING.md)
+- [发布流程](docs/RELEASE.md)
+- [变更记录](CHANGELOG.md)
+- [第三方组件说明](THIRD_PARTY_NOTICES.md)
+- [License](LICENSE)
+
+## 当前限制
+
+- 当前没有账号同步、跨设备同步或云备份服务。
+- 当前没有隐身模式；历史、书签和设置按普通浏览器数据保存在 App 私有目录。
+- 当前 APK 通过 GitHub Releases 分发，不是 Play Store / F-Droid 正式渠道包。
+- 当前 updater 使用 GitHub Release split APK，需要 release 索引提供匹配设备架构的正式签名 APK。
+- WebExtension 支持基于 GeckoView 能力，不等同于桌面 Firefox 的完整扩展体验。
+
 ## 当前能力
 
 - GeckoView 浏览器内核，普通浏览器标签和 WebApp 默认共享同一个 `GeckoRuntime` / profile。
@@ -31,6 +61,7 @@ Hyper Browser 是一个 Android 原生浏览器和 WebApp 容器项目，使用 
 - 包名：`com.dadigua.hyperbrowser`
 - 内置页面：React 19 + TypeScript + Vite
 - JS 包管理：pnpm
+- 开源许可：Apache-2.0
 
 ## 目录结构
 
@@ -79,7 +110,7 @@ Hyper Browser 是一个 Android 原生浏览器和 WebApp 容器项目，使用 
 - `ui/webapp/WebAppActivity.kt`  
   独立 WebApp Activity，用于启动已安装的网页 App。
 - `gecko/GeckoRuntimeProvider.kt`  
-  全局单例 `GeckoRuntime` 配置，启用 remote debugging，并设置 WebExtension 安装/更新权限 prompt 策略。
+  全局单例 `GeckoRuntime` 配置，在 debuggable 构建中启用 remote debugging，并设置 WebExtension 安装/更新权限 prompt 策略。
 - `gecko/GeckoSessionController.kt`  
   单个 tab/WebApp 的 `GeckoSession` 封装，负责导航、内置路由、崩溃恢复、下载请求、媒体 session、bridge 注册、下拉刷新状态，以及把 `target=_blank` / 新窗口请求收敛为当前标签页跳转。
 - `gecko/GeckoBrowserView.kt`  
@@ -117,6 +148,14 @@ Hyper Browser 是一个 Android 原生浏览器和 WebApp 容器项目，使用 
 ```
 
 Android `preBuild` 会自动执行 `internal-pages` 的 pnpm install/build，并把产物输出到 `app/src/main/assets/`。
+
+构建 release APK：
+
+```powershell
+.\gradlew.bat :app:assembleRelease --console=plain
+```
+
+release 构建会生成未签名 split APK。公开发布请使用 GitHub Actions release workflow 签名，并按 [发布流程](docs/RELEASE.md) 更新 `update/stable.json`。
 
 只构建内置页面：
 
@@ -275,6 +314,7 @@ adb shell run-as com.dadigua.hyperbrowser cat files/installed_extensions.json
 - 原生 App 代码是 Kotlin + Compose。
 - 内置页面是 React + TypeScript。
 - `GeckoRuntimeProvider` 必须保持单例，这样普通浏览器标签和 WebApp 才能共享 Cookie/profile。
+- release 包必须使用持久签名 key，不要发布临时 CI key 签名的 APK，否则后续用户无法平滑升级。
 - 修浏览器交互时不要做大范围无关重构，核心逻辑通常集中在 `BrowserActivity.kt`、`GeckoSessionController.kt`、`GeckoBrowserView.kt` 和 `ExtensionRepository.kt`。
 - 调试 GeckoView 内容、扩展 popup 或内置页 DOM 时，优先使用 Firefox `about:debugging` 连接 Android 设备；`uiautomator` 更适合确认 Compose 外层文本和 bounds。
 
@@ -283,6 +323,12 @@ adb shell run-as com.dadigua.hyperbrowser cat files/installed_extensions.json
 ```powershell
 # 构建 debug APK
 .\gradlew.bat :app:assembleDebug --console=plain
+
+# 构建 release APK
+.\gradlew.bat :app:assembleRelease --console=plain
+
+# 单元测试
+.\gradlew.bat :app:testDebugUnitTest --console=plain
 
 # 安装 debug APK
 .\gradlew.bat :app:installDebug --console=plain
@@ -322,4 +368,4 @@ adb shell dumpsys window | Select-String -Pattern "mCurrentFocus|mFocusedApp"
 
 ## License
 
-当前还没有声明 License。
+Hyper Browser is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

@@ -458,7 +458,7 @@ function SettingsPage() {
                   {updateResult?.update && updateResult.status !== "skipped" && (
                     <button className="settings-action" type="button" onClick={skipUpdate}>跳过此版本</button>
                   )}
-                  {updateResult?.skippedVersionCode > 0 && (
+                  {(updateResult?.skippedVersionCode ?? 0) > 0 && (
                     <button className="settings-action" type="button" onClick={clearSkippedUpdate}>取消跳过</button>
                   )}
                 </div>

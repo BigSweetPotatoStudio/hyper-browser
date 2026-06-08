@@ -59,6 +59,15 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
+      - name: Install internal page dependencies
+        run: pnpm --dir internal-pages install --frozen-lockfile
+
+      - name: Check internal page TypeScript
+        run: pnpm --dir internal-pages typecheck
+
+      - name: Run Android unit tests
+        run: ./gradlew :app:testDebugUnitTest --console=plain
+
       - name: Build unsigned release APKs
         run: ./gradlew :app:assembleRelease --console=plain
 
@@ -82,26 +91,18 @@ jobs:
             exit 1
           fi
 
-          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release.keystore
-            KEYSTORE_PASSWORD="$ANDROID_KEYSTORE_PASSWORD"
-            KEY_ALIAS="$ANDROID_KEY_ALIAS"
-            KEY_PASSWORD="$ANDROID_KEY_PASSWORD"
-          else
-            echo "No release keystore secrets found. Generating a temporary installable signing key."
-            keytool -genkeypair \
-              -keystore release.keystore \
-              -storepass android \
-              -alias hyper-browser-temp \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Hyper Browser CI,O=BigSweetPotatoStudio,C=US"
-            KEYSTORE_PASSWORD="android"
-            KEY_ALIAS="hyper-browser-temp"
-            KEY_PASSWORD="android"
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ] ||
+             [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] ||
+             [ -z "${ANDROID_KEY_ALIAS:-}" ] ||
+             [ -z "${ANDROID_KEY_PASSWORD:-}" ]; then
+            echo "Missing Android release signing secrets. Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD before publishing." >&2
+            exit 1
           fi
+
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release.keystore
+          KEYSTORE_PASSWORD="$ANDROID_KEYSTORE_PASSWORD"
+          KEY_ALIAS="$ANDROID_KEY_ALIAS"
+          KEY_PASSWORD="$ANDROID_KEY_PASSWORD"
 
           for unsigned_apk in "${UNSIGNED_APKS[@]}"; do
             filename="$(basename "$unsigned_apk")"
