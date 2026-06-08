@@ -42,6 +42,12 @@ data class GeckoDownloadRequest(
     val body: InputStream
 )
 
+data class GeckoContextMenuTarget(
+    val linkUrl: String?,
+    val imageUrl: String?,
+    val label: String?
+)
+
 enum class GeckoSessionCloseResult {
     Closed,
     DetachedForPlayback
@@ -55,7 +61,7 @@ class GeckoSessionController(
     restoredSessionState: GeckoSession.SessionState? = null,
     private val onHyperRoute: (HyperRoute) -> Unit = {},
     private val onHyperBridgeMessage: ((org.json.JSONObject) -> org.json.JSONObject)? = null,
-    private val onLinkContextMenu: (String, String?) -> Unit = { _, _ -> },
+    private val onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
     private val onDownload: (GeckoDownloadRequest) -> Unit = {},
     private val onSessionStateChange: (GeckoSession.SessionState) -> Unit = {},
     private val onPageStop: (Boolean) -> Unit = {},
@@ -113,10 +119,20 @@ class GeckoSessionController(
                 screenY: Int,
                 element: GeckoSession.ContentDelegate.ContextElement
             ) {
-                val linkUrl = element.linkUri
-                    .takeUnless { it.isNullOrBlank() }
-                    ?: return
-                onLinkContextMenu(linkUrl, element.linkText ?: element.title)
+                val linkUrl = element.linkUri.takeIfNotBlank()
+                val imageUrl = element.srcUri
+                    .takeIfNotBlank()
+                    ?.takeIf { element.type == GeckoSession.ContentDelegate.ContextElement.TYPE_IMAGE }
+                if (linkUrl == null && imageUrl == null) return
+                onPageContextMenu(
+                    GeckoContextMenuTarget(
+                        linkUrl = linkUrl,
+                        imageUrl = imageUrl,
+                        label = element.altText.takeIfNotBlank()
+                            ?: element.linkText.takeIfNotBlank()
+                            ?: element.title.takeIfNotBlank()
+                    )
+                )
             }
 
             override fun onCrash(session: GeckoSession) {
@@ -787,6 +803,9 @@ class GeckoSessionController(
 
 private fun String.withoutFragment(): String =
     substringBefore('#')
+
+private fun String?.takeIfNotBlank(): String? =
+    this?.takeIf { it.isNotBlank() }
 
 private fun WebResponse.headerValue(name: String): String? {
     val wanted = name.lowercase()

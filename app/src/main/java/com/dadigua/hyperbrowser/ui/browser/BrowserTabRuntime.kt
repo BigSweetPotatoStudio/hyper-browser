@@ -11,6 +11,7 @@ import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
 import com.dadigua.hyperbrowser.browser.closeBrowserMediaPlaybackOwner
+import com.dadigua.hyperbrowser.gecko.GeckoContextMenuTarget
 import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
 import com.dadigua.hyperbrowser.gecko.GeckoSessionCloseResult
@@ -152,7 +153,7 @@ internal class BrowserTabRuntime private constructor(
             restoredSessionState: GeckoSession.SessionState? = null,
             onHyperRoute: (HyperRoute) -> Unit = {},
             onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
-            onLinkContextMenu: (String, String?) -> Unit = { _, _ -> },
+            onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
             onDownload: (GeckoDownloadRequest) -> Unit = {},
             onEngineSessionStateChange: (String?) -> Unit = {},
             onPageStop: (Boolean) -> Unit = {}
@@ -169,7 +170,7 @@ internal class BrowserTabRuntime private constructor(
                     restoredSessionState = state,
                     onHyperRoute = onHyperRoute,
                     onHyperBridgeMessage = onHyperBridgeMessage,
-                    onLinkContextMenu = onLinkContextMenu,
+                    onPageContextMenu = onPageContextMenu,
                     onDownload = onDownload,
                     onSessionStateChange = { sessionState ->
                         val currentUri = currentUriForEngineSessionState(sessionState)
@@ -222,7 +223,7 @@ internal class BrowserTabRuntime private constructor(
             request: ExtensionNewTabRequest,
             onHyperRoute: (HyperRoute) -> Unit = {},
             onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
-            onLinkContextMenu: (String, String?) -> Unit = { _, _ -> },
+            onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
             onDownload: (GeckoDownloadRequest) -> Unit = {}
         ): BrowserTabRuntime {
             val id = UUID.randomUUID().toString()
@@ -237,7 +238,7 @@ internal class BrowserTabRuntime private constructor(
                         existingSession = request.session,
                         onHyperRoute = onHyperRoute,
                         onHyperBridgeMessage = onHyperBridgeMessage,
-                        onLinkContextMenu = onLinkContextMenu,
+                        onPageContextMenu = onPageContextMenu,
                         onDownload = onDownload,
                         mediaNotificationIntent = mediaLaunchIntent,
                         mediaOwnerInfo = {
@@ -266,7 +267,7 @@ internal class BrowserTabRuntime private constructor(
                     existingSession = request.session,
                     onHyperRoute = onHyperRoute,
                     onHyperBridgeMessage = onHyperBridgeMessage,
-                    onLinkContextMenu = onLinkContextMenu,
+                    onPageContextMenu = onPageContextMenu,
                     onDownload = onDownload,
                     mediaNotificationIntent = BrowserActivity.selectTabIntent(app, id),
                     mediaOwnerInfo = {

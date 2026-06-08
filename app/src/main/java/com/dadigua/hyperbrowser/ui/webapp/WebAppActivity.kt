@@ -1,14 +1,19 @@
 package com.dadigua.hyperbrowser.ui.webapp
 
+import android.Manifest
 import android.app.PictureInPictureParams
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,20 +34,29 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.unit.dp
 import com.dadigua.hyperbrowser.HyperBrowserApp
+import com.dadigua.hyperbrowser.browser.DownloadHandler
+import com.dadigua.hyperbrowser.browser.DownloadStore
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
 import com.dadigua.hyperbrowser.browser.closeBrowserMediaPlaybackOwner
 import com.dadigua.hyperbrowser.data.WebAppDefinition
+import com.dadigua.hyperbrowser.gecko.GeckoContextMenuTarget
 import com.dadigua.hyperbrowser.gecko.GeckoBrowserView
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
+import com.dadigua.hyperbrowser.ui.browser.BrowserActivity
+import com.dadigua.hyperbrowser.ui.browser.PageContextMenuDialog
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
+import kotlinx.coroutines.launch
 
 class WebAppActivity : ComponentActivity() {
     private var activeWebAppId: String? = null
@@ -117,6 +131,48 @@ class WebAppActivity : ComponentActivity() {
 @Composable
 private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppId: String) {
     var webApp by remember { mutableStateOf<WebAppDefinition?>(null) }
+    var pageContextMenu by remember { mutableStateOf<GeckoContextMenuTarget?>(null) }
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    val downloadStore = remember { DownloadStore(app) }
+    val downloadHandler = remember { DownloadHandler(app, downloadStore) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
+    fun showToast(text: String) {
+        Toast.makeText(activity, text, Toast.LENGTH_SHORT).show()
+    }
+
+    fun requestDownloadNotificationsIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !downloadHandler.canPostNotifications()) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    fun enqueueUrlDownload(url: String) {
+        requestDownloadNotificationsIfNeeded()
+        scope.launch {
+            showToast("Downloading...")
+            runCatching { downloadHandler.enqueueUrlDownload(url) }
+                .onSuccess { showToast("Download queued: ${it.name}") }
+                .onFailure { showToast(it.message ?: "Download failed.") }
+        }
+    }
+
+    fun copyContextUrl(clipLabel: String, url: String, toast: String) {
+        scope.launch {
+            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(clipLabel, url)))
+        }
+        pageContextMenu = null
+        showToast(toast)
+    }
+
+    fun openInBrowserNewTab(url: String) {
+        pageContextMenu = null
+        runCatching { activity.startActivity(BrowserActivity.newTabIntent(activity, url)) }
+            .onFailure { showToast(it.message ?: "Unable to open link.") }
+    }
 
     LaunchedEffect(webAppId) {
         webApp = app.webApps.get(webAppId)
@@ -138,6 +194,7 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
         GeckoSessionController(
             context = app,
             initialUrl = current.startUrl,
+            onPageContextMenu = { pageContextMenu = it },
             mediaNotificationIntent = WebAppActivity.intent(app, current.id, true),
             mediaOwnerInfo = {
                 BrowserMediaOwnerInfo(
@@ -177,6 +234,22 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
                 progress = pageState.loadProgress,
                 modifier = Modifier.align(Alignment.TopCenter)
             )
+            pageContextMenu?.let { menu ->
+                PageContextMenuDialog(
+                    target = menu,
+                    onDismissRequest = { pageContextMenu = null },
+                    onDownloadImage = { url ->
+                        pageContextMenu = null
+                        enqueueUrlDownload(url)
+                    },
+                    onOpenImage = ::openInBrowserNewTab,
+                    onCopyImage = { url -> copyContextUrl("image", url, "图片地址已复制") },
+                    onOpenLink = ::openInBrowserNewTab,
+                    onCopyLink = { url -> copyContextUrl("link", url, "链接已复制") },
+                    openImageLabel = "在浏览器中打开图片",
+                    openLinkLabel = "在浏览器中打开链接"
+                )
+            }
         }
     }
 }

@@ -7,7 +7,8 @@ internal data class ExternalBrowserIntent(
     val url: String?,
     val download: Boolean,
     val showDownloads: Boolean = false,
-    val selectTabId: String? = null
+    val selectTabId: String? = null,
+    val openInNewTab: Boolean = false
 )
 
 internal fun Intent.toExternalBrowserIntent(): ExternalBrowserIntent? {
@@ -18,7 +19,11 @@ internal fun Intent.toExternalBrowserIntent(): ExternalBrowserIntent? {
         return ExternalBrowserIntent(url = null, download = false, showDownloads = true)
     }
     getStringExtra(BrowserActivity.EXTRA_URL)?.takeIf { it.isNotBlank() }?.let {
-        return ExternalBrowserIntent(it, download = false)
+        return ExternalBrowserIntent(
+            url = it,
+            download = false,
+            openInNewTab = getBooleanExtra(BrowserActivity.EXTRA_OPEN_IN_NEW_TAB, false)
+        )
     }
     if (action == Intent.ACTION_SEND && type?.startsWith("text/") == true) {
         val text = getStringExtra(Intent.EXTRA_TEXT).orEmpty()

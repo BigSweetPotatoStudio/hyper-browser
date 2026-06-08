@@ -19,13 +19,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -42,7 +39,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboard
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -58,6 +54,7 @@ import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.SavedBrowserTabs
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
+import com.dadigua.hyperbrowser.gecko.GeckoContextMenuTarget
 import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.HyperCommand
@@ -144,9 +141,16 @@ class BrowserActivity : ComponentActivity() {
         const val EXTRA_URL = "extra_url"
         const val EXTRA_SHOW_DOWNLOADS = "extra_show_downloads"
         const val EXTRA_SELECT_TAB_ID = "extra_select_tab_id"
+        const val EXTRA_OPEN_IN_NEW_TAB = "extra_open_in_new_tab"
 
         fun intent(context: Context, url: String): Intent =
             Intent(context, BrowserActivity::class.java).putExtra(EXTRA_URL, url)
+
+        fun newTabIntent(context: Context, url: String): Intent =
+            Intent(context, BrowserActivity::class.java)
+                .putExtra(EXTRA_URL, url)
+                .putExtra(EXTRA_OPEN_IN_NEW_TAB, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
 
         fun selectTabIntent(context: Context, tabId: String): Intent =
             Intent(context, BrowserActivity::class.java)
@@ -159,11 +163,6 @@ class BrowserActivity : ComponentActivity() {
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     }
 }
-
-private data class LinkContextMenuState(
-    val url: String,
-    val label: String?
-)
 
 private enum class BrowserPanel {
     None,
@@ -215,6 +214,7 @@ private fun BrowserScreen(
     }
 
     fun enqueueUrlDownload(url: String) {
+        requestDownloadNotificationsIfNeeded()
         scope.launch {
             message = "Downloading..."
             runCatching { downloadHandler.enqueueUrlDownload(url) }
@@ -455,7 +455,7 @@ private fun BrowserScreen(
             else -> JSONObject().put("ok", false).put("error", "Unknown bridge message.")
         }
     }
-    var linkContextMenu by remember { mutableStateOf<LinkContextMenuState?>(null) }
+    var pageContextMenu by remember { mutableStateOf<GeckoContextMenuTarget?>(null) }
     fun refreshTabThumbnail(
         tab: BrowserTabRuntime,
         shouldApply: () -> Boolean = { true },
@@ -510,9 +510,7 @@ private fun BrowserScreen(
             restoredSessionState = restoredSessionState,
             onHyperRoute = { pendingHyperRoute = it },
             onHyperBridgeMessage = ::handleHyperBridgeMessage,
-            onLinkContextMenu = { linkUrl, label ->
-                linkContextMenu = LinkContextMenuState(url = linkUrl, label = label)
-            },
+            onPageContextMenu = { pageContextMenu = it },
             onDownload = ::saveGeckoDownload,
             onEngineSessionStateChange = { state ->
                 state?.let { profileStore.saveTabSessionState(tabId, it) }
@@ -604,7 +602,7 @@ private fun BrowserScreen(
 
     fun openLinkInBackgroundTab(url: String) {
         tabs.add(createBrowserTab(url))
-        linkContextMenu = null
+        pageContextMenu = null
         activePanel = BrowserPanel.None
         message = "已在后台标签页打开"
     }
@@ -698,6 +696,13 @@ private fun BrowserScreen(
                 showPanel(BrowserPanel.Downloads)
                 editingAddress = false
                 message = null
+            } else if (command.openInNewTab && commandUrl != null) {
+                val newTab = createBrowserTab(commandUrl)
+                tabs.add(newTab)
+                selectedTabId = newTab.id
+                closePanel()
+                editingAddress = false
+                message = null
             } else if (command.download && commandUrl != null) {
                 enqueueUrlDownload(commandUrl)
             } else if (commandUrl != null) {
@@ -776,9 +781,7 @@ private fun BrowserScreen(
                 request = request,
                 onHyperRoute = { pendingHyperRoute = it },
                 onHyperBridgeMessage = ::handleHyperBridgeMessage,
-                onLinkContextMenu = { url, label ->
-                    linkContextMenu = LinkContextMenuState(url = url, label = label)
-                },
+                onPageContextMenu = { pageContextMenu = it },
                 onDownload = ::saveGeckoDownload
             )
             tabs.add(newTab)
@@ -1195,48 +1198,25 @@ private fun BrowserScreen(
                 BrowserContent(controller = controller, tabId = tab.id, extensionPopup = extensionPopup, onClosePopup = app.extensions::closePopup)
             }
         }
-        linkContextMenu?.let { menu ->
-            AlertDialog(
-                onDismissRequest = { linkContextMenu = null },
-                title = {
-                    Text(
-                        text = menu.label?.takeIf { it.isNotBlank() } ?: "链接",
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
-                text = {
-                    Text(
-                        text = menu.url,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
-                confirmButton = {
-                    TextButton(onClick = { openLinkInBackgroundTab(menu.url) }) {
-                        Text("在新标签页打开")
-                    }
-                },
-                dismissButton = {
-                    Row {
-                        TextButton(
-                            onClick = {
-                                scope.launch {
-                                    clipboard.setClipEntry(
-                                        ClipEntry(ClipData.newPlainText("link", menu.url))
-                                    )
-                                }
-                                linkContextMenu = null
-                                message = "链接已复制"
-                            }
-                        ) {
-                            Text("复制链接")
-                        }
-                        TextButton(onClick = { linkContextMenu = null }) {
-                            Text("取消")
-                        }
-                    }
+        pageContextMenu?.let { menu ->
+            fun copyContextUrl(clipLabel: String, url: String, toast: String) {
+                scope.launch {
+                    clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(clipLabel, url)))
                 }
+                pageContextMenu = null
+                message = toast
+            }
+            PageContextMenuDialog(
+                target = menu,
+                onDismissRequest = { pageContextMenu = null },
+                onDownloadImage = { url ->
+                    pageContextMenu = null
+                    enqueueUrlDownload(url)
+                },
+                onOpenImage = ::openLinkInBackgroundTab,
+                onCopyImage = { url -> copyContextUrl("image", url, "图片地址已复制") },
+                onOpenLink = ::openLinkInBackgroundTab,
+                onCopyLink = { url -> copyContextUrl("link", url, "链接已复制") }
             )
         }
         BrowserTip(

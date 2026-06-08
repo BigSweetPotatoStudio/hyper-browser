@@ -61,13 +61,16 @@
             android:exported="true"
             android:resizeableActivity="true"
             android:supportsPictureInPicture="true"
+            android:taskAffinity="com.dadigua.hyperbrowser.webapp"
             android:windowSoftInputMode="stateUnspecified|adjustResize" />
 
         <activity
             android:name=".ui.browser.BrowserActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:resizeableActivity="true"
             android:supportsPictureInPicture="true"
+            android:taskAffinity="com.dadigua.hyperbrowser.browser"
             android:windowSoftInputMode="stateUnspecified|adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
