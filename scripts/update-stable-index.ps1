@@ -53,5 +53,6 @@ $index = [ordered] @{
 }
 
 $json = $index | ConvertTo-Json -Depth 8
-Set-Content -LiteralPath $outputFile -Value $json -Encoding UTF8
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($outputFile, $json + [Environment]::NewLine, $utf8NoBom)
 Write-Host "Updated $OutputPath for $Tag with $($assets.Count) APK assets."
