@@ -6,6 +6,8 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+- Release workflow now uses Linux-friendly Node scripts to extract notes from `CHANGELOG.md`, publish GitHub Release notes, generate `update/stable.json`, and commit the stable index back to `main` automatically.
+
 ## 0.1.4 - 2026-06-08
 
 - Added open-source project documentation: license, privacy policy, security policy, contribution guide, and release checklist.
