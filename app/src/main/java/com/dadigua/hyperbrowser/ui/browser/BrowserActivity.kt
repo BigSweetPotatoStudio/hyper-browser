@@ -592,6 +592,10 @@ private fun BrowserScreen(
     var installingAddonGuid by remember { mutableStateOf<String?>(null) }
     var currentIconPath by remember { mutableStateOf<String?>(null) }
 
+    LaunchedEffect(Unit) {
+        runCatching { app.extensions.refreshInstalledFromRuntime() }
+    }
+
     fun showPanel(panel: BrowserPanel) {
         activePanel = panel
     }
@@ -1002,11 +1006,13 @@ private fun BrowserScreen(
                     onSearch = {
                         scope.launch {
                             extensionMessage = "Searching AMO..."
+                            val syncedInstalled = runCatching { app.extensions.refreshInstalledFromRuntime() }
+                                .getOrDefault(installedExtensions)
                             runCatching { app.extensions.searchAndroidAddons(extensionQuery) }
                                 .onSuccess { results ->
                                     extensionResults = results
                                     val installedMatches = results.count { result ->
-                                        installedExtensions.any { it.guid == result.guid }
+                                        syncedInstalled.any { it.guid == result.guid }
                                     }
                                     val installableCount = results.size - installedMatches
                                     extensionMessage = when {
@@ -1027,7 +1033,10 @@ private fun BrowserScreen(
                                     extensionMessage = stage
                                 }
                             }
-                                .onSuccess { extensionMessage = "Installed ${addon.name}." }
+                                .onSuccess {
+                                    runCatching { app.extensions.refreshInstalledFromRuntime() }
+                                    extensionMessage = "Installed ${addon.name}."
+                                }
                                 .onFailure { extensionMessage = it.message ?: "Extension install failed." }
                             installingAddonGuid = null
                         }

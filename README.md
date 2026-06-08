@@ -16,6 +16,18 @@ Hyper Browser 是一个 Android 原生浏览器和 WebApp 容器项目，使用 
 
 如果不确定设备架构，优先尝试 `arm64-v8a`。安装 APK 时需要允许当前安装来源安装未知应用。
 
+## 项目特色
+
+- 原生 Android + GeckoView：不是普通 WebView 包壳，而是基于 Mozilla GeckoView 的浏览器容器。
+- 任意 URL WebApp 化：普通网页可以安装成独立入口，并和浏览器共享 Cookie/profile。
+- 接近 Chrome Android 的基础交互：主页、圆角地址栏、标签计数、三点菜单、独立搜索/地址输入页和 Card/List 标签页。
+- 标签状态恢复：保存标签 URL、标题、缩略图和 Gecko `SessionState`，未选中的恢复标签可以延迟加载。
+- 多标签音频并行播放：不会因为新标签开始播放音频就自动暂停其他标签，适合同时保留会议、直播、音乐或后台媒体。
+- 可用的 Android WebExtension 流程：支持 AMO 搜索、XPI 安装、扩展菜单 action/popup 和管理入口。
+- 内置页面可扩展：主页、搜索、设置、书签、历史、WebApp 管理页使用 React + TypeScript 构建，并通过安全 bridge 调用原生能力。
+- 可配置移动端体验：支持切换搜索引擎、自定义搜索 URL、顶部/底部地址栏、后台视频播放增强和系统电池优化入口。
+- 面向真实使用场景：下载、媒体通知、Picture-in-Picture、favicon 缓存、下拉刷新、更新检查和 split APK 分发都已纳入应用流程。
+
 ## 项目文档
 
 - [隐私说明](PRIVACY.md)
@@ -39,14 +51,18 @@ Hyper Browser 是一个 Android 原生浏览器和 WebApp 容器项目，使用 
 - GeckoView 浏览器内核，普通浏览器标签和 WebApp 默认共享同一个 `GeckoRuntime` / profile。
 - Chrome Android 风格主界面：主页、圆角地址栏、标签计数、三点菜单、搜索/地址输入页。
 - 多标签管理，标签页支持 Card / List 两种模式；Card 模式使用 GeckoView 页面截图缩略图。
+- 多标签状态保存和恢复，保留标签 URL、标题、缩略图和可恢复的 Gecko `SessionState`。
 - 移动端链接打开策略：普通点击拦截 `target=_blank` 新窗口请求并在当前标签页直接跳转；长按链接时再提供“在新标签页打开”。
 - 内置页面：主页、搜索、设置、WebApp 管理、书签、历史。
+- 设置页支持搜索引擎、自定义搜索 URL、地址栏位置、后台视频播放增强、电池优化入口和应用更新。
 - 书签、历史、设置、下载记录、favicon 缓存和 WebApp 定义使用 App 私有目录 JSON/文件保存。
 - 当前页面可安装为 WebApp，并支持创建 Android pinned shortcut。
 - 独立 `WebAppActivity`，用于类 App 方式启动已安装网页。
 - Android AMO 扩展搜索、XPI 安装、启用/禁用、卸载、扩展菜单 action 和 popup。
 - 内置 WebExtension bridge，让内置 React 页面通过 `window.hyperBrowser` 调用 Kotlin 浏览器壳能力。
-- GeckoView 媒体会话通知，支持从系统通知执行播放、暂停、前后跳转等媒体动作。
+- 多标签 / WebApp 媒体并行，关闭 GeckoView 音频焦点自动接管，多个页面可以同时播放音频。
+- GeckoView 媒体会话通知，支持从系统通知执行播放、暂停、前后跳转等媒体动作，并按播放源回到对应标签或 WebApp。
+- 浏览器页面和 WebApp 在播放媒体时支持进入 Picture-in-Picture。
 - 下载处理和下载列表页。
 - 下拉刷新会结合 GeckoView 滚动状态和页面内部滚动容器状态，避免内部容器未到顶部时误触发刷新。
 
