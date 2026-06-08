@@ -34,7 +34,7 @@ function SettingsPage() {
   const showBackgroundRuntime = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return true;
-    return "后台运行 电池 省电 锁屏 下载 音乐 视频 播放 battery background".includes(needle);
+    return "后台运行 电池 省电 锁屏 下载 音乐 视频 播放 youtube vimeo background".includes(needle);
   }, [query]);
   const showUpdateSettings = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -110,6 +110,16 @@ function SettingsPage() {
     window.hyperBrowser.updateToolbarPosition(toolbarPosition)
       .then((value) => setSettings(value))
       .catch(() => setLoadError("设置暂时不可用。"));
+  }
+
+  function updateBackgroundVideoEnhancement(enabled: boolean) {
+    setBatteryMessage("");
+    window.hyperBrowser.updateBackgroundVideoEnhancement(enabled)
+      .then((value) => {
+        setSettings(value);
+        setBatteryMessage(enabled ? "后台视频播放增强已开启，已打开的视频页刷新后生效。" : "后台视频播放增强已关闭，已打开的视频页刷新后生效。");
+      })
+      .catch(() => setBatteryMessage("设置暂时不可用。"));
   }
 
   function openBatteryOptimizationSettings() {
@@ -373,6 +383,19 @@ function SettingsPage() {
             </button>
             {backgroundRuntimeExpanded && (
               <>
+                <label className="settings-toggle-row">
+                  <span className="settings-toggle-copy">
+                    <span className="settings-row-title">后台视频播放增强</span>
+                    <span className="settings-toggle-description">针对 YouTube / Vimeo，减少切后台后网页主动暂停播放。</span>
+                  </span>
+                  <input
+                    className="settings-toggle"
+                    type="checkbox"
+                    checked={!!settings?.backgroundVideoEnhancementEnabled}
+                    disabled={!settings}
+                    onChange={(event) => updateBackgroundVideoEnhancement(event.currentTarget.checked)}
+                  />
+                </label>
                 <p className="settings-message">
                   如果锁屏后下载、音乐播放或视频播放被系统中断，可将 Hyper Browser 设为电池无限制或允许后台运行。
                 </p>

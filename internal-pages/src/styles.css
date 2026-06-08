@@ -942,6 +942,35 @@ a {
   font-size: 16px;
 }
 
+.settings-toggle-row {
+  display: flex;
+  min-height: 70px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 18px;
+  background: #fff;
+}
+
+.settings-toggle-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.settings-toggle-description {
+  color: #666b73;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.settings-toggle {
+  width: 48px;
+  height: 28px;
+  flex: 0 0 auto;
+  accent-color: #1a73e8;
+}
+
 .settings-inline-error {
   margin: 0;
   background: #fff;

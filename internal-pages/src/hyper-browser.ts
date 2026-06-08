@@ -42,6 +42,7 @@ type BrowserSettings = {
   searchEngineName: string;
   customSearchUrl: string;
   toolbarPosition: "top" | "bottom";
+  backgroundVideoEnhancementEnabled: boolean;
 };
 
 type UpdateAsset = {
@@ -107,6 +108,7 @@ type HyperBrowserApi = {
   requestSettingsData(): Promise<BrowserSettings>;
   updateSearchEngine(searchEngineId: BrowserSettings["searchEngineId"], customSearchUrl?: string): Promise<BrowserSettings>;
   updateToolbarPosition(toolbarPosition: BrowserSettings["toolbarPosition"]): Promise<BrowserSettings>;
+  updateBackgroundVideoEnhancement(enabled: boolean): Promise<BrowserSettings>;
   requestBatteryOptimizationState(): Promise<BatteryOptimizationState>;
   openBatteryOptimizationSettings(): Promise<BatteryOptimizationState>;
   checkUpdate(ignoreSkipped?: boolean): Promise<UpdateCheckResult>;
@@ -209,6 +211,10 @@ window.hyperBrowser = {
   },
   updateToolbarPosition(toolbarPosition) {
     return send("settings.toolbarPosition.update", { toolbarPosition })
+      .then((response) => response.data as BrowserSettings);
+  },
+  updateBackgroundVideoEnhancement(enabled) {
+    return send("settings.backgroundVideoEnhancement.update", { enabled: enabled ? "true" : "false" })
       .then((response) => response.data as BrowserSettings);
   },
   requestBatteryOptimizationState() {

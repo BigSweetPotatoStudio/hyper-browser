@@ -359,6 +359,10 @@ private fun BrowserScreen(
                 profileStore.updateToolbarPosition(payload.optString("toolbarPosition"))
                 okData(profileStore.observeSettings().value.toJson())
             }
+            "settings.backgroundVideoEnhancement.update" -> {
+                profileStore.updateBackgroundVideoEnhancement(payload.optString("enabled") == "true")
+                okData(profileStore.observeSettings().value.toJson())
+            }
             "settings.batteryOptimizationState" -> okData(
                 JSONObject().put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
             )

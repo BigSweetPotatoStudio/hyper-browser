@@ -22,6 +22,7 @@ import com.dadigua.hyperbrowser.browser.DownloadHandler
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
+import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 
 data class GeckoPageState(
     val title: String = "",
@@ -261,7 +262,7 @@ class GeckoSessionController(
 
             override fun onPlay(session: GeckoSession, mediaSession: MediaSession) {
                 logMediaDelegateEvent("play", session, mediaSession)
-                mediaNotifications.onPlay(session, mediaSession)
+                mediaNotifications.onPlay(session, mediaSession, currentMediaOwnerInfo(session))
             }
 
             override fun onPause(session: GeckoSession, mediaSession: MediaSession) {
@@ -515,6 +516,14 @@ class GeckoSessionController(
                 }
                 BrowserMediaNotificationController.get(appContext).stopPageKeepAlive(ownerSession)
                 return org.json.JSONObject().put("ok", true)
+            }
+            "settings.backgroundVideoEnhancement.enabled" -> {
+                val enabled = BrowserProfileStore
+                    .loadBrowserSettings(appContext)
+                    .backgroundVideoEnhancementEnabled
+                return org.json.JSONObject()
+                    .put("ok", true)
+                    .put("data", org.json.JSONObject().put("enabled", enabled))
             }
         }
         return onHyperBridgeMessage?.invoke(message)

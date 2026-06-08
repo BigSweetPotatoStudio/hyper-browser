@@ -32,6 +32,7 @@ internal fun BrowserSettings.toJson(): JSONObject =
         .put("searchEngineName", searchEngineName)
         .put("customSearchUrl", customSearchUrl)
         .put("toolbarPosition", toolbarPosition)
+        .put("backgroundVideoEnhancementEnabled", backgroundVideoEnhancementEnabled)
 
 internal fun UpdateCheckResult.toJson(): JSONObject =
     JSONObject()

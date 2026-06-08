@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Hyper Browser Internal Pages",
-  "version": "1.11",
+  "version": "1.12",
   "browser_specific_settings": {
     "gecko": {
       "id": "hyper-browser-internal@dadigua.com"
@@ -28,6 +28,18 @@
         "pull-refresh-content.js",
         "ime-focus-reveal-content.js",
         "media-keepalive-content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://*.youtube-nocookie.com/*",
+        "*://*.vimeo.com/*"
+      ],
+      "js": [
+        "background-video-enhancement-content.js"
       ],
       "run_at": "document_start",
       "all_frames": true

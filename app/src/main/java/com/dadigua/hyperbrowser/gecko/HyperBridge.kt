@@ -161,7 +161,8 @@ object HyperBridge {
         return (type == "pullRefresh.touch" ||
             type == "media.keepAlive.start" ||
             type == "media.keepAlive.pause" ||
-            type == "media.keepAlive.stop") &&
+            type == "media.keepAlive.stop" ||
+            type == "settings.backgroundVideoEnhancement.enabled") &&
             (sender.url.startsWith("https://") || sender.url.startsWith("http://"))
     }
 

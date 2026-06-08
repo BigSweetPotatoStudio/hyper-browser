@@ -181,14 +181,11 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         publishIfNeeded()
     }
 
-    fun onPlay(owner: GeckoSession, mediaSession: MediaSession) {
-        val state = owners[owner] ?: run {
-            logControllerEvent(
-                "play.missing",
-                null,
-                "owner=${System.identityHashCode(owner)} media=${System.identityHashCode(mediaSession)}"
-            )
-            return
+    fun onPlay(owner: GeckoSession, mediaSession: MediaSession, ownerInfo: BrowserMediaOwnerInfo) {
+        val recovered = !owners.containsKey(owner)
+        val state = stateFor(owner, ownerInfo)
+        if (state.mediaSession == null) {
+            state.mediaSession = mediaSession
         }
         if (state.mediaSession != mediaSession) {
             logControllerEvent("play.ignored", state, "staleMedia=${System.identityHashCode(mediaSession)}")
@@ -198,7 +195,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         state.playing = true
         state.touch()
         primaryOwner = owner
-        logControllerEvent("play", state)
+        logControllerEvent(if (recovered) "play.recovered" else "play", state)
         publishIfNeeded(force = true)
     }
 

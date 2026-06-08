@@ -27,7 +27,8 @@ data class BrowserBookmark(
 data class BrowserSettings(
     val searchEngineId: String = SEARCH_ENGINE_GOOGLE,
     val customSearchUrl: String = "",
-    val toolbarPosition: String = TOOLBAR_POSITION_TOP
+    val toolbarPosition: String = TOOLBAR_POSITION_TOP,
+    val backgroundVideoEnhancementEnabled: Boolean = false
 ) {
     val searchEngineName: String
         get() = when (searchEngineId) {
@@ -71,7 +72,7 @@ data class SavedBrowserTabs(
 class BrowserProfileStore(context: Context) {
     private val historyFile = File(context.filesDir, "browser_history.json")
     private val bookmarksFile = File(context.filesDir, "browser_bookmarks.json")
-    private val settingsFile = File(context.filesDir, "browser_settings.json")
+    private val settingsFile = File(context.filesDir, SETTINGS_FILE_NAME)
     private val tabsFile = File(context.filesDir, "browser_tabs.json")
     private val tabSessionStateDir = File(context.filesDir, "browser_tab_states")
     private val tabThumbnailDir = File(context.filesDir, "browser_tab_thumbnails")
@@ -278,6 +279,12 @@ class BrowserProfileStore(context: Context) {
         saveSettings(next)
     }
 
+    fun updateBackgroundVideoEnhancement(enabled: Boolean) {
+        val next = settingsState.value.copy(backgroundVideoEnhancementEnabled = enabled)
+        settingsState.value = next
+        saveSettings(next)
+    }
+
     private fun loadHistory(): List<BrowserHistoryEntry> {
         if (!historyFile.exists()) return emptyList()
         return runCatching {
@@ -319,15 +326,7 @@ class BrowserProfileStore(context: Context) {
     }
 
     private fun loadSettings(): BrowserSettings {
-        if (!settingsFile.exists()) return BrowserSettings()
-        return runCatching {
-            val item = JSONObject(settingsFile.readText())
-            BrowserSettings(
-                searchEngineId = item.optString("searchEngineId", BrowserSettings.SEARCH_ENGINE_GOOGLE),
-                customSearchUrl = item.optString("customSearchUrl"),
-                toolbarPosition = item.optString("toolbarPosition", BrowserSettings.TOOLBAR_POSITION_TOP)
-            )
-        }.getOrDefault(BrowserSettings())
+        return loadBrowserSettings(settingsFile)
     }
 
     private fun saveHistory(items: List<BrowserHistoryEntry>) {
@@ -364,6 +363,7 @@ class BrowserProfileStore(context: Context) {
                 .put("searchEngineId", settings.searchEngineId)
                 .put("customSearchUrl", settings.customSearchUrl)
                 .put("toolbarPosition", settings.toolbarPosition)
+                .put("backgroundVideoEnhancementEnabled", settings.backgroundVideoEnhancementEnabled)
                 .toString()
         )
     }
@@ -410,8 +410,25 @@ class BrowserProfileStore(context: Context) {
         )
     }
 
-    private companion object {
-        const val TAB_THUMBNAIL_MAX_WIDTH = 480
-        const val TAB_THUMBNAIL_MAX_HEIGHT = 720
+    companion object {
+        private const val SETTINGS_FILE_NAME = "browser_settings.json"
+        private const val TAB_THUMBNAIL_MAX_WIDTH = 480
+        private const val TAB_THUMBNAIL_MAX_HEIGHT = 720
+
+        fun loadBrowserSettings(context: Context): BrowserSettings =
+            loadBrowserSettings(File(context.filesDir, SETTINGS_FILE_NAME))
+
+        private fun loadBrowserSettings(file: File): BrowserSettings {
+            if (!file.exists()) return BrowserSettings()
+            return runCatching {
+                val item = JSONObject(file.readText())
+                BrowserSettings(
+                    searchEngineId = item.optString("searchEngineId", BrowserSettings.SEARCH_ENGINE_GOOGLE),
+                    customSearchUrl = item.optString("customSearchUrl"),
+                    toolbarPosition = item.optString("toolbarPosition", BrowserSettings.TOOLBAR_POSITION_TOP),
+                    backgroundVideoEnhancementEnabled = item.optBoolean("backgroundVideoEnhancementEnabled", false)
+                )
+            }.getOrDefault(BrowserSettings())
+        }
     }
 }
