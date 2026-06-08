@@ -1172,7 +1172,8 @@ private fun BrowserScreen(
                         tabId = tab.id,
                         extensionPopup = extensionPopup,
                         onClosePopup = app.extensions::closePopup,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        imeAvoidanceEnabled = !editingAddress
                     )
                     toolbar()
                 } else {
@@ -1182,7 +1183,8 @@ private fun BrowserScreen(
                         tabId = tab.id,
                         extensionPopup = extensionPopup,
                         onClosePopup = app.extensions::closePopup,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        imeAvoidanceEnabled = !editingAddress
                     )
                 }
             } else {

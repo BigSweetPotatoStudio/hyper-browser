@@ -8,6 +8,8 @@ import android.widget.FrameLayout
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -37,11 +39,16 @@ import org.mozilla.geckoview.GeckoView
 import kotlin.math.abs
 
 @Composable
-fun GeckoBrowserView(controller: GeckoSessionController, modifier: Modifier = Modifier) {
+fun GeckoBrowserView(
+    controller: GeckoSessionController,
+    modifier: Modifier = Modifier,
+    imeAvoidanceEnabled: Boolean = true
+) {
     val pageState by controller.state.collectAsState()
     val sessionChangeVersion by controller.sessionChangeVersion.collectAsState()
     val pullRefreshEnabled = !GeckoSessionController.isInternalUrl(pageState.url)
     val density = LocalDensity.current
+    val imeBottomPx = if (imeAvoidanceEnabled) WindowInsets.ime.getBottom(density) else 0
     val triggerDistancePx = with(density) { 72.dp.toPx() }
     val maxPullDistancePx = with(density) { 96.dp.toPx() }
     val indicatorSize = 44.dp
@@ -87,6 +94,7 @@ fun GeckoBrowserView(controller: GeckoSessionController, modifier: Modifier = Mo
                 }
                 controller.attachView(container.geckoView)
                 attachedView[0] = container.geckoView
+                container.configureImeBottom(imeBottomPx)
                 container.configurePullRefresh(
                     enabled = pullRefreshEnabled && !refreshing,
                     triggerDistancePx = triggerDistancePx,
@@ -129,12 +137,19 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
     private var contentCanStartPullRefresh: () -> Boolean = { true }
     private var onPull: (Float) -> Unit = {}
     private var onRefresh: () -> Unit = {}
+    private var imeBottomPx = 0
 
     init {
         addView(
             geckoView,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         )
+    }
+
+    fun configureImeBottom(imeBottomPx: Int) {
+        if (this.imeBottomPx == imeBottomPx) return
+        this.imeBottomPx = imeBottomPx
+        post { applyImeClipping() }
     }
 
     fun configurePullRefresh(
@@ -156,6 +171,11 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
         if (!enabled) {
             resetPull()
         }
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        applyImeClipping()
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -221,6 +241,38 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
 
     private fun cancelEventFrom(event: MotionEvent): MotionEvent =
         MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+
+    private fun applyImeClipping() {
+        if (height <= 0) return
+        val overlapPx = calculateImeOverlapPx()
+        val targetHeight = if (overlapPx > 0) {
+            (height - overlapPx).coerceAtLeast(1)
+        } else {
+            LayoutParams.MATCH_PARENT
+        }
+        val params = geckoView.layoutParams as LayoutParams
+        if (params.height != targetHeight || params.width != LayoutParams.MATCH_PARENT) {
+            geckoView.layoutParams = params.apply {
+                width = LayoutParams.MATCH_PARENT
+                height = targetHeight
+            }
+        }
+    }
+
+    private fun calculateImeOverlapPx(): Int {
+        if (imeBottomPx <= 0) return 0
+        val root = rootView ?: return imeBottomPx.coerceIn(0, height)
+        if (root.height <= 0) return imeBottomPx.coerceIn(0, height)
+
+        val rootLocation = IntArray(2)
+        val containerLocation = IntArray(2)
+        root.getLocationOnScreen(rootLocation)
+        getLocationOnScreen(containerLocation)
+
+        val imeTopOnScreen = rootLocation[1] + root.height - imeBottomPx
+        val containerBottomOnScreen = containerLocation[1] + height
+        return (containerBottomOnScreen - imeTopOnScreen).coerceIn(0, height)
+    }
 }
 
 @Composable

@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <title>IME Bottom Input Test</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f5f7fb;
+        color: #172033;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        overflow-x: hidden;
+      }
+
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        padding: 14px 16px;
+        border-bottom: 1px solid #dce3ee;
+        background: #ffffff;
+      }
+
+      h1 {
+        margin: 0 0 6px;
+        font-size: 20px;
+        line-height: 1.25;
+      }
+
+      .hint {
+        margin: 0;
+        color: #596579;
+        font-size: 14px;
+        line-height: 1.45;
+      }
+
+      main {
+        padding: 14px 14px 92px;
+      }
+
+      .panel {
+        margin-bottom: 14px;
+        padding: 14px;
+        border: 1px solid #dce3ee;
+        border-radius: 10px;
+        background: #ffffff;
+      }
+
+      .panel h2 {
+        margin: 0 0 8px;
+        font-size: 16px;
+      }
+
+      .panel p {
+        margin: 0;
+        color: #46536a;
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      .status {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .metric {
+        padding: 10px;
+        border-radius: 8px;
+        background: #eef3fb;
+        font-size: 13px;
+      }
+
+      .metric strong {
+        display: block;
+        margin-bottom: 4px;
+        color: #263248;
+      }
+
+      .spacer {
+        height: 90vh;
+        display: grid;
+        place-items: center;
+        border: 1px dashed #b7c4d8;
+        border-radius: 10px;
+        color: #64748b;
+        background: linear-gradient(180deg, #ffffff 0%, #eef4ff 100%);
+      }
+
+      .bottom-card {
+        margin: 14px 0;
+        padding: 16px;
+        border: 2px solid #2563eb;
+        border-radius: 10px;
+        background: #ffffff;
+      }
+
+      .bottom-card input {
+        width: 100%;
+        min-height: 48px;
+        margin-top: 10px;
+        padding: 0 12px;
+        border: 1px solid #9fb0c8;
+        border-radius: 8px;
+        font-size: 16px;
+      }
+
+      .composer {
+        position: fixed;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 4;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+        border-top: 1px solid #cbd5e1;
+        background: #ffffff;
+        box-shadow: 0 -8px 22px rgba(15, 23, 42, 0.16);
+      }
+
+      .composer input {
+        width: 100%;
+        min-height: 46px;
+        padding: 0 12px;
+        border: 2px solid #2563eb;
+        border-radius: 10px;
+        font-size: 16px;
+        outline: none;
+      }
+
+      .composer input:focus,
+      .bottom-card input:focus {
+        border-color: #16a34a;
+        box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.2);
+      }
+
+      .composer button {
+        min-width: 72px;
+        border: 0;
+        border-radius: 10px;
+        background: #2563eb;
+        color: #ffffff;
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .focus-log {
+        margin-top: 10px;
+        padding: 10px;
+        border-radius: 8px;
+        background: #f8fafc;
+        color: #334155;
+        font-size: 13px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>底部输入框键盘遮挡测试</h1>
+      <p class="hint">
+        重点测试底部固定输入框。点击页面最底部蓝框输入框后，键盘弹出时输入框应完整停在键盘上方。
+      </p>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>预期结果</h2>
+        <p>
+          点击底部固定输入框后，输入框、发送按钮和蓝色边框都应可见；不能被软键盘遮住。
+          如果只能看到页面上半部分，底部输入栏消失在键盘后面，就是失败。
+        </p>
+        <div class="status" aria-live="polite">
+          <div class="metric">
+            <strong>window.innerHeight</strong>
+            <span id="innerHeight">-</span>
+          </div>
+          <div class="metric">
+            <strong>visualViewport.height</strong>
+            <span id="visualHeight">-</span>
+          </div>
+          <div class="metric">
+            <strong>visualViewport.offsetTop</strong>
+            <span id="visualOffsetTop">-</span>
+          </div>
+          <div class="metric">
+            <strong>focused element</strong>
+            <span id="focused">none</span>
+          </div>
+        </div>
+        <div id="log" class="focus-log">等待操作...</div>
+      </section>
+
+      <section class="panel">
+        <h2>对照输入框</h2>
+        <p>这是页面中部输入框。它通常不会触发底部遮挡问题，用来确认键盘能正常弹出。</p>
+        <div class="bottom-card">
+          <label>
+            页面中部输入框
+            <input id="middleInput" placeholder="点这里，确认键盘能正常出现" />
+          </label>
+        </div>
+      </section>
+
+      <div class="spacer">向下滚动后再测试底部卡片和固定输入栏</div>
+
+      <section class="bottom-card">
+        <h2>滚动页底部输入框</h2>
+        <p>滚到页面底部后点击这个输入框，它也不应被键盘盖住。</p>
+        <input id="pageBottomInput" placeholder="页面底部普通输入框" />
+      </section>
+    </main>
+
+    <form class="composer" onsubmit="event.preventDefault()">
+      <input id="fixedBottomInput" placeholder="底部固定输入框：点这里测试" />
+      <button type="submit">发送</button>
+    </form>
+
+    <script>
+      const fields = {
+        innerHeight: document.getElementById("innerHeight"),
+        visualHeight: document.getElementById("visualHeight"),
+        visualOffsetTop: document.getElementById("visualOffsetTop"),
+        focused: document.getElementById("focused"),
+        log: document.getElementById("log"),
+      };
+
+      function viewportHeight() {
+        return window.visualViewport ? Math.round(window.visualViewport.height) : "-";
+      }
+
+      function viewportOffsetTop() {
+        return window.visualViewport ? Math.round(window.visualViewport.offsetTop) : "-";
+      }
+
+      function updateMetrics(reason) {
+        const active = document.activeElement;
+        fields.innerHeight.textContent = String(window.innerHeight);
+        fields.visualHeight.textContent = String(viewportHeight());
+        fields.visualOffsetTop.textContent = String(viewportOffsetTop());
+        fields.focused.textContent = active && active.id ? active.id : "none";
+        fields.log.textContent = [
+          `event: ${reason}`,
+          `time: ${new Date().toLocaleTimeString()}`,
+          `scrollY: ${Math.round(window.scrollY)}`,
+          `composerBottom: ${Math.round(document.querySelector(".composer").getBoundingClientRect().bottom)}`,
+        ].join("\n");
+      }
+
+      document.addEventListener("focusin", (event) => {
+        updateMetrics(`focusin ${event.target.id || event.target.tagName}`);
+      });
+      document.addEventListener("focusout", () => updateMetrics("focusout"));
+      window.addEventListener("resize", () => updateMetrics("window resize"));
+      window.addEventListener("scroll", () => updateMetrics("scroll"), { passive: true });
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", () => updateMetrics("visualViewport resize"));
+        window.visualViewport.addEventListener("scroll", () => updateMetrics("visualViewport scroll"));
+      }
+      updateMetrics("initial");
+    </script>
+  </body>
+</html>

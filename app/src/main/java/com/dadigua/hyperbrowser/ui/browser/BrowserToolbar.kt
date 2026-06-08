@@ -242,6 +242,7 @@ internal fun BrowserToolbar(
     val keyboardController = LocalSoftwareKeyboardController.current
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density)
+    val imeVisible = imeBottomPx > 0
     val enabledExtensions = installedExtensions.filter { it.enabled }
     val addressSuggestions = remember(addressDraftText, bookmarks, history, editingAddress) {
         if (!editingAddress) {
@@ -263,12 +264,12 @@ internal fun BrowserToolbar(
             }
         }
     }
-    val toolbarPadding = if (toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) {
+    val toolbarPadding = if (toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM && !imeVisible) {
         Modifier.navigationBarsPadding()
     } else {
         Modifier
     }
-    val toolbarImeOffset = if (toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM && editingAddress) {
+    val toolbarImeOffset = if (toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM && editingAddress && imeVisible) {
         Modifier.offset { IntOffset(0, -imeBottomPx) }
     } else {
         Modifier

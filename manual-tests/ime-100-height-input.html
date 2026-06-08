@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <title>100% Height IME Reveal Test</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f5f7fb;
+        color: #172033;
+      }
+
+      body {
+        overflow-y: auto;
+      }
+
+      .page {
+        min-height: 100%;
+        display: flex;
+        flex-direction: column;
+        padding: 22px;
+      }
+
+      .card {
+        padding: 18px;
+        border: 1px solid #dce3ee;
+        border-radius: 12px;
+        background: #ffffff;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 22px;
+      }
+
+      p {
+        margin: 0;
+        color: #526074;
+        line-height: 1.55;
+      }
+
+      .middle {
+        flex: 1;
+        display: grid;
+        place-items: center;
+        min-height: 420px;
+        color: #64748b;
+      }
+
+      .bottom {
+        border: 2px solid #2563eb;
+      }
+
+      input {
+        width: 100%;
+        min-height: 50px;
+        margin-top: 12px;
+        padding: 0 12px;
+        border: 1px solid #9fb0c8;
+        border-radius: 10px;
+        font-size: 16px;
+      }
+
+      input:focus {
+        border-color: #16a34a;
+        box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.2);
+        outline: none;
+      }
+
+      .metrics {
+        margin-top: 12px;
+        padding: 10px;
+        border-radius: 8px;
+        background: #eef3fb;
+        font-size: 13px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="card">
+        <h1>100% 页面底部输入框测试</h1>
+        <p>这个页面的 html/body 高度是 100%。点击最底部输入框后，页面应自动滚动让输入框进入键盘上方的可视区域。</p>
+        <div id="metrics" class="metrics">等待操作...</div>
+      </section>
+
+      <div class="middle">中间占位区域</div>
+
+      <section class="card bottom">
+        <strong>页面最底部输入框</strong>
+        <input id="bottomInput" placeholder="点这里，键盘弹出后应自动滚到这里" />
+      </section>
+    </main>
+
+    <script>
+      const metrics = document.getElementById("metrics");
+
+      function update(reason) {
+        const active = document.activeElement;
+        metrics.textContent = [
+          `event: ${reason}`,
+          `innerHeight: ${window.innerHeight}`,
+          `visualViewport.height: ${window.visualViewport ? Math.round(window.visualViewport.height) : "-"}`,
+          `scrollY: ${Math.round(window.scrollY)}`,
+          `focused: ${active && active.id ? active.id : "none"}`,
+        ].join("\n");
+      }
+
+      document.addEventListener("focusin", () => update("focusin"));
+      document.addEventListener("focusout", () => update("focusout"));
+      window.addEventListener("resize", () => update("resize"));
+      window.addEventListener("scroll", () => update("scroll"), { passive: true });
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", () => update("visualViewport resize"));
+      }
+      update("initial");
+    </script>
+  </body>
+</html>
