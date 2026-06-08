@@ -30,7 +30,7 @@ $assets = foreach ($abi in $abis) {
     $apkName = "HyperBrowser-$abi-release.apk"
     $apkPath = Join-Path $apkDir $apkName
     if (-not (Test-Path -LiteralPath $apkPath)) {
-        throw "Missing signed APK for $abi: $apkPath"
+        throw "Missing signed APK for ${abi}: $apkPath"
     }
 
     $item = Get-Item -LiteralPath $apkPath

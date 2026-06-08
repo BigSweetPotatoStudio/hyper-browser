@@ -1,9 +1,28 @@
-{
-  "channel": "stable",
-  "versionCode": 5,
-  "versionName": "0.1.4",
-  "minSdk": 26,
-  "notes": "当前稳定更新索引尚未发布 signed release APK。发版后请按 docs/RELEASE.md 填入每个 ABI 的正式资产。",
-  "releaseUrl": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases",
-  "assets": []
+﻿{
+    "channel":  "stable",
+    "versionCode":  5,
+    "versionName":  "0.1.4",
+    "minSdk":  26,
+    "notes":  "首个正式签名的开源发布版本，补齐开源文档、CI、发布流程，并关闭 release 包的 Gecko remote debugging。",
+    "releaseUrl":  "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/tag/v0.1.4",
+    "assets":  [
+                   {
+                       "abi":  "arm64-v8a",
+                       "url":  "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.4/HyperBrowser-arm64-v8a-release.apk",
+                       "sha256":  "51ad441bc8f2040435586f697fb1181d7e6e9b39eb87e4e9d99e207682e19ae5",
+                       "sizeBytes":  203600960
+                   },
+                   {
+                       "abi":  "armeabi-v7a",
+                       "url":  "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.4/HyperBrowser-armeabi-v7a-release.apk",
+                       "sha256":  "8ad8a1281cb9f7da62b8647e077c82f8609f47c783c9ece2280dfe97c0850ac5",
+                       "sizeBytes":  165901404
+                   },
+                   {
+                       "abi":  "x86_64",
+                       "url":  "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.4/HyperBrowser-x86_64-release.apk",
+                       "sha256":  "a282f66ea748a1055b1dd42129d127fa62cb04eded38aef96a3ba5006032a751",
+                       "sizeBytes":  222462998
+                   }
+               ]
 }
