@@ -6,6 +6,8 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+## 0.1.4 - 2026-06-08
+
 - Added open-source project documentation: license, privacy policy, security policy, contribution guide, and release checklist.
 - Tightened release workflow expectations around type checks, unit tests, and persistent signing keys.
 - Disabled Gecko remote debugging for non-debuggable builds.
