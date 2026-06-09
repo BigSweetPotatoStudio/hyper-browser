@@ -7,6 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
@@ -23,15 +26,49 @@ class BrowserMediaNotificationController private constructor(context: Context) {
     private val appContext = context.applicationContext
     private val notifications = NotificationManagerCompat.from(appContext)
     private val faviconStore = FaviconRepository(appContext)
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val owners = linkedMapOf<GeckoSession, PlaybackOwnerState>()
     private var primaryOwner: GeckoSession? = null
+    private var backgroundResumeOwnerKey: String? = null
+    private var backgroundResumeUntilMillis: Long = 0L
+    private var backgroundResumeAttempts: Int = 0
+    private var explicitPauseSuppressUntilMillis: Long = 0L
 
     val hasActivePlayback: Boolean
         get() = owners.values.any { it.hasActivePlayback }
 
     val hasActiveVideoPlayback: Boolean
         get() = owners.values.any { it.hasActivePlayback && it.fullscreenVideo }
+
+    fun allowBackgroundPlaybackResume(durationMs: Long = BACKGROUND_RESUME_WINDOW_MS) {
+        if (!BrowserProfileStore.loadBrowserSettings(appContext).backgroundVideoEnhancementEnabled) {
+            logControllerEvent("backgroundResume.disabled", primaryState())
+            return
+        }
+        val state = primaryState()?.takeIf { it.hasRealActivePlayback } ?: owners.values
+            .filter { it.hasRealActivePlayback }
+            .maxByOrNull { it.lastActiveAt }
+            ?: run {
+                logControllerEvent("backgroundResume.skipped", primaryState(), "no-active-playback")
+                return
+            }
+        backgroundResumeOwnerKey = state.actionKey
+        backgroundResumeUntilMillis = SystemClock.uptimeMillis() + durationMs
+        backgroundResumeAttempts = 0
+        logControllerEvent("backgroundResume.armed", state, "durationMs=$durationMs")
+    }
+
+    fun cancelBackgroundPlaybackResume(reason: String) {
+        if (backgroundResumeOwnerKey == null && backgroundResumeUntilMillis == 0L) return
+        val state = backgroundResumeOwnerKey
+            ?.let { key -> owners.values.firstOrNull { it.actionKey == key } }
+            ?: primaryState()
+        backgroundResumeOwnerKey = null
+        backgroundResumeUntilMillis = 0L
+        backgroundResumeAttempts = 0
+        logControllerEvent("backgroundResume.cancel", state, reason)
+    }
 
     fun onActivated(owner: GeckoSession, mediaSession: MediaSession, ownerInfo: BrowserMediaOwnerInfo) {
         val state = stateFor(owner, ownerInfo)
@@ -197,6 +234,9 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         primaryOwner = owner
         logControllerEvent(if (recovered) "play.recovered" else "play", state)
         publishIfNeeded(force = true)
+        if (backgroundResumeOwnerKey == state.actionKey && backgroundResumeAttempts > 0) {
+            cancelBackgroundPlaybackResume("resumed")
+        }
     }
 
     fun onPause(owner: GeckoSession, mediaSession: MediaSession) {
@@ -216,6 +256,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         state.touch()
         logControllerEvent("pause", state)
         publishIfNeeded(force = true)
+        maybeResumeBackgroundPause(state, mediaSession)
     }
 
     fun onStop(owner: GeckoSession, mediaSession: MediaSession) {
@@ -264,8 +305,14 @@ class BrowserMediaNotificationController private constructor(context: Context) {
             ?: primaryState()
             ?: return
         when (action) {
-            BrowserMediaActionReceiver.ACTION_PLAY -> state.mediaSession?.play()
-            BrowserMediaActionReceiver.ACTION_PAUSE -> state.mediaSession?.pause()
+            BrowserMediaActionReceiver.ACTION_PLAY -> {
+                explicitPauseSuppressUntilMillis = 0L
+                state.mediaSession?.play()
+            }
+            BrowserMediaActionReceiver.ACTION_PAUSE -> {
+                markExplicitPause(state)
+                state.mediaSession?.pause()
+            }
             BrowserMediaActionReceiver.ACTION_STOP -> Unit
             BrowserMediaActionReceiver.ACTION_SEEK_FORWARD -> state.mediaSession?.seekForward()
             BrowserMediaActionReceiver.ACTION_SEEK_BACKWARD -> state.mediaSession?.seekBackward()
@@ -430,11 +477,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         if (state.hasFeature(Feature.SEEK_BACKWARD)) {
             items += action(state, android.R.drawable.ic_media_rew, "Rewind", BrowserMediaActionReceiver.ACTION_SEEK_BACKWARD)
         }
-        if (state.playing && state.hasFeature(Feature.PAUSE)) {
-            items += action(state, android.R.drawable.ic_media_pause, "Pause", BrowserMediaActionReceiver.ACTION_PAUSE)
-        } else if (!state.playing && state.hasFeature(Feature.PLAY)) {
-            items += action(state, android.R.drawable.ic_media_play, "Play", BrowserMediaActionReceiver.ACTION_PLAY)
-        }
+        items += playPauseAction(state)
         if (state.hasFeature(Feature.SEEK_FORWARD)) {
             items += action(state, android.R.drawable.ic_media_ff, "Forward", BrowserMediaActionReceiver.ACTION_SEEK_FORWARD)
         }
@@ -443,13 +486,6 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         }
         if (state.hasFeature(Feature.NEXT_TRACK)) {
             items += action(state, android.R.drawable.ic_media_next, "Next", BrowserMediaActionReceiver.ACTION_NEXT)
-        }
-        if (items.isEmpty()) {
-            items += if (state.playing) {
-                action(state, android.R.drawable.ic_media_pause, "Pause", BrowserMediaActionReceiver.ACTION_PAUSE)
-            } else {
-                action(state, android.R.drawable.ic_media_play, "Play", BrowserMediaActionReceiver.ACTION_PLAY)
-            }
         }
         return items.take(5)
     }
@@ -462,25 +498,15 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         if (state.mediaSession == null) {
             return items
         }
-        if (state.playing && state.hasFeature(Feature.PAUSE)) {
-            items += action(state, android.R.drawable.ic_media_pause, "Pause", BrowserMediaActionReceiver.ACTION_PAUSE)
-        } else if (!state.playing && state.hasFeature(Feature.PLAY)) {
-            items += action(state, android.R.drawable.ic_media_play, "Play", BrowserMediaActionReceiver.ACTION_PLAY)
-        }
-        if (items.size == 1) {
-            items += if (state.playing) {
-                action(state, android.R.drawable.ic_media_pause, "Pause", BrowserMediaActionReceiver.ACTION_PAUSE)
-            } else {
-                action(state, android.R.drawable.ic_media_play, "Play", BrowserMediaActionReceiver.ACTION_PLAY)
-            }
-        }
+        items += playPauseAction(state)
         return items.take(3)
     }
 
     private fun supportedPlaybackActions(state: PlaybackOwnerState): Long {
         var actions = 0L
-        if (state.hasFeature(Feature.PLAY)) actions = actions or PlaybackStateCompat.ACTION_PLAY
-        if (state.hasFeature(Feature.PAUSE)) actions = actions or PlaybackStateCompat.ACTION_PAUSE
+        if (state.mediaSession != null) {
+            actions = actions or PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE
+        }
         if (state.hasFeature(Feature.SEEK_TO)) actions = actions or PlaybackStateCompat.ACTION_SEEK_TO
         if (state.hasFeature(Feature.SEEK_FORWARD)) actions = actions or PlaybackStateCompat.ACTION_FAST_FORWARD
         if (state.hasFeature(Feature.SEEK_BACKWARD)) actions = actions or PlaybackStateCompat.ACTION_REWIND
@@ -488,6 +514,13 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         if (state.hasFeature(Feature.PREVIOUS_TRACK)) actions = actions or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
         return actions
     }
+
+    private fun playPauseAction(state: PlaybackOwnerState): NotificationCompat.Action =
+        if (state.playing) {
+            action(state, android.R.drawable.ic_media_pause, "Pause", BrowserMediaActionReceiver.ACTION_PAUSE)
+        } else {
+            action(state, android.R.drawable.ic_media_play, "Play", BrowserMediaActionReceiver.ACTION_PLAY)
+        }
 
     private fun action(state: PlaybackOwnerState, icon: Int, title: String, action: String): NotificationCompat.Action =
         NotificationCompat.Action.Builder(
@@ -551,6 +584,37 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         } else {
             publishIfNeeded(force = true)
         }
+    }
+
+    private fun maybeResumeBackgroundPause(state: PlaybackOwnerState, mediaSession: MediaSession) {
+        val now = SystemClock.uptimeMillis()
+        if (now > backgroundResumeUntilMillis) return
+        if (now < explicitPauseSuppressUntilMillis) return
+        if (backgroundResumeOwnerKey != state.actionKey) return
+        if (backgroundResumeAttempts >= BACKGROUND_RESUME_MAX_ATTEMPTS) return
+        if (!state.active || state.mediaSession != mediaSession) return
+
+        val attempt = ++backgroundResumeAttempts
+        logControllerEvent("backgroundResume.schedule", state, "attempt=$attempt")
+        mainHandler.postDelayed({
+            val latest = owners[state.owner] ?: return@postDelayed
+            val currentTime = SystemClock.uptimeMillis()
+            if (currentTime > backgroundResumeUntilMillis) return@postDelayed
+            if (currentTime < explicitPauseSuppressUntilMillis) return@postDelayed
+            if (backgroundResumeOwnerKey != latest.actionKey) return@postDelayed
+            if (latest.mediaSession != mediaSession || latest.playing || !latest.active) {
+                return@postDelayed
+            }
+            logControllerEvent("backgroundResume.play", latest, "attempt=$attempt")
+            runCatching { mediaSession.play() }
+                .onFailure { error -> logControllerEvent("backgroundResume.failed", latest, error.message.orEmpty()) }
+        }, BACKGROUND_RESUME_DELAY_MS)
+    }
+
+    private fun markExplicitPause(state: PlaybackOwnerState) {
+        explicitPauseSuppressUntilMillis = SystemClock.uptimeMillis() + EXPLICIT_PAUSE_SUPPRESS_MS
+        if (backgroundResumeOwnerKey == state.actionKey) cancelBackgroundPlaybackResume("explicit-pause")
+        logControllerEvent("backgroundResume.explicitPause", state)
     }
 
     private fun primaryState(): PlaybackOwnerState? {
@@ -651,10 +715,12 @@ class BrowserMediaNotificationController private constructor(context: Context) {
                 setCallback(
                     object : MediaSessionCompat.Callback() {
                         override fun onPlay() {
+                            explicitPauseSuppressUntilMillis = 0L
                             this@PlaybackOwnerState.mediaSession?.play()
                         }
 
                         override fun onPause() {
+                            markExplicitPause(this@PlaybackOwnerState)
                             this@PlaybackOwnerState.mediaSession?.pause()
                         }
 
@@ -796,6 +862,10 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         private const val MEDIA_DEBUG_TAG = "HyperMediaDebug"
         private const val FALLBACK_MEDIA_KIND_WEBRTC_AUDIO = "webrtc-audio"
         private const val LARGE_ICON_SIZE = 128
+        private const val BACKGROUND_RESUME_WINDOW_MS = 12_000L
+        private const val BACKGROUND_RESUME_DELAY_MS = 700L
+        private const val BACKGROUND_RESUME_MAX_ATTEMPTS = 3
+        private const val EXPLICIT_PAUSE_SUPPRESS_MS = 4_000L
 
         @Volatile
         private var instance: BrowserMediaNotificationController? = null

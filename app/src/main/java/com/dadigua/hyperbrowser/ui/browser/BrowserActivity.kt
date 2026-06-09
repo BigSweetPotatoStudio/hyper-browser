@@ -115,8 +115,14 @@ class BrowserActivity : ComponentActivity() {
         intent.toExternalBrowserIntent()?.let { externalIntents.tryEmit(it) }
     }
 
+    override fun onResume() {
+        super.onResume()
+        BrowserMediaNotificationController.get(this).cancelBackgroundPlaybackResume("foreground")
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+        BrowserMediaNotificationController.get(this).allowBackgroundPlaybackResume()
         enterPictureInPictureIfMediaPlaying()
     }
 

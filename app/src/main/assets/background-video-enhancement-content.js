@@ -8,7 +8,7 @@
   const IS_VIMEO = window.location.hostname.search(/(?:^|.+\.)vimeo\.com/) > -1;
   const IS_ANDROID = window.navigator.userAgent.indexOf("Android") > -1;
 
-  if ((!IS_YOUTUBE && !IS_VIMEO) || window.__hyperBackgroundVideoEnhancementLoaded) {
+  if (window.__hyperBackgroundVideoEnhancementLoaded) {
     return;
   }
   window.__hyperBackgroundVideoEnhancementLoaded = true;

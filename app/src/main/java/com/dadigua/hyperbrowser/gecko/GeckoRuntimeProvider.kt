@@ -75,5 +75,8 @@ object GeckoRuntimeProvider {
     private const val GECKO_CONFIG_CONTENT = """
         prefs:
           media.audioFocus.management: false
+          media.suspend-bkgnd-video.enabled: false
+          media.block-autoplay-until-in-foreground: false
+          dom.suspend_inactive.enabled: false
     """
 }

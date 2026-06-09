@@ -386,7 +386,7 @@ function SettingsPage() {
                 <label className="settings-toggle-row">
                   <span className="settings-toggle-copy">
                     <span className="settings-row-title">后台视频播放增强</span>
-                    <span className="settings-toggle-description">针对 YouTube / Vimeo，减少切后台后网页主动暂停播放。</span>
+                    <span className="settings-toggle-description">对所有网页启用，减少切后台后网页主动暂停播放。</span>
                   </span>
                   <input
                     className="settings-toggle"

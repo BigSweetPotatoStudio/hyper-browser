@@ -95,8 +95,14 @@ class WebAppActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    override fun onResume() {
+        super.onResume()
+        BrowserMediaNotificationController.get(this).cancelBackgroundPlaybackResume("foreground")
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+        BrowserMediaNotificationController.get(this).allowBackgroundPlaybackResume()
         enterPictureInPictureIfMediaPlaying()
     }
 
