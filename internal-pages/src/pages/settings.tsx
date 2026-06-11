@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
-import type { BatteryOptimizationState, BrowserSettings, UpdateCheckResult, UpdateDownloadState } from "../hyper-browser";
+import type { BatteryOptimizationState, BrowserSettings, ClearBrowsingDataResult, UpdateCheckResult, UpdateDownloadState } from "../hyper-browser";
+
+const HELP_URL = "https://github.com/BigSweetPotatoStudio/hyper-browser";
 
 function SettingsPage() {
   const [query, setQuery] = useState("");
@@ -16,10 +18,14 @@ function SettingsPage() {
   const [updateChecking, setUpdateChecking] = useState(false);
   const [batteryMessage, setBatteryMessage] = useState("");
   const [updateMessage, setUpdateMessage] = useState("");
+  const [privacyMessage, setPrivacyMessage] = useState("");
   const [searchEngineExpanded, setSearchEngineExpanded] = useState(false);
   const [toolbarExpanded, setToolbarExpanded] = useState(false);
   const [backgroundRuntimeExpanded, setBackgroundRuntimeExpanded] = useState(false);
   const [updateSettingsExpanded, setUpdateSettingsExpanded] = useState(false);
+  const [privacyExpanded, setPrivacyExpanded] = useState(false);
+  const [clearConfirmVisible, setClearConfirmVisible] = useState(false);
+  const [clearBrowsingDataInFlight, setClearBrowsingDataInFlight] = useState(false);
   const customInputRef = useRef<HTMLInputElement | null>(null);
   const showSearchEngine = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -41,6 +47,12 @@ function SettingsPage() {
     if (!needle) return true;
     return "更新 update 版本 github release apk".includes(needle);
   }, [query]);
+  const showPrivacySettings = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    return "隐私 清除 浏览数据 历史 cookie cookies 缓存 权限 site data storage".includes(needle);
+  }, [query]);
+  const showAnySetting = showSearchEngine || showToolbarPosition || showBackgroundRuntime || showUpdateSettings || showPrivacySettings;
 
   useEffect(() => {
     window.hyperBrowser.requestSettingsData()
@@ -209,6 +221,29 @@ function SettingsPage() {
       .catch((error) => setUpdateMessage(error instanceof Error ? error.message : "取消跳过失败。"));
   }
 
+  function clearBrowsingData() {
+    setPrivacyMessage("正在清除浏览数据...");
+    setClearBrowsingDataInFlight(true);
+    window.hyperBrowser.clearBrowsingData()
+      .then((result) => {
+        setPrivacyMessage(result.message || clearBrowsingDataLabel(result));
+        setClearConfirmVisible(false);
+      })
+      .catch((error) => setPrivacyMessage(error instanceof Error ? error.message : "清除浏览数据失败。"))
+      .finally(() => setClearBrowsingDataInFlight(false));
+  }
+
+  function clearBrowsingDataLabel(result: ClearBrowsingDataResult) {
+    const parts = ["已开始清除网站数据、缓存和站点权限"];
+    if (result.historyCount > 0) parts.push(`历史记录 ${result.historyCount} 条`);
+    if (result.faviconCount > 0) parts.push(`favicon 缓存 ${result.faviconCount} 个`);
+    return `${parts.join("，")}。`;
+  }
+
+  function openHelp() {
+    window.hyperBrowser.open(HELP_URL);
+  }
+
   function updateStatusLabel(result: UpdateCheckResult) {
     switch (result.status) {
       case "available": return "发现新版本。";
@@ -264,7 +299,7 @@ function SettingsPage() {
       <header className="settings-header">
         <button className="settings-back" type="button" aria-label="Back" onClick={() => window.history.back()}>‹</button>
         <h1>设置</h1>
-        <button className="settings-help" type="button" aria-label="Help">?</button>
+        <button className="settings-help" type="button" aria-label="Help" onClick={openHelp}>?</button>
       </header>
 
       <label className="settings-search">
@@ -334,8 +369,6 @@ function SettingsPage() {
               </div>
             )}
           </div>
-        ) : !showToolbarPosition && !showBackgroundRuntime && !showUpdateSettings ? (
-          <div className="settings-empty">没有匹配的设置。</div>
         ) : null}
         {showToolbarPosition && (
           <div className="settings-card settings-card-spaced">
@@ -488,6 +521,69 @@ function SettingsPage() {
         )}
         {loadError && <p className="settings-message">{loadError}</p>}
       </section>
+      {showPrivacySettings && (
+        <section className="settings-section">
+          <h2>隐私</h2>
+          <div className="settings-card settings-card-spaced">
+            <button
+              className="settings-row settings-row-button"
+              type="button"
+              aria-expanded={privacyExpanded}
+              onClick={() => {
+                if (clearBrowsingDataInFlight) return;
+                if (!privacyExpanded) {
+                  setPrivacyExpanded(true);
+                  setClearConfirmVisible(false);
+                } else if (!clearConfirmVisible) {
+                  setClearConfirmVisible(true);
+                } else {
+                  clearBrowsingData();
+                }
+              }}
+            >
+              <span className="settings-row-title">
+                {clearConfirmVisible ? "确认清除浏览数据" : "清除浏览数据"}
+              </span>
+              <span className="settings-row-value">
+                {clearBrowsingDataInFlight
+                  ? "正在清除"
+                  : clearConfirmVisible
+                    ? "再次点击确认"
+                    : "历史、Cookie、缓存、权限"}
+              </span>
+            </button>
+            {privacyExpanded && (
+              <>
+                <p className="settings-message">
+                  会清除历史记录、Cookie、站点数据、缓存、已保存站点权限和 favicon 缓存；不会删除书签、下载记录、WebApp 或应用设置。
+                </p>
+                {clearConfirmVisible && (
+                  <p className="settings-message danger">
+                    此操作不能撤销，当前已打开的网页不会被关闭。
+                  </p>
+                )}
+                {clearConfirmVisible && (
+                  <button
+                    className="settings-row settings-row-button"
+                    type="button"
+                    disabled={clearBrowsingDataInFlight}
+                    onClick={() => setClearConfirmVisible(false)}
+                  >
+                    <span className="settings-row-title">取消</span>
+                    <span className="settings-row-value">保留当前数据</span>
+                  </button>
+                )}
+                {privacyMessage && <p className="settings-message">{privacyMessage}</p>}
+              </>
+            )}
+          </div>
+        </section>
+      )}
+      {!showAnySetting && (
+        <section className="settings-section">
+          <div className="settings-empty">没有匹配的设置。</div>
+        </section>
+      )}
     </main>
   );
 }

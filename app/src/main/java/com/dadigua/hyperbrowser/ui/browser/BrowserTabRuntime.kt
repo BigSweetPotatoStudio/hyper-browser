@@ -23,6 +23,7 @@ import java.util.UUID
 
 internal class BrowserTabRuntime private constructor(
     val id: String,
+    val privateMode: Boolean,
     private val app: HyperBrowserApp,
     private val controllerFactory: (
         initialUrl: String,
@@ -128,14 +129,18 @@ internal class BrowserTabRuntime private constructor(
         BrowserMediaNotificationController.get(app).ownsActivePlayback(mediaOwnerInfo())
 
     fun toSavedTab() =
-        savedBrowserTabFromSnapshot(
-            id = id,
-            input = input,
-            iconPath = iconPath,
-            loaded = loaded,
-            restoreUrl = restoreUrl,
-            title = restoredTitle
-        )
+        if (!shouldPersistBrowserTab(privateMode)) {
+            null
+        } else {
+            savedBrowserTabFromSnapshot(
+                id = id,
+                input = input,
+                iconPath = iconPath,
+                loaded = loaded,
+                restoreUrl = restoreUrl,
+                title = restoredTitle
+            )
+        }
 
     fun clearIcon() {
         iconPath = null
@@ -150,6 +155,7 @@ internal class BrowserTabRuntime private constructor(
             initialTitle: String? = null,
             initialIconPath: String? = null,
             loadImmediately: Boolean = true,
+            privateMode: Boolean = false,
             restoredSessionState: GeckoSession.SessionState? = null,
             onHyperRoute: (HyperRoute) -> Unit = {},
             onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
@@ -158,7 +164,7 @@ internal class BrowserTabRuntime private constructor(
             onEngineSessionStateChange: (String?) -> Unit = {},
             onPageStop: (Boolean) -> Unit = {}
         ): BrowserTabRuntime {
-            val engineStateAvailable = mutableStateOf(restoredSessionState != null)
+            val engineStateAvailable = mutableStateOf(!privateMode && restoredSessionState != null)
             val controllerFactory = { initialUrl: String,
                 shouldLoadInitialUrl: Boolean,
                 state: GeckoSession.SessionState? ->
@@ -173,12 +179,17 @@ internal class BrowserTabRuntime private constructor(
                     onPageContextMenu = onPageContextMenu,
                     onDownload = onDownload,
                     onSessionStateChange = { sessionState ->
-                        val currentUri = currentUriForEngineSessionState(sessionState)
-                        if (shouldPersistEngineSessionStateUri(currentUri)) {
-                            engineStateAvailable.value = true
-                            onEngineSessionStateChange(sessionState.toString())
-                        } else {
+                        if (privateMode) {
+                            engineStateAvailable.value = false
                             onEngineSessionStateChange(null)
+                        } else {
+                            val currentUri = currentUriForEngineSessionState(sessionState)
+                            if (shouldPersistEngineSessionStateUri(currentUri)) {
+                                engineStateAvailable.value = true
+                                onEngineSessionStateChange(sessionState.toString())
+                            } else {
+                                onEngineSessionStateChange(null)
+                            }
                         }
                     },
                     onPageStop = onPageStop,
@@ -189,11 +200,13 @@ internal class BrowserTabRuntime private constructor(
                             kind = BrowserMediaOwnerKind.BrowserTab,
                             launchIntent = BrowserActivity.selectTabIntent(app, id)
                         )
-                    }
+                    },
+                    privateMode = privateMode
                 )
             }
             return BrowserTabRuntime(
                 id = id,
+                privateMode = privateMode,
                 controllerFactory = controllerFactory,
                 initialController = if (loadImmediately) {
                     controllerFactory(url, true, restoredSessionState)
@@ -229,6 +242,7 @@ internal class BrowserTabRuntime private constructor(
             val id = UUID.randomUUID().toString()
             return BrowserTabRuntime(
                 id = id,
+                privateMode = false,
                 app = app,
                 controllerFactory = { _, _, _ ->
                     val mediaLaunchIntent = BrowserActivity.selectTabIntent(app, id)
@@ -296,6 +310,8 @@ internal class BrowserTabRuntime private constructor(
 
 internal fun shouldPersistEngineSessionStateUri(uri: String?): Boolean =
     uri?.startsWith("http://") == true || uri?.startsWith("https://") == true
+
+internal fun shouldPersistBrowserTab(privateMode: Boolean): Boolean = !privateMode
 
 internal fun shouldShowRestorableLabel(hasController: Boolean, hasEngineState: Boolean): Boolean =
     !hasController && hasEngineState

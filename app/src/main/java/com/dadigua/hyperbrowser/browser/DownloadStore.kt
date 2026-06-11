@@ -25,7 +25,8 @@ enum class DownloadStatus {
     Queued,
     Running,
     Completed,
-    Failed
+    Failed,
+    Canceled
 }
 
 class DownloadStore(context: android.content.Context) {
@@ -97,12 +98,47 @@ class DownloadStore(context: android.content.Context) {
         }
     }
 
+    fun markCanceled(id: String) {
+        updateEntry(id) {
+            it.copy(
+                status = DownloadStatus.Canceled,
+                completedAt = System.currentTimeMillis(),
+                error = null
+            )
+        }
+    }
+
+    fun prepareRetry(id: String): BrowserDownloadEntry? {
+        var retryEntry: BrowserDownloadEntry? = null
+        updateEntry(id) {
+            it.copy(
+                contentUri = null,
+                downloadManagerId = null,
+                status = DownloadStatus.Queued,
+                bytesDownloaded = 0L,
+                completedAt = null,
+                error = null,
+                createdAt = System.currentTimeMillis()
+            ).also { updated -> retryEntry = updated }
+        }
+        return retryEntry
+    }
+
     fun replaceFromSystem(entry: BrowserDownloadEntry) {
         updateEntry(entry.id) { entry }
     }
 
     fun remove(id: String) {
         update(state.value.filterNot { it.id == id })
+    }
+
+    fun clearFinished(): Int {
+        val finishedStatuses = setOf(DownloadStatus.Completed, DownloadStatus.Failed, DownloadStatus.Canceled)
+        val current = state.value
+        val next = current.filterNot { it.status in finishedStatuses }
+        if (next.size == current.size) return 0
+        update(next)
+        return current.size - next.size
     }
 
     private fun updateEntry(id: String, transform: (BrowserDownloadEntry) -> BrowserDownloadEntry) {
@@ -130,14 +166,14 @@ class DownloadStore(context: android.content.Context) {
                             id = item.optString("id").ifBlank { UUID.randomUUID().toString() },
                             name = item.optString("name", "download"),
                             sourceUrl = item.optString("sourceUrl"),
-                            contentUri = item.optString("contentUri").ifBlank { null },
+                            contentUri = item.optStringOrNull("contentUri"),
                             downloadManagerId = item.optLongOrNull("downloadManagerId"),
                             status = item.optDownloadStatus(),
                             bytesDownloaded = item.optLong("bytesDownloaded", 0L),
                             totalBytes = item.optLong("totalBytes", -1L),
                             createdAt = item.optLong("createdAt", System.currentTimeMillis()),
                             completedAt = item.optLongOrNull("completedAt"),
-                            error = item.optString("error").ifBlank { null }
+                            error = item.optStringOrNull("error")
                         )
                     )
                 }
@@ -171,6 +207,13 @@ private fun JSONObject.optLongOrNull(name: String): Long? {
     if (!has(name) || isNull(name)) return null
     val value = optLong(name, Long.MIN_VALUE)
     return value.takeIf { it != Long.MIN_VALUE }
+}
+
+private fun JSONObject.optStringOrNull(name: String): String? {
+    if (!has(name) || isNull(name)) return null
+    return optString(name)
+        .trim()
+        .takeUnless { it.isBlank() || it == "null" }
 }
 
 private fun JSONObject.optDownloadStatus(): DownloadStatus =

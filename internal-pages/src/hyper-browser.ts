@@ -83,6 +83,13 @@ type BatteryOptimizationState = {
   opened?: boolean;
 };
 
+type ClearBrowsingDataResult = {
+  historyCount: number;
+  faviconCount: number;
+  siteDataCleared: boolean;
+  message?: string;
+};
+
 declare global {
   const browser: {
     runtime?: {
@@ -111,6 +118,7 @@ type HyperBrowserApi = {
   updateBackgroundVideoEnhancement(enabled: boolean): Promise<BrowserSettings>;
   requestBatteryOptimizationState(): Promise<BatteryOptimizationState>;
   openBatteryOptimizationSettings(): Promise<BatteryOptimizationState>;
+  clearBrowsingData(): Promise<ClearBrowsingDataResult>;
   checkUpdate(ignoreSkipped?: boolean): Promise<UpdateCheckResult>;
   installUpdate(versionCode: number): Promise<UpdateDownloadState>;
   requestUpdateDownloadState(): Promise<UpdateDownloadState>;
@@ -223,6 +231,10 @@ window.hyperBrowser = {
   openBatteryOptimizationSettings() {
     return requestObject<BatteryOptimizationState>("settings.openBatteryOptimization");
   },
+  clearBrowsingData() {
+    return send("browsingData.clear")
+      .then((response) => response.data as ClearBrowsingDataResult);
+  },
   checkUpdate(ignoreSkipped = false) {
     return send("update.check", { ignoreSkipped: ignoreSkipped ? "true" : "false" })
       .then((response) => response.data as UpdateCheckResult);
@@ -278,4 +290,4 @@ window.hyperBrowser = {
   }
 };
 
-export type { AvailableUpdate, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem };
+export type { AvailableUpdate, BatteryOptimizationState, BookmarkItem, BrowserSettings, ClearBrowsingDataResult, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem };

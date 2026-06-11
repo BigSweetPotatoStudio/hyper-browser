@@ -255,6 +255,12 @@ class BrowserProfileStore(context: Context) {
         saveHistory(emptyList())
     }
 
+    fun clearHistoryForBrowsingData(): Int {
+        val removed = historyState.value.size
+        clearHistory()
+        return removed
+    }
+
     fun updateSearchEngine(searchEngineId: String, customSearchUrl: String) {
         val next = settingsState.value.copy(
             searchEngineId = when (searchEngineId) {

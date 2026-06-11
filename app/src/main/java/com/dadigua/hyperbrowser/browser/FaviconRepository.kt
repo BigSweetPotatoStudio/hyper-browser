@@ -60,6 +60,13 @@ class FaviconRepository(context: Context) {
             ?.absolutePath
     }
 
+    suspend fun clearCache(): Int = withContext(Dispatchers.IO) {
+        if (!iconDir.exists()) return@withContext 0
+        iconDir.listFiles()
+            ?.count { file -> file.isFile && runCatching { file.delete() }.getOrDefault(false) }
+            ?: 0
+    }
+
     private fun iconFileDataUrl(file: File): String? {
         if (!file.exists() || file.length() <= 0 || file.length() > 1_500_000) return null
         val encoded = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
@@ -92,11 +99,12 @@ class FaviconRepository(context: Context) {
     }
 
     private fun downloadBytes(url: String, maxBytes: Long): ByteArray? {
-        val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", "Mozilla/5.0 HyperBrowser/0.1")
-            .build()
+        if (!isHttpUrl(url)) return null
         return runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 HyperBrowser/0.1")
+                .build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return null
                 val body = response.body ?: return null
@@ -108,11 +116,16 @@ class FaviconRepository(context: Context) {
         }.getOrNull()
     }
 
+    private fun isHttpUrl(url: String): Boolean {
+        val scheme = runCatching { Uri.parse(url).scheme }.getOrNull()?.lowercase() ?: return false
+        return scheme == "http" || scheme == "https"
+    }
+
     private fun resolveUrl(baseUrl: String, href: String): String? =
         runCatching {
             val base = java.net.URI(baseUrl)
             base.resolve(href.trim()).toString()
-        }.getOrNull()
+        }.getOrNull()?.takeIf(::isHttpUrl)
 
     private fun defaultFaviconUrl(uri: Uri): String =
         uri.buildUpon().encodedPath("/favicon.ico").encodedQuery(null).fragment(null).build().toString()

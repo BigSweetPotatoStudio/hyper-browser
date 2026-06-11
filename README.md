@@ -41,7 +41,6 @@ Hyper Browser 是一个 Android 原生浏览器和 WebApp 容器项目，使用 
 ## 当前限制
 
 - 当前没有账号同步、跨设备同步或云备份服务。
-- 当前没有隐身模式；历史、书签和设置按普通浏览器数据保存在 App 私有目录。
 - 当前 APK 通过 GitHub Releases 分发，不是 Play Store / F-Droid 正式渠道包。
 - 当前 updater 使用 GitHub Release split APK，需要 release 索引提供匹配设备架构的正式签名 APK。
 - WebExtension 支持基于 GeckoView 能力，不等同于桌面 Firefox 的完整扩展体验。
@@ -52,9 +51,11 @@ Hyper Browser 是一个 Android 原生浏览器和 WebApp 容器项目，使用 
 - Chrome Android 风格主界面：主页、圆角地址栏、标签计数、三点菜单、搜索/地址输入页。
 - 多标签管理，标签页支持 Card / List 两种模式；Card 模式使用 GeckoView 页面截图缩略图。
 - 多标签状态保存和恢复，保留标签 URL、标题、缩略图和可恢复的 Gecko `SessionState`。
+- 隐身标签使用 GeckoView private mode，不写入历史、缩略图、SessionState 或下次启动的标签恢复列表。
 - 移动端链接打开策略：普通点击拦截 `target=_blank` 新窗口请求并在当前标签页直接跳转；长按链接时再提供“在新标签页打开”。
 - 内置页面：主页、搜索、设置、WebApp 管理、书签、历史。
-- 设置页支持搜索引擎、自定义搜索 URL、地址栏位置、后台视频播放增强、电池优化入口和应用更新。
+- 设置页支持搜索引擎、自定义搜索 URL、地址栏位置、后台视频播放增强、电池优化入口、应用更新和清除浏览数据。
+- 清除浏览数据会覆盖历史、Cookie/站点数据、缓存、站点权限和 favicon 缓存，不影响书签、下载记录、WebApp 或应用设置。
 - 书签、历史、设置、下载记录、favicon 缓存和 WebApp 定义使用 App 私有目录 JSON/文件保存。
 - 当前页面可安装为 WebApp，并支持创建 Android pinned shortcut。
 - 独立 `WebAppActivity`，用于类 App 方式启动已安装网页。
@@ -63,7 +64,7 @@ Hyper Browser 是一个 Android 原生浏览器和 WebApp 容器项目，使用 
 - 多标签 / WebApp 媒体并行，关闭 GeckoView 音频焦点自动接管，多个页面可以同时播放音频。
 - GeckoView 媒体会话通知，支持从系统通知执行播放、暂停、前后跳转等媒体动作，并按播放源回到对应标签或 WebApp。
 - 浏览器页面和 WebApp 在播放媒体时支持进入 Picture-in-Picture。
-- 下载处理和下载列表页。
+- 下载处理和下载列表页，支持打开、取消、删除、重试失败或已取消项目，以及清理已完成/失败/已取消记录。
 - 下拉刷新会结合 GeckoView 滚动状态和页面内部滚动容器状态，避免内部容器未到顶部时误触发刷新。
 
 ## 技术栈

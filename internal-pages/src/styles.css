@@ -887,6 +887,11 @@ a {
   background: #e8e7ee;
 }
 
+.settings-options-loose {
+  margin-top: 14px;
+  background: #e8e7ee;
+}
+
 .settings-option {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto;
@@ -920,6 +925,14 @@ a {
 
 .settings-option.selected::before {
   content: "✓";
+}
+
+.settings-option.danger span:first-child {
+  color: #b3261e;
+}
+
+.settings-option:disabled {
+  opacity: 0.6;
 }
 
 .custom-search-form {
@@ -985,6 +998,10 @@ a {
   font-size: 13px;
 }
 
+.settings-message.danger {
+  color: #b3261e;
+}
+
 .settings-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1015,6 +1032,11 @@ a {
   border-color: #1a73e8;
   background: #1a73e8;
   color: #fff;
+}
+
+.settings-action.danger {
+  border-color: #b3261e;
+  color: #b3261e;
 }
 
 .settings-action:disabled {

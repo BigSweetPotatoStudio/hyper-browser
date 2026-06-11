@@ -55,6 +55,22 @@ class DownloadHandler(context: Context, private val store: DownloadStore) {
         }
     }
 
+    suspend fun retry(entry: BrowserDownloadEntry): BrowserDownloadEntry = withContext(Dispatchers.IO) {
+        if (entry.status != DownloadStatus.Failed && entry.status != DownloadStatus.Canceled) return@withContext entry
+        if (!entry.sourceUrl.startsWith("http://") && !entry.sourceUrl.startsWith("https://")) {
+            error("Download URL is unavailable.")
+        }
+        val retryEntry = store.prepareRetry(entry.id) ?: error("Download record no longer exists.")
+        ContextCompat.startForegroundService(appContext, BrowserDownloadService.urlIntent(appContext, retryEntry.id))
+        retryEntry
+    }
+
+    suspend fun cancel(entry: BrowserDownloadEntry): BrowserDownloadEntry = withContext(Dispatchers.IO) {
+        if (entry.status != DownloadStatus.Queued && entry.status != DownloadStatus.Running) return@withContext entry
+        ContextCompat.startForegroundService(appContext, BrowserDownloadService.cancelIntent(appContext, entry.id))
+        entry
+    }
+
     suspend fun delete(entry: BrowserDownloadEntry, deleteFile: Boolean) = withContext(Dispatchers.IO) {
         if (deleteFile) {
             entry.contentUri?.let { uri ->
@@ -62,6 +78,10 @@ class DownloadHandler(context: Context, private val store: DownloadStore) {
             }
         }
         store.remove(entry.id)
+    }
+
+    suspend fun clearFinishedRecords(): Int = withContext(Dispatchers.IO) {
+        store.clearFinished()
     }
 
     companion object {

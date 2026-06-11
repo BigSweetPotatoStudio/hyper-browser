@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -29,8 +30,10 @@ internal fun PageContextMenuDialog(
     onDismissRequest: () -> Unit,
     onDownloadImage: (String) -> Unit,
     onOpenImage: (String) -> Unit,
+    onOpenImagePrivate: ((String) -> Unit)? = null,
     onCopyImage: (String) -> Unit,
     onOpenLink: (String) -> Unit,
+    onOpenLinkPrivate: ((String) -> Unit)? = null,
     onCopyLink: (String) -> Unit,
     openImageLabel: String = "在新标签页打开图片",
     openLinkLabel: String = "在新标签页打开链接"
@@ -72,6 +75,13 @@ internal fun PageContextMenuDialog(
                         label = openImageLabel,
                         onClick = { onOpenImage(url) }
                     )
+                    onOpenImagePrivate?.let { onOpenPrivate ->
+                        ContextMenuActionRow(
+                            icon = Icons.Outlined.VisibilityOff,
+                            label = "在私密标签页打开图片",
+                            onClick = { onOpenPrivate(url) }
+                        )
+                    }
                     ContextMenuActionRow(
                         icon = Icons.Outlined.ContentCopy,
                         label = "复制图片地址",
@@ -87,6 +97,13 @@ internal fun PageContextMenuDialog(
                         label = openLinkLabel,
                         onClick = { onOpenLink(url) }
                     )
+                    onOpenLinkPrivate?.let { onOpenPrivate ->
+                        ContextMenuActionRow(
+                            icon = Icons.Outlined.VisibilityOff,
+                            label = "在私密标签页打开链接",
+                            onClick = { onOpenPrivate(url) }
+                        )
+                    }
                     ContextMenuActionRow(
                         icon = Icons.Outlined.ContentCopy,
                         label = "复制链接",

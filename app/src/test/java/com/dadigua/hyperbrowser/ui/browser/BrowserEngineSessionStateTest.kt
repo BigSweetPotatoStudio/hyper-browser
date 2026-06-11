@@ -18,6 +18,12 @@ class BrowserEngineSessionStateTest {
     }
 
     @Test
+    fun privateTabsAreNotPersistedForRestore() {
+        assertTrue(shouldPersistBrowserTab(privateMode = false))
+        assertFalse(shouldPersistBrowserTab(privateMode = true))
+    }
+
+    @Test
     fun restorableLabelIsShownOnlyForUnloadedTabsWithEngineState() {
         assertTrue(shouldShowRestorableLabel(hasController = false, hasEngineState = true))
 

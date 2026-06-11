@@ -19,11 +19,13 @@ import androidx.core.content.FileProvider
 import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
 import com.dadigua.hyperbrowser.ui.browser.BrowserActivity
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.InputStream
@@ -34,6 +36,8 @@ import kotlin.math.roundToInt
 class BrowserDownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val jobs = ConcurrentHashMap<String, Job>()
+    private val calls = ConcurrentHashMap<String, Call>()
+    private val canceledIds = ConcurrentHashMap.newKeySet<String>()
     private val client = OkHttpClient()
     private lateinit var store: DownloadStore
     private lateinit var notifications: NotificationManagerCompat
@@ -54,6 +58,10 @@ class BrowserDownloadService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_CANCEL) {
+            handleCancel(entryId, startId)
+            return START_NOT_STICKY
+        }
         if (jobs[entryId]?.isActive == true) {
             return START_REDELIVER_INTENT
         }
@@ -63,8 +71,13 @@ class BrowserDownloadService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
+        if (entry.status != DownloadStatus.Queued && entry.status != DownloadStatus.Running) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         val source = intent?.getStringExtra(EXTRA_SOURCE)
 
+        canceledIds.remove(entryId)
         publish(entry)
         jobs[entryId] = scope.launch(Dispatchers.IO) {
             runCatching {
@@ -73,10 +86,16 @@ class BrowserDownloadService : Service() {
                     else -> downloadUrl(entry)
                 }
             }.onFailure { throwable ->
-                store.markFailed(entry.id, throwable.message ?: "Download failed.")
+                if (throwable is CancellationException || canceledIds.contains(entry.id)) {
+                    store.markCanceled(entry.id)
+                } else {
+                    store.markFailed(entry.id, throwable.message ?: "Download failed.")
+                }
                 store.observeDownloads().value.firstOrNull { it.id == entry.id }?.let { publishFinal(it) }
             }
+            calls.remove(entryId)
             jobs.remove(entryId)
+            canceledIds.remove(entryId)
             if (foregroundEntryId == entryId) {
                 foregroundEntryId = null
             }
@@ -95,7 +114,9 @@ class BrowserDownloadService : Service() {
 
     private fun downloadUrl(entry: BrowserDownloadEntry) {
         val request = Request.Builder().url(entry.sourceUrl).build()
-        client.newCall(request).execute().use { response ->
+        val call = client.newCall(request)
+        calls[entry.id] = call
+        call.execute().use { response ->
             if (!response.isSuccessful) error("Download failed: HTTP ${response.code}")
             val body = response.body ?: error("Download response is empty.")
             saveStream(
@@ -105,6 +126,24 @@ class BrowserDownloadService : Service() {
                 contentType = response.header("Content-Type"),
                 totalBytes = body.contentLength().takeIf { it > 0L } ?: entry.totalBytes
             )
+        }
+    }
+
+    private fun handleCancel(entryId: String, startId: Int) {
+        canceledIds.add(entryId)
+        calls.remove(entryId)?.cancel()
+        jobs[entryId]?.cancel(CancellationException("Download canceled."))
+        val entry = store.observeDownloads().value.firstOrNull { it.id == entryId }
+        if (entry != null && (entry.status == DownloadStatus.Queued || entry.status == DownloadStatus.Running)) {
+            store.markCanceled(entryId)
+            store.observeDownloads().value.firstOrNull { it.id == entryId }?.let { publishFinal(it) }
+        }
+        if (foregroundEntryId == entryId) {
+            foregroundEntryId = null
+        }
+        promoteNextForeground()
+        if (jobs.isEmpty()) {
+            stopSelf(startId)
         }
     }
 
@@ -132,6 +171,7 @@ class BrowserDownloadService : Service() {
         var bytesCopied = 0L
         var savedUri: Uri? = null
         runCatching {
+            throwIfCanceled(entry.id)
             val target = createTarget(fileName, contentType, totalBytes)
             savedUri = target.uri
             target.output.use { output ->
@@ -139,6 +179,7 @@ class BrowserDownloadService : Service() {
                 var lastProgressAt = 0L
                 var read = input.read(buffer)
                 while (read >= 0) {
+                    throwIfCanceled(entry.id)
                     output.write(buffer, 0, read)
                     bytesCopied += read
                     val now = System.currentTimeMillis()
@@ -157,6 +198,12 @@ class BrowserDownloadService : Service() {
         }.getOrElse { throwable ->
             savedUri?.let { runCatching { contentResolver.delete(it, null, null) } }
             throw throwable
+        }
+    }
+
+    private fun throwIfCanceled(entryId: String) {
+        if (canceledIds.contains(entryId)) {
+            throw CancellationException("Download canceled.")
         }
     }
 
@@ -233,6 +280,7 @@ class BrowserDownloadService : Service() {
                 when (entry.status) {
                     DownloadStatus.Completed -> android.R.drawable.stat_sys_download_done
                     DownloadStatus.Failed -> android.R.drawable.stat_notify_error
+                    DownloadStatus.Canceled -> android.R.drawable.stat_notify_error
                     else -> android.R.drawable.stat_sys_download
                 }
             )
@@ -240,6 +288,7 @@ class BrowserDownloadService : Service() {
                 when (entry.status) {
                     DownloadStatus.Completed -> "Download complete"
                     DownloadStatus.Failed -> "Download failed"
+                    DownloadStatus.Canceled -> "Download canceled"
                     else -> "Downloading"
                 }
             )
@@ -259,7 +308,7 @@ class BrowserDownloadService : Service() {
                 builder.setProgress(0, 0, true)
             }
         }
-        if (entry.status == DownloadStatus.Failed && !entry.error.isNullOrBlank()) {
+        if ((entry.status == DownloadStatus.Failed || entry.status == DownloadStatus.Canceled) && !entry.error.isNullOrBlank()) {
             builder.setStyle(NotificationCompat.BigTextStyle().bigText(entry.error))
         }
         return builder.build()
@@ -296,6 +345,7 @@ class BrowserDownloadService : Service() {
         const val DOWNLOAD_CHANNEL_ID = "downloads"
         private const val EXTRA_ENTRY_ID = "entry_id"
         private const val EXTRA_SOURCE = "source"
+        private const val ACTION_CANCEL = "com.dadigua.hyperbrowser.action.CANCEL_DOWNLOAD"
         private const val SOURCE_URL = "url"
         private const val SOURCE_GECKO = "gecko"
 
@@ -308,6 +358,11 @@ class BrowserDownloadService : Service() {
             Intent(context, BrowserDownloadService::class.java)
                 .putExtra(EXTRA_ENTRY_ID, entryId)
                 .putExtra(EXTRA_SOURCE, SOURCE_GECKO)
+
+        fun cancelIntent(context: Context, entryId: String): Intent =
+            Intent(context, BrowserDownloadService::class.java)
+                .setAction(ACTION_CANCEL)
+                .putExtra(EXTRA_ENTRY_ID, entryId)
     }
 }
 

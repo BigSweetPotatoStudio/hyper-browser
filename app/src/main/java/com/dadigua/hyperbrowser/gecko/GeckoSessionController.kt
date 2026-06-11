@@ -66,7 +66,8 @@ class GeckoSessionController(
     private val onSessionStateChange: (GeckoSession.SessionState) -> Unit = {},
     private val onPageStop: (Boolean) -> Unit = {},
     private val mediaNotificationIntent: Intent? = null,
-    private val mediaOwnerInfo: () -> BrowserMediaOwnerInfo? = { null }
+    private val mediaOwnerInfo: () -> BrowserMediaOwnerInfo? = { null },
+    private val privateMode: Boolean = false
 ) {
     var session: GeckoSession = existingSession ?: createSession()
         private set
@@ -413,6 +414,34 @@ class GeckoSessionController(
             .onFailure { recoverSession(force = true) }
     }
 
+    fun findInPage(
+        query: String,
+        backwards: Boolean = false,
+        onResult: (GeckoSession.FinderResult?) -> Unit = {}
+    ) {
+        val trimmedQuery = query.trim()
+        if (trimmedQuery.isBlank()) {
+            clearFindInPage()
+            onResult(null)
+            return
+        }
+        val finder = session.finder
+        finder.displayFlags = GeckoSession.FINDER_DISPLAY_HIGHLIGHT_ALL
+        val flags = if (backwards) {
+            GeckoSession.FINDER_FIND_BACKWARDS
+        } else {
+            GeckoSession.FINDER_FIND_FORWARD
+        }
+        finder.find(trimmedQuery, flags).accept(
+            { result -> onResult(result) },
+            { onResult(null) }
+        )
+    }
+
+    fun clearFindInPage() {
+        runCatching { session.finder.clear() }
+    }
+
     fun flushSessionState() {
         runCatching { session.flushSessionState() }
     }
@@ -648,6 +677,7 @@ class GeckoSessionController(
     private fun createSession(): GeckoSession =
         GeckoSession(
             GeckoSessionSettings.Builder()
+                .usePrivateMode(privateMode)
                 .suspendMediaWhenInactive(false)
                 .build()
         )

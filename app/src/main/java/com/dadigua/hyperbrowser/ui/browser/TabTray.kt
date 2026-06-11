@@ -302,6 +302,14 @@ private fun ChromeTabCard(
                             .padding(10.dp)
                     )
                 }
+                if (tab.privateMode) {
+                    PrivateLabel(
+                        selected = selected,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(10.dp)
+                    )
+                }
             }
         }
     }
@@ -361,6 +369,9 @@ private fun ChromeTabListRow(
                 if (showRestorableLabel) {
                     RestorableLabel(selected = selected)
                 }
+                if (tab.privateMode) {
+                    PrivateLabel(selected = selected)
+                }
             }
         }
         IconButton(onClick = onClose, modifier = Modifier.size(44.dp)) {
@@ -381,6 +392,24 @@ private fun RestorableLabel(
             .background(if (selected) Color.White.copy(alpha = 0.92f) else Color(0xFFE8F0FE))
             .padding(horizontal = 8.dp, vertical = 3.dp),
         color = if (selected) Color(0xFF5669A6) else Color(0xFF4F5D7A),
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1
+    )
+}
+
+@Composable
+private fun PrivateLabel(
+    selected: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Text(
+        text = "Private",
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (selected) Color.White.copy(alpha = 0.92f) else Color(0xFF202124))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        color = if (selected) Color(0xFF5669A6) else Color.White,
         fontSize = 11.sp,
         fontWeight = FontWeight.SemiBold,
         maxLines = 1

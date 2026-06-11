@@ -20,11 +20,15 @@ import androidx.compose.material.icons.automirrored.outlined.AddToHomeScreen
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.BookmarkRemove
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.FindInPage
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -55,9 +59,13 @@ internal fun BrowserMenuPanel(
     extensionsExpanded: Boolean,
     onExtensionsExpandedChange: (Boolean) -> Unit,
     onNewTab: () -> Unit,
+    onNewPrivateTab: () -> Unit,
     onBack: () -> Unit,
     onForward: () -> Unit,
     onReload: () -> Unit,
+    onSharePage: () -> Unit,
+    onCopyPageLink: () -> Unit,
+    onFindInPage: () -> Unit,
     onToggleBookmark: () -> Unit,
     onShowSettings: () -> Unit,
     onShowDownloads: () -> Unit,
@@ -78,6 +86,26 @@ internal fun BrowserMenuPanel(
         )
         MenuGroupBox {
             BrowserMenuRow(label = "New tab", leadingIconVector = Icons.Outlined.Add, onClick = onNewTab)
+            BrowserMenuRow(
+                label = "New private tab",
+                leadingIconVector = Icons.Outlined.VisibilityOff,
+                onClick = onNewPrivateTab
+            )
+            BrowserMenuRow(
+                label = "Share page",
+                leadingIconVector = Icons.Outlined.Share,
+                onClick = onSharePage
+            )
+            BrowserMenuRow(
+                label = "Copy link",
+                leadingIconVector = Icons.Outlined.ContentCopy,
+                onClick = onCopyPageLink
+            )
+            BrowserMenuRow(
+                label = "Find in page",
+                leadingIconVector = Icons.Outlined.FindInPage,
+                onClick = onFindInPage
+            )
             BrowserMenuRow(
                 label = if (bookmarked) "Remove bookmark" else "Bookmark this page",
                 leadingIconVector = if (bookmarked) Icons.Outlined.BookmarkRemove else Icons.Outlined.BookmarkAdd,

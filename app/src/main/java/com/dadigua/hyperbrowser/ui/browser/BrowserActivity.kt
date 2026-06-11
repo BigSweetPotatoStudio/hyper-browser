@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Rational
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
@@ -56,6 +57,7 @@ import com.dadigua.hyperbrowser.browser.SavedBrowserTabs
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
 import com.dadigua.hyperbrowser.gecko.GeckoContextMenuTarget
 import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
+import com.dadigua.hyperbrowser.gecko.GeckoRuntimeProvider
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.HyperCommand
 import com.dadigua.hyperbrowser.gecko.HyperRoute
@@ -77,6 +79,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.StorageController
 import java.util.UUID
 
 class BrowserActivity : ComponentActivity() {
@@ -377,6 +380,24 @@ private fun BrowserScreen(
                     .put("opened", openBatteryOptimizationSettings())
                     .put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
             )
+            "browsingData.clear" -> {
+                runCatching {
+                    clearGeckoBrowsingData(context)
+                    val historyCount = profileStore.clearHistoryForBrowsingData()
+                    val faviconCount = runBlocking { faviconStore.clearCache() }
+                    okData(
+                        JSONObject()
+                            .put("historyCount", historyCount)
+                            .put("faviconCount", faviconCount)
+                            .put("siteDataCleared", true)
+                            .put("message", clearBrowsingDataMessage(historyCount, faviconCount))
+                    )
+                }.getOrElse { throwable ->
+                    JSONObject()
+                        .put("ok", false)
+                        .put("error", throwable.message ?: "清除浏览数据失败。")
+                }
+            }
             "update.check" -> {
                 val result = runBlocking {
                     updateManager.check(ignoreSkipped = payload.optString("ignoreSkipped") == "true")
@@ -467,6 +488,10 @@ private fun BrowserScreen(
         shouldApply: () -> Boolean = { true },
         onFinished: () -> Unit = {}
     ) {
+        if (tab.privateMode) {
+            onFinished()
+            return
+        }
         tab.capturePixels { bitmap ->
             if (bitmap != null && shouldApply()) {
                 tab.thumbnail = bitmap
@@ -500,11 +525,12 @@ private fun BrowserScreen(
         input: String = url,
         title: String? = null,
         iconPath: String? = null,
-        loadImmediately: Boolean = true
+        loadImmediately: Boolean = true,
+        privateMode: Boolean = false
     ): BrowserTabRuntime {
         val tabId = id ?: UUID.randomUUID().toString()
-        val restoredSessionState = loadValidatedSessionState(id, url)
-        val restoredThumbnail = id?.let { profileStore.loadTabThumbnail(it) }
+        val restoredSessionState = if (privateMode) null else loadValidatedSessionState(id, url)
+        val restoredThumbnail = if (privateMode) null else id?.let { profileStore.loadTabThumbnail(it) }
         return BrowserTabRuntime.create(
             app = app,
             url = url,
@@ -513,16 +539,19 @@ private fun BrowserScreen(
             initialTitle = title,
             initialIconPath = iconPath,
             loadImmediately = loadImmediately,
+            privateMode = privateMode,
             restoredSessionState = restoredSessionState,
             onHyperRoute = { pendingHyperRoute = it },
             onHyperBridgeMessage = ::handleHyperBridgeMessage,
             onPageContextMenu = { pageContextMenu = it },
             onDownload = ::saveGeckoDownload,
             onEngineSessionStateChange = { state ->
-                state?.let { profileStore.saveTabSessionState(tabId, it) }
+                if (!privateMode) {
+                    state?.let { profileStore.saveTabSessionState(tabId, it) }
+                }
             },
             onPageStop = { success ->
-                if (success) {
+                if (success && !privateMode) {
                     thumbnailRefreshRequests.tryEmit(tabId)
                 }
             }
@@ -597,6 +626,9 @@ private fun BrowserScreen(
     var extensionMessage by remember { mutableStateOf<String?>(null) }
     var installingAddonGuid by remember { mutableStateOf<String?>(null) }
     var currentIconPath by remember { mutableStateOf<String?>(null) }
+    var findInPageVisible by remember { mutableStateOf(false) }
+    var findInPageQuery by remember { mutableStateOf("") }
+    var findInPageResult by remember { mutableStateOf<GeckoSession.FinderResult?>(null) }
 
     LaunchedEffect(Unit) {
         runCatching { app.extensions.refreshInstalledFromRuntime() }
@@ -610,11 +642,42 @@ private fun BrowserScreen(
         activePanel = BrowserPanel.None
     }
 
+    fun closeFindInPage() {
+        findInPageVisible = false
+        findInPageQuery = ""
+        findInPageResult = null
+        controller.clearFindInPage()
+    }
+
+    fun runFindInPage(query: String = findInPageQuery, backwards: Boolean = false) {
+        findInPageQuery = query
+        controller.findInPage(query, backwards) { result ->
+            findInPageResult = result
+        }
+    }
+
     fun openLinkInBackgroundTab(url: String) {
-        tabs.add(createBrowserTab(url))
+        tabs.add(createBrowserTab(url, privateMode = tab.privateMode))
         pageContextMenu = null
         activePanel = BrowserPanel.None
         message = "已在后台标签页打开"
+    }
+
+    fun openLinkInPrivateTab(url: String) {
+        val newTab = createBrowserTab(url, privateMode = true)
+        tabs.add(newTab)
+        selectedTabId = newTab.id
+        pageContextMenu = null
+        activePanel = BrowserPanel.None
+        message = "Private tab opened."
+    }
+
+    fun openNewTab(privateMode: Boolean = false) {
+        val newTab = createBrowserTab(GeckoSessionController.HOME_URL, privateMode = privateMode)
+        tabs.add(newTab)
+        selectedTabId = newTab.id
+        closePanel()
+        message = if (privateMode) "Private tab opened." else null
     }
 
     fun isActiveUpdateDownload(state: UpdateDownloadState): Boolean =
@@ -622,14 +685,21 @@ private fun BrowserScreen(
             state.status == UpdateDownloadState.STATUS_DOWNLOADING ||
             state.status == UpdateDownloadState.STATUS_VERIFYING
 
+    fun isFinishedDownload(entry: BrowserDownloadEntry): Boolean =
+        entry.status == DownloadStatus.Completed || entry.status == DownloadStatus.Failed || entry.status == DownloadStatus.Canceled
+
     fun persistBrowserTabs(selectedId: String = selectedTabId) {
+        val persistedTabs = tabs.mapNotNull { it.toSavedTab() }.take(50)
+        val persistedSelectedId = selectedId
+            .takeIf { id -> persistedTabs.any { it.id == id } }
+            ?: persistedTabs.lastOrNull()?.id
         profileStore.saveTabs(
             SavedBrowserTabs(
-                selectedTabId = selectedId,
-                tabs = tabs.mapNotNull { it.toSavedTab() }.take(50)
+                selectedTabId = persistedSelectedId,
+                tabs = persistedTabs
             )
         )
-        val keptTabIds = tabs.map { it.id }.toSet()
+        val keptTabIds = persistedTabs.map { it.id }.toSet()
         profileStore.pruneTabSessionStates(keptTabIds)
         profileStore.pruneTabThumbnails(keptTabIds)
     }
@@ -750,14 +820,21 @@ private fun BrowserScreen(
                 editingAddress = false
                 message = null
             }
+            findInPageVisible -> closeFindInPage()
             activePanel != BrowserPanel.None -> closePanel()
             pageState.canGoBack -> controller.goBack()
             else -> controller.goBack()
         }
     }
 
+    LaunchedEffect(selectedTabId, pageState.url) {
+        if (findInPageVisible) {
+            closeFindInPage()
+        }
+    }
+
     LaunchedEffect(pageState.url, pageState.title) {
-        if (pageState.url.isNotBlank() && !GeckoSessionController.isInternalUrl(pageState.url)) {
+        if (!tab.privateMode && pageState.url.isNotBlank() && !GeckoSessionController.isInternalUrl(pageState.url)) {
             profileStore.recordVisit(pageState.url, pageState.title, currentIconPath)
         }
     }
@@ -765,7 +842,7 @@ private fun BrowserScreen(
     LaunchedEffect(pageState.url) {
         currentIconPath = null
         if (pageState.url.isBlank()) return@LaunchedEffect
-        if (GeckoSessionController.isInternalUrl(pageState.url)) {
+        if (tab.privateMode || GeckoSessionController.isInternalUrl(pageState.url)) {
             tab.clearIcon()
             return@LaunchedEffect
         }
@@ -916,6 +993,9 @@ private fun BrowserScreen(
                     history = history,
                     bookmarks = bookmarks,
                     onCancel = ::closePanel,
+                    onNewPrivateTab = {
+                        openNewTab(privateMode = true)
+                    },
                     onGo = { value ->
                         tab.input = value
                         controller.load(value, settings.searchUrlTemplate)
@@ -982,6 +1062,28 @@ private fun BrowserScreen(
                             }
                         }
                     },
+                    onRetry = { entry ->
+                        scope.launch {
+                            if (entry.id == AppUpdateManager.APP_UPDATE_DOWNLOAD_ID) {
+                                message = "请在设置中重新下载更新。"
+                            } else {
+                                runCatching { downloadHandler.retry(entry) }
+                                    .onSuccess { message = "Download queued: ${it.name}" }
+                                .onFailure { message = it.message ?: "Unable to retry download." }
+                            }
+                        }
+                    },
+                    onCancel = { entry ->
+                        scope.launch {
+                            if (entry.id == AppUpdateManager.APP_UPDATE_DOWNLOAD_ID) {
+                                message = "更新下载请在设置中管理。"
+                            } else {
+                                runCatching { downloadHandler.cancel(entry) }
+                                    .onSuccess { message = "Download canceled." }
+                                    .onFailure { message = it.message ?: "Unable to cancel download." }
+                            }
+                        }
+                    },
                     onRemove = { entry, deleteFile ->
                         scope.launch {
                             if (entry.id == AppUpdateManager.APP_UPDATE_DOWNLOAD_ID) {
@@ -998,6 +1100,39 @@ private fun BrowserScreen(
                                     .onFailure { message = it.message ?: "Unable to remove download." }
                             }
                         }
+                    },
+                    onClearFinished = {
+                        scope.launch {
+                            var clearedUpdate = 0
+                            val updateClearFailure = updateDownloadEntry?.takeIf(::isFinishedDownload)?.let {
+                                runCatching { updateManager.clearDownload(deleteFile = false) }
+                                    .onSuccess {
+                                        updateDownloadState = UpdateDownloadState.idle()
+                                        updateDownloadEntry = null
+                                        clearedUpdate = 1
+                                    }
+                                    .exceptionOrNull()
+                            }
+                            if (updateClearFailure != null) {
+                                message = updateClearFailure.message ?: "Unable to clear update download record."
+                                return@launch
+                            }
+                            runCatching { downloadHandler.clearFinishedRecords() }
+                                .onSuccess { count ->
+                                    val total = count + clearedUpdate
+                                    message = if (total > 0) {
+                                        "Cleared $total download records."
+                                    } else {
+                                        "No finished downloads to clear."
+                                    }
+                                }
+                                .onFailure { message = it.message ?: "Unable to clear download records." }
+                        }
+                    },
+                    canRetry = { entry ->
+                        entry.id != AppUpdateManager.APP_UPDATE_DOWNLOAD_ID &&
+                            (entry.status == DownloadStatus.Failed || entry.status == DownloadStatus.Canceled) &&
+                            (entry.sourceUrl.startsWith("http://") || entry.sourceUrl.startsWith("https://"))
                     }
                 )
             } else if (showExtensions) {
@@ -1086,10 +1221,7 @@ private fun BrowserScreen(
                         }
                     },
                     onNewTab = {
-                        val newTab = createBrowserTab(GeckoSessionController.HOME_URL)
-                        tabs.add(newTab)
-                        selectedTabId = newTab.id
-                        closePanel()
+                        openNewTab()
                     }
                 )
             } else if (inPictureInPicture) {
@@ -1103,7 +1235,7 @@ private fun BrowserScreen(
             } else if (!onSearchPage) {
                 val toolbar = @Composable {
                     val currentPageUrl = pageState.url.ifBlank { tab.input }
-                    val installedWebApp = if (GeckoSessionController.isInternalUrl(currentPageUrl)) {
+                    val installedWebApp = if (tab.privateMode || GeckoSessionController.isInternalUrl(currentPageUrl)) {
                         null
                     } else {
                         webApps.firstOrNull { it.startUrl == currentPageUrl }
@@ -1112,14 +1244,21 @@ private fun BrowserScreen(
                         input = tab.input,
                         pageState = pageState,
                         tabCount = tabs.size,
-                        bookmarked = !GeckoSessionController.isInternalUrl(pageState.url) &&
+                        bookmarked = !tab.privateMode &&
+                            !GeckoSessionController.isInternalUrl(pageState.url) &&
                             profileStore.isBookmarked(currentPageUrl),
                         webAppInstalled = installedWebApp != null,
+                        privateMode = tab.privateMode,
                         installedExtensions = installedExtensions,
                         extensionActions = extensionActions,
                         toolbarPosition = settings.toolbarPosition,
                         editingAddress = editingAddress,
                         onEditingAddressChange = { editingAddress = it },
+                        onStartSearch = {
+                            editingAddress = false
+                            showPanel(BrowserPanel.Search)
+                            message = null
+                        },
                         bookmarks = bookmarks,
                         history = history,
                         downloads = downloads,
@@ -1136,18 +1275,22 @@ private fun BrowserScreen(
                             }
                         },
                         onNewTab = {
-                            val newTab = createBrowserTab(GeckoSessionController.HOME_URL)
-                            tabs.add(newTab)
-                            selectedTabId = newTab.id
-                            closePanel()
-                            message = null
+                            openNewTab()
+                        },
+                        onNewPrivateTab = {
+                            openNewTab(privateMode = true)
+                            message = "Private tab opened."
                         },
                         onHome = {
                             tab.input = GeckoSessionController.HOME_URL
                             controller.loadHome()
                             message = null
                         },
-                        onToggleBookmark = {
+                        onToggleBookmark = bookmark@{
+                            if (tab.privateMode) {
+                                message = "Private tabs cannot be bookmarked."
+                                return@bookmark
+                            }
                             val url = pageState.url.ifBlank { tab.input }
                             profileStore.toggleBookmark(url, pageState.title, currentIconPath)
                         },
@@ -1157,6 +1300,12 @@ private fun BrowserScreen(
                         },
                         onShowDownloads = { showPanel(BrowserPanel.Downloads) },
                         onShowExtensions = { showPanel(BrowserPanel.Extensions) },
+                        onFindInPage = {
+                            findInPageVisible = true
+                            activePanel = BrowserPanel.None
+                            editingAddress = false
+                            message = null
+                        },
                         onExtensionClick = { extension ->
                             scope.launch {
                                 runCatching { app.extensions.clickMenuAction(extension.guid) }
@@ -1164,6 +1313,10 @@ private fun BrowserScreen(
                             }
                         },
                         onInstall = install@{
+                            if (tab.privateMode) {
+                                message = "Private tabs cannot be installed as WebApps."
+                                return@install
+                            }
                             installedWebApp?.let { webApp ->
                                 scope.launch {
                                     runCatching { app.webApps.delete(webApp.id) }
@@ -1188,7 +1341,20 @@ private fun BrowserScreen(
                         }
                     )
                 }
+                val findBar = @Composable {
+                    if (findInPageVisible) {
+                        BrowserFindBar(
+                            query = findInPageQuery,
+                            result = findInPageResult,
+                            onQueryChange = { query -> runFindInPage(query) },
+                            onFindNext = { runFindInPage(backwards = false) },
+                            onFindPrevious = { runFindInPage(backwards = true) },
+                            onClose = ::closeFindInPage
+                        )
+                    }
+                }
                 if (settings.toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) {
+                    findBar()
                     BrowserContent(
                         controller = controller,
                         tabId = tab.id,
@@ -1200,6 +1366,7 @@ private fun BrowserScreen(
                     toolbar()
                 } else {
                     toolbar()
+                    findBar()
                     BrowserContent(
                         controller = controller,
                         tabId = tab.id,
@@ -1229,8 +1396,10 @@ private fun BrowserScreen(
                     enqueueUrlDownload(url)
                 },
                 onOpenImage = ::openLinkInBackgroundTab,
+                onOpenImagePrivate = ::openLinkInPrivateTab,
                 onCopyImage = { url -> copyContextUrl("image", url, "图片地址已复制") },
                 onOpenLink = ::openLinkInBackgroundTab,
+                onOpenLinkPrivate = ::openLinkInPrivateTab,
                 onCopyLink = { url -> copyContextUrl("link", url, "链接已复制") }
             )
         }
@@ -1249,3 +1418,31 @@ private fun shortcutRequestMessage(result: PinnedShortcutRequestResult): String 
         PinnedShortcutRequestResult.Failed -> "Shortcut request failed."
         PinnedShortcutRequestResult.WebAppNotFound -> "WebApp not found."
     }
+
+private fun clearGeckoBrowsingData(context: Context) {
+    val flags = StorageController.ClearFlags.COOKIES or
+        StorageController.ClearFlags.NETWORK_CACHE or
+        StorageController.ClearFlags.IMAGE_CACHE or
+        StorageController.ClearFlags.DOM_STORAGES or
+        StorageController.ClearFlags.AUTH_SESSIONS or
+        StorageController.ClearFlags.PERMISSIONS or
+        StorageController.ClearFlags.SITE_SETTINGS
+    GeckoRuntimeProvider.get(context)
+        .storageController
+        .clearData(flags)
+        .accept({
+            Log.d(BROWSING_DATA_TAG, "Gecko browsing data cleared")
+        }, { throwable ->
+            Log.w(BROWSING_DATA_TAG, "Failed to clear Gecko browsing data", throwable)
+        })
+}
+
+private fun clearBrowsingDataMessage(historyCount: Int, faviconCount: Int): String =
+    buildString {
+        append("已开始清除网站数据、缓存和站点权限")
+        if (historyCount > 0) append("，历史记录 $historyCount 条")
+        if (faviconCount > 0) append("，favicon 缓存 $faviconCount 个")
+        append("。")
+    }
+
+private const val BROWSING_DATA_TAG = "BrowsingData"

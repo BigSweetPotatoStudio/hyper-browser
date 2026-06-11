@@ -1,5 +1,10 @@
 package com.dadigua.hyperbrowser.ui.browser
 
+import android.app.Activity
+import android.content.Context
+import android.view.View
+import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,25 +19,40 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.dadigua.hyperbrowser.browser.BrowserBookmark
 import com.dadigua.hyperbrowser.browser.BrowserHistoryEntry
+import kotlinx.coroutines.delay
 
 private val SearchActionBarHeight = 48.dp
 private val SearchActionButtonSize = 40.dp
@@ -44,9 +64,18 @@ internal fun SearchPage(
     history: List<BrowserHistoryEntry>,
     bookmarks: List<BrowserBookmark>,
     onCancel: () -> Unit,
+    onNewPrivateTab: () -> Unit,
     onGo: (String) -> Unit
 ) {
     var query by remember { mutableStateOf(initialInput) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val context = LocalContext.current
+    val activity = context as? Activity
+    val view = LocalView.current
+    val inputMethodManager = remember(context) {
+        context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+    }
     val quick = listOf(
         "Google" to "https://google.com",
         "Bilibili" to "https://m.bilibili.com",
@@ -60,6 +89,39 @@ internal fun SearchPage(
             .distinctBy { it.second }
             .filter { needle.isBlank() || it.first.lowercase().contains(needle) || it.second.lowercase().contains(needle) }
             .take(12)
+    }
+
+    DisposableEffect(activity) {
+        val window = activity?.window
+        val previousSoftInputMode = window?.attributes?.softInputMode
+        window?.setSoftInputMode(
+            WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or
+                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        )
+        onDispose {
+            if (previousSoftInputMode != null) {
+                window.setSoftInputMode(previousSoftInputMode)
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        runCatching { focusRequester.requestFocus() }
+        inputMethodManager.restartInput(view)
+        keyboardController?.show()
+        inputMethodManager.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+        activity?.window?.let { window ->
+            WindowInsetsControllerCompat(window, view).show(WindowInsetsCompat.Type.ime())
+        }
+        delay(120)
+        runCatching { focusRequester.requestFocus() }
+        inputMethodManager.restartInput(view)
+        keyboardController?.show()
+        inputMethodManager.showSoftInputForced(view)
+        activity?.window?.let { window ->
+            WindowInsetsControllerCompat(window, view).show(WindowInsetsCompat.Type.ime())
+        }
     }
 
     Column(
@@ -90,9 +152,15 @@ internal fun SearchPage(
                     value = query,
                     onValueChange = { query = it },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Uri,
+                        imeAction = ImeAction.Go
+                    ),
+                    keyboardActions = KeyboardActions(onGo = { onGo(query) }),
                     textStyle = MaterialTheme.typography.titleMedium.copy(color = Color(0xFF202124)),
                     modifier = Modifier
                         .weight(1f)
+                        .focusRequester(focusRequester)
                         .padding(horizontal = 6.dp),
                     decorationBox = { inner ->
                         if (query.isBlank()) {
@@ -121,7 +189,7 @@ internal fun SearchPage(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             SearchQuickChip("AI 模式") { onGo("https://google.com/search?q=AI") }
-            SearchQuickChip("无痕模式") { }
+            SearchQuickChip("无痕模式", onClick = onNewPrivateTab)
         }
 
         Text("快捷访问", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF3C4043))
@@ -138,6 +206,11 @@ internal fun SearchPage(
             }
         }
     }
+}
+
+@Suppress("DEPRECATION")
+private fun InputMethodManager.showSoftInputForced(view: View) {
+    showSoftInput(view, InputMethodManager.SHOW_FORCED)
 }
 
 @Composable

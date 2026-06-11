@@ -115,13 +115,19 @@ internal fun DownloadsPage(
     downloads: List<BrowserDownloadEntry>,
     onBack: () -> Unit,
     onOpen: (BrowserDownloadEntry) -> Unit,
-    onRemove: (BrowserDownloadEntry, Boolean) -> Unit
+    onRetry: (BrowserDownloadEntry) -> Unit,
+    onCancel: (BrowserDownloadEntry) -> Unit,
+    onRemove: (BrowserDownloadEntry, Boolean) -> Unit,
+    onClearFinished: () -> Unit,
+    canRetry: (BrowserDownloadEntry) -> Boolean
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     val orderedDownloads = remember(downloads) { downloads.sortedByDescending { it.createdAt } }
+    val clearableCount = orderedDownloads.count { it.status == DownloadStatus.Completed || it.status == DownloadStatus.Failed || it.status == DownloadStatus.Canceled }
     var pendingDelete by remember { mutableStateOf<BrowserDownloadEntry?>(null) }
+    var pendingClearFinished by remember { mutableStateOf(false) }
     var deleteFile by remember { mutableStateOf(true) }
 
     Column(
@@ -146,6 +152,11 @@ internal fun DownloadsPage(
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF202124)
             )
+            if (clearableCount > 0) {
+                TextButton(onClick = { pendingClearFinished = true }) {
+                    Text("清理记录")
+                }
+            }
         }
         HorizontalDivider(color = Color(0xFFDADCE3))
 
@@ -174,7 +185,13 @@ internal fun DownloadsPage(
                 items(orderedDownloads, key = { it.id }) { entry ->
                     DownloadRow(
                         entry = entry,
-                        onOpen = { onOpen(entry) },
+                        onOpen = {
+                            if (canRetry(entry) && entry.status == DownloadStatus.Failed) {
+                                onRetry(entry)
+                            } else {
+                                onOpen(entry)
+                            }
+                        },
                         onCopyUrl = {
                             scope.launch {
                                 clipboard.setClipEntry(
@@ -186,6 +203,16 @@ internal fun DownloadsPage(
                         onRemove = {
                             pendingDelete = entry
                             deleteFile = true
+                        },
+                        onRetry = if (canRetry(entry)) {
+                            { onRetry(entry) }
+                        } else {
+                            null
+                        },
+                        onCancel = if (entry.status == DownloadStatus.Queued || entry.status == DownloadStatus.Running) {
+                            { onCancel(entry) }
+                        } else {
+                            null
                         }
                     )
                     HorizontalDivider(color = Color(0xFFE8EAED))
@@ -231,6 +258,31 @@ internal fun DownloadsPage(
             }
         )
     }
+
+    if (pendingClearFinished) {
+        AlertDialog(
+            onDismissRequest = { pendingClearFinished = false },
+            title = { Text("清理下载记录") },
+            text = {
+                Text("从列表移除已完成、失败和已取消的下载记录，不删除已保存的文件；正在下载的项目会保留。")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onClearFinished()
+                        pendingClearFinished = false
+                    }
+                ) {
+                    Text("清理")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingClearFinished = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -239,7 +291,9 @@ private fun DownloadRow(
     entry: BrowserDownloadEntry,
     onOpen: () -> Unit,
     onCopyUrl: () -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    onRetry: (() -> Unit)?,
+    onCancel: (() -> Unit)?
 ) {
     Row(
         modifier = Modifier
@@ -283,6 +337,16 @@ private fun DownloadRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+        }
+        if ((entry.status == DownloadStatus.Failed || entry.status == DownloadStatus.Canceled) && onRetry != null) {
+            TextButton(onClick = onRetry) {
+                Text("重试")
+            }
+        }
+        if ((entry.status == DownloadStatus.Running || entry.status == DownloadStatus.Queued) && onCancel != null) {
+            TextButton(onClick = onCancel) {
+                Text("取消")
+            }
         }
         IconButton(onClick = onRemove) {
             Icon(Icons.Outlined.Delete, contentDescription = "Remove download")
@@ -429,6 +493,7 @@ private fun downloadMeta(entry: BrowserDownloadEntry): String {
         DownloadStatus.Running -> "Downloading"
         DownloadStatus.Completed -> "Complete"
         DownloadStatus.Failed -> "Failed"
+        DownloadStatus.Canceled -> "Canceled"
     }
     val size = when {
         entry.totalBytes > 0L -> "${formatBytes(entry.bytesDownloaded)} / ${formatBytes(entry.totalBytes)}"
