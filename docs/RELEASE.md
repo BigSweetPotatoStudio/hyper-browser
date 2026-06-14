@@ -40,6 +40,35 @@ versionName "0.1.5" -> tag v0.1.5
 
 If they do not match, CI fails before publishing.
 
+### Prerelease Versions
+
+Use a hyphenated `versionName` for prereleases:
+
+```kotlin
+versionCode = 7
+versionName = "0.1.6-beta.1"
+```
+
+The matching tag is:
+
+```text
+v0.1.6-beta.1
+```
+
+Prereleases are published as GitHub prereleases for manual testing, but they do not update `update/stable.json` and are not shown by the in-app stable update check.
+
+If a tester manually installs a prerelease, the next stable release must use a higher `versionCode` so Android can upgrade it normally:
+
+```kotlin
+// prerelease
+versionCode = 7
+versionName = "0.1.6-beta.1"
+
+// next stable
+versionCode = 8
+versionName = "0.1.6"
+```
+
 ## Changelog
 
 Add a `CHANGELOG.md` section for the version before tagging:
@@ -104,7 +133,7 @@ HyperBrowser-armeabi-v7a-release.apk
 HyperBrowser-x86_64-release.apk
 ```
 
-Then it updates `update/stable.json` on `main` with:
+For stable tags such as `v0.1.6`, it then updates `update/stable.json` on `main` with:
 
 - `versionCode`,
 - `versionName`,
@@ -113,6 +142,8 @@ Then it updates `update/stable.json` on `main` with:
 - one signed APK asset per ABI,
 - SHA-256 hashes,
 - file sizes.
+
+For prerelease tags such as `v0.1.6-beta.1` or `v0.1.6-rc.1`, it marks the GitHub Release as prerelease and skips `update/stable.json`.
 
 You can also run the workflow manually from GitHub Actions, but tagged releases are preferred for public builds. Manual `ci-*` releases do not update the stable in-app update index.
 

@@ -6,6 +6,8 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+- Added prerelease publishing support: hyphenated version tags now create GitHub prereleases for manual testing without updating the stable in-app update index.
+
 ## 0.1.5 - 2026-06-11
 
 - Release workflow now uses Linux-friendly Node scripts to extract notes from `CHANGELOG.md`, publish GitHub Release notes, generate `update/stable.json`, and commit the stable index back to `main` automatically.
