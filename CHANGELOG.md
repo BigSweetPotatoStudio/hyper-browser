@@ -6,6 +6,12 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+## 0.1.6-beta.2 - 2026-06-14
+
+- Changed DNS over HTTPS to be off by default for new installs while preserving existing user choices.
+- Improved DoH provider editing with an explicit save action, validation, and clearer unsaved state.
+- DoH changes now attempt runtime reload and tell users that ECH and some Gecko settings are most complete after restarting the app.
+
 ## 0.1.6-beta.1 - 2026-06-14
 
 - Added DNS over HTTPS settings, automatic ECH attempts when DoH is enabled, HTTPS-Only controls, and standard/strict/no tracking protection levels.
