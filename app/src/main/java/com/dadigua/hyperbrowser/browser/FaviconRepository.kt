@@ -77,6 +77,7 @@ class FaviconRepository(context: Context) {
             .sortedByDescending { iconScore(it) }
             .mapNotNull { attrValue(it, "href") }
             .mapNotNull { resolveUrl(pageUrl, it) }
+            .filter { isNetworkUrl(it) }
     }
 
     private fun iconScore(tag: String): Int {
@@ -92,6 +93,7 @@ class FaviconRepository(context: Context) {
     }
 
     private fun downloadBytes(url: String, maxBytes: Long): ByteArray? {
+        if (!isNetworkUrl(url)) return null
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", "Mozilla/5.0 HyperBrowser/0.1")
@@ -113,6 +115,11 @@ class FaviconRepository(context: Context) {
             val base = java.net.URI(baseUrl)
             base.resolve(href.trim()).toString()
         }.getOrNull()
+
+    private fun isNetworkUrl(url: String): Boolean {
+        val scheme = runCatching { Uri.parse(url).scheme }.getOrNull() ?: return false
+        return scheme == "http" || scheme == "https"
+    }
 
     private fun defaultFaviconUrl(uri: Uri): String =
         uri.buildUpon().encodedPath("/favicon.ico").encodedQuery(null).fragment(null).build().toString()

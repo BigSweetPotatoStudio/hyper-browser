@@ -15,9 +15,13 @@ function SettingsPage() {
   const [batteryOptimization, setBatteryOptimization] = useState<BatteryOptimizationState | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [batteryMessage, setBatteryMessage] = useState("");
+  const [privacyMessage, setPrivacyMessage] = useState("");
+  const [privacyError, setPrivacyError] = useState("");
   const [updateMessage, setUpdateMessage] = useState("");
   const [searchEngineExpanded, setSearchEngineExpanded] = useState(false);
   const [toolbarExpanded, setToolbarExpanded] = useState(false);
+  const [httpDnsExpanded, setHttpDnsExpanded] = useState(false);
+  const [privacyExpanded, setPrivacyExpanded] = useState(false);
   const [backgroundRuntimeExpanded, setBackgroundRuntimeExpanded] = useState(false);
   const [updateSettingsExpanded, setUpdateSettingsExpanded] = useState(false);
   const customInputRef = useRef<HTMLInputElement | null>(null);
@@ -35,6 +39,16 @@ function SettingsPage() {
     const needle = query.trim().toLowerCase();
     if (!needle) return true;
     return "后台运行 电池 省电 锁屏 下载 音乐 视频 播放 youtube vimeo background".includes(needle);
+  }, [query]);
+  const showHttpDnsSettings = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    return "http dns doh ech https only 安全".includes(needle);
+  }, [query]);
+  const showPrivacySettings = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    return "隐私 跟踪 指纹 cookie 标准 严格 无".includes(needle);
   }, [query]);
   const showUpdateSettings = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -122,6 +136,34 @@ function SettingsPage() {
       .catch(() => setBatteryMessage("设置暂时不可用。"));
   }
 
+  function updatePrivacySettings(patch: Partial<Pick<BrowserSettings, "dohEnabled" | "dohProviderUrl" | "httpsOnlyEnabled" | "privacyProtectionLevel">>) {
+    if (!settings) return;
+    const next = {
+      dohEnabled: settings.dohEnabled,
+      dohProviderUrl: settings.dohProviderUrl,
+      httpsOnlyEnabled: settings.httpsOnlyEnabled,
+      privacyProtectionLevel: settings.privacyProtectionLevel,
+      ...patch,
+    };
+    const cleanUrl = next.dohProviderUrl.trim();
+    if (next.dohEnabled && !cleanUrl.startsWith("https://")) {
+      setPrivacyError("DoH 地址必须是 https:// URL。");
+      return;
+    }
+    setPrivacyError("");
+    setPrivacyMessage("");
+    window.hyperBrowser.updatePrivacySettings({ ...next, dohProviderUrl: cleanUrl })
+      .then((value) => {
+        setSettings(value);
+        setPrivacyMessage("设置已保存；已打开页面刷新后生效，DoH 改动重启 App 后最完整。");
+      })
+      .catch((error) => setPrivacyError(error instanceof Error ? error.message : "隐私设置暂时不可用。"));
+  }
+
+  function updateDohProviderUrl(value: string) {
+    updatePrivacySettings({ dohProviderUrl: value });
+  }
+
   function openBatteryOptimizationSettings() {
     setBatteryMessage("");
     window.hyperBrowser.openBatteryOptimizationSettings()
@@ -140,6 +182,21 @@ function SettingsPage() {
 
   function toolbarPositionLabel(toolbarPosition?: BrowserSettings["toolbarPosition"]) {
     return toolbarPosition === "bottom" ? "底部" : "顶部";
+  }
+
+  function privacyStatusLabel() {
+    if (!settings) return "标准";
+    if (settings.privacyProtectionLevel === "none") return "无";
+    return settings.privacyProtectionLevel === "strict" ? "严格" : "标准";
+  }
+
+  function httpDnsStatusLabel() {
+    if (!settings) return "未开启";
+    const active = [
+      settings.dohEnabled,
+      settings.httpsOnlyEnabled,
+    ].filter(Boolean).length;
+    return active > 0 ? `${active}/2 已开启` : "未开启";
   }
 
   function checkUpdate(ignoreSkipped = false) {
@@ -334,7 +391,7 @@ function SettingsPage() {
               </div>
             )}
           </div>
-        ) : !showToolbarPosition && !showBackgroundRuntime && !showUpdateSettings ? (
+        ) : !showToolbarPosition && !showHttpDnsSettings && !showPrivacySettings && !showBackgroundRuntime && !showUpdateSettings ? (
           <div className="settings-empty">没有匹配的设置。</div>
         ) : null}
         {showToolbarPosition && (
@@ -367,6 +424,108 @@ function SettingsPage() {
                   <span>工具栏显示在页面下方</span>
                 </button>
               </div>
+            )}
+          </div>
+        )}
+        {showHttpDnsSettings && (
+          <div className="settings-card settings-card-spaced">
+            <button
+              className="settings-row settings-row-button"
+              type="button"
+              aria-expanded={httpDnsExpanded}
+              onClick={() => setHttpDnsExpanded((expanded) => !expanded)}
+            >
+              <span className="settings-row-title">HTTP / DNS</span>
+              <span className="settings-row-value">{httpDnsStatusLabel()}</span>
+            </button>
+            {httpDnsExpanded && (
+              <>
+                <label className="settings-toggle-row">
+                  <span className="settings-toggle-copy">
+                    <span className="settings-row-title">DNS over HTTPS</span>
+                    <span className="settings-toggle-description">使用加密 DNS 解析，减少 DNS 泄露；开启后自动启用 ECH 尝试。</span>
+                  </span>
+                  <input
+                    className="settings-toggle"
+                    type="checkbox"
+                    checked={!!settings?.dohEnabled}
+                    disabled={!settings}
+                    onChange={(event) => updatePrivacySettings({ dohEnabled: event.currentTarget.checked })}
+                  />
+                </label>
+                <div className="settings-field-row">
+                  <span className="settings-row-title">DoH 地址</span>
+                  <input
+                    type="text"
+                    inputMode="url"
+                    value={settings?.dohProviderUrl || ""}
+                    disabled={!settings || !settings.dohEnabled}
+                    onChange={(event) => setSettings((value) => value ? { ...value, dohProviderUrl: event.currentTarget.value } : value)}
+                    onBlur={(event) => updateDohProviderUrl(event.currentTarget.value)}
+                  />
+                </div>
+                <label className="settings-toggle-row">
+                  <span className="settings-toggle-copy">
+                    <span className="settings-row-title">HTTPS-Only</span>
+                    <span className="settings-toggle-description">开启后尝试升级 HTTPS，无法安全升级时阻止 HTTP 页面。</span>
+                  </span>
+                  <input
+                    className="settings-toggle"
+                    type="checkbox"
+                    checked={!!settings?.httpsOnlyEnabled}
+                    disabled={!settings}
+                    onChange={(event) => updatePrivacySettings({ httpsOnlyEnabled: event.currentTarget.checked })}
+                  />
+                </label>
+                <p className="settings-message">地址栏会始终按当前页面协议提示：HTTP 红色，HTTPS 绿色；HTTPS 且 DoH 开启时显示增强安全图标。ECH 会随 DoH 自动尝试，网站不支持时仍正常使用 HTTPS。</p>
+                {privacyError && <p className="settings-inline-error">{privacyError}</p>}
+                {privacyMessage && <p className="settings-message">{privacyMessage}</p>}
+              </>
+            )}
+          </div>
+        )}
+        {showPrivacySettings && (
+          <div className="settings-card settings-card-spaced">
+            <button
+              className="settings-row settings-row-button"
+              type="button"
+              aria-expanded={privacyExpanded}
+              onClick={() => setPrivacyExpanded((expanded) => !expanded)}
+            >
+              <span className="settings-row-title">隐私</span>
+              <span className="settings-row-value">{privacyStatusLabel()}</span>
+            </button>
+            {privacyExpanded && (
+              <>
+                <div className="settings-options">
+                  <button
+                    className={settings?.privacyProtectionLevel === "none" ? "settings-option selected" : "settings-option"}
+                    type="button"
+                    onClick={() => updatePrivacySettings({ privacyProtectionLevel: "none" })}
+                  >
+                    <span>无跟踪保护</span>
+                    <span>关闭跟踪保护，页面兼容性最高。</span>
+                  </button>
+                  <button
+                    className={settings?.privacyProtectionLevel === "standard" ? "settings-option selected" : "settings-option"}
+                    type="button"
+                    onClick={() => updatePrivacySettings({ privacyProtectionLevel: "standard" })}
+                  >
+                    <span>标准跟踪保护</span>
+                    <span>页面兼容性更好，拦截常见跟踪器。</span>
+                  </button>
+                  <button
+                    className={settings?.privacyProtectionLevel === "strict" ? "settings-option selected" : "settings-option"}
+                    type="button"
+                    onClick={() => updatePrivacySettings({ privacyProtectionLevel: "strict" })}
+                  >
+                    <span>严格跟踪保护</span>
+                    <span>更强拦截与指纹保护，可能影响部分网站。</span>
+                  </button>
+                </div>
+                <p className="settings-message">隐私保护使用 Firefox/GeckoView 内核能力。标准为默认等级，严格可能影响部分网站。</p>
+                {privacyMessage && <p className="settings-message">{privacyMessage}</p>}
+              </>
             )}
           </div>
         )}

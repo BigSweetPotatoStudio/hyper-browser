@@ -28,11 +28,19 @@ data class GeckoPageState(
     val title: String = "",
     val url: String = "",
     val insecureHttp: Boolean = false,
+    val securityLevel: GeckoPageSecurity = GeckoPageSecurity.Neutral,
     val canGoBack: Boolean = false,
     val canGoForward: Boolean = false,
     val isLoading: Boolean = false,
     val loadProgress: Int = 0
 )
+
+enum class GeckoPageSecurity {
+    Neutral,
+    Insecure,
+    Secure,
+    Verified
+}
 
 data class GeckoDownloadRequest(
     val url: String,
@@ -73,7 +81,7 @@ class GeckoSessionController(
 
     private val appContext = context.applicationContext
     private val runtime = GeckoRuntimeProvider.get(context)
-    private val _state = MutableStateFlow(GeckoPageState(url = initialUrl, insecureHttp = initialUrl.startsWith("http://")))
+    private val _state = MutableStateFlow(pageStateForUrl(initialUrl))
     private val _sessionChangeVersion = MutableStateFlow(0)
     private var currentRawUrl: String = initialUrl
     private var lastLoadTarget: String = initialUrl
@@ -184,6 +192,18 @@ class GeckoSessionController(
             ) {
                 onSessionStateChange(GeckoSession.SessionState(state))
             }
+
+            override fun onSecurityChange(
+                session: GeckoSession,
+                securityInfo: GeckoSession.ProgressDelegate.SecurityInformation
+            ) {
+                val currentUrl = _state.value.url.ifBlank { currentRawUrl }
+                val nextSecurity = securityLevelFor(currentUrl, securityInfo)
+                _state.value = _state.value.copy(
+                    insecureHttp = nextSecurity == GeckoPageSecurity.Insecure,
+                    securityLevel = nextSecurity
+                )
+            }
         }
         targetSession.navigationDelegate = object : GeckoSession.NavigationDelegate {
             override fun onLocationChange(
@@ -213,7 +233,8 @@ class GeckoSessionController(
                         else -> _state.value.title
                     },
                     url = target,
-                    insecureHttp = target.startsWith("http://")
+                    insecureHttp = target.startsWith("http://"),
+                    securityLevel = securityLevelForUrl(target)
                 )
             }
 
@@ -351,7 +372,11 @@ class GeckoSessionController(
             onHyperRoute(HyperRoute.History)
             return
         }
-        _state.value = _state.value.copy(url = target, insecureHttp = target.startsWith("http://"))
+        _state.value = _state.value.copy(
+            url = target,
+            insecureHttp = target.startsWith("http://"),
+            securityLevel = securityLevelForUrl(target)
+        )
         session.loadUri(target)
     }
 
@@ -362,7 +387,7 @@ class GeckoSessionController(
 
     fun loadSearch(query: String = "") {
         lastLoadTarget = SEARCH_URL
-        _state.value = GeckoPageState(title = "Search", url = SEARCH_URL)
+        _state.value = pageStateForUrl(SEARCH_URL).copy(title = "Search")
         val loadPage = {
             HyperBridge.pageUrl("search.html")?.let { url ->
                 currentRawUrl = url
@@ -422,7 +447,11 @@ class GeckoSessionController(
         waitingForInitialLocation = visibleUrl != ABOUT_BLANK_URL
         sessionCrashed = false
         automaticRecoveryTarget = null
-        _state.value = _state.value.copy(url = visibleUrl, insecureHttp = visibleUrl.startsWith("http://"))
+        _state.value = _state.value.copy(
+            url = visibleUrl,
+            insecureHttp = visibleUrl.startsWith("http://"),
+            securityLevel = securityLevelForUrl(visibleUrl)
+        )
         return runCatching {
             session.restoreState(GeckoSession.SessionState(state))
             true
@@ -622,7 +651,7 @@ class GeckoSessionController(
     private fun loadInternalPage(semanticUrl: String, title: String, page: String, bootstrapJson: String?) {
         lastLoadTarget = semanticUrl
         sessionCrashed = false
-        _state.value = GeckoPageState(title = title, url = semanticUrl)
+        _state.value = pageStateForUrl(semanticUrl).copy(title = title)
         val loadPage = {
             HyperBridge.pageUrl(page)?.let { url ->
                 currentRawUrl = url
@@ -757,6 +786,36 @@ class GeckoSessionController(
                 ?: "https://www.google.com/search?q=%s"
             return template.replace("%s", encodedQuery)
         }
+
+        fun securityLevelForUrl(url: String): GeckoPageSecurity =
+            when {
+                url.startsWith("http://") -> GeckoPageSecurity.Insecure
+                url.startsWith("https://") -> GeckoPageSecurity.Secure
+                else -> GeckoPageSecurity.Neutral
+            }
+
+        private fun pageStateForUrl(url: String): GeckoPageState {
+            val security = securityLevelForUrl(url)
+            return GeckoPageState(
+                url = url,
+                insecureHttp = security == GeckoPageSecurity.Insecure,
+                securityLevel = security
+            )
+        }
+
+        private fun securityLevelFor(
+            url: String,
+            securityInfo: GeckoSession.ProgressDelegate.SecurityInformation
+        ): GeckoPageSecurity =
+            when {
+                url.startsWith("http://") -> GeckoPageSecurity.Insecure
+                securityInfo.isSecure &&
+                    securityInfo.securityMode ==
+                    GeckoSession.ProgressDelegate.SecurityInformation.SECURITY_MODE_VERIFIED ->
+                    GeckoPageSecurity.Verified
+                securityInfo.isSecure || url.startsWith("https://") -> GeckoPageSecurity.Secure
+                else -> GeckoPageSecurity.Neutral
+            }
 
         private fun semanticUrlForRawUrl(url: String): String =
             when {

@@ -28,8 +28,18 @@ data class BrowserSettings(
     val searchEngineId: String = SEARCH_ENGINE_GOOGLE,
     val customSearchUrl: String = "",
     val toolbarPosition: String = TOOLBAR_POSITION_TOP,
-    val backgroundVideoEnhancementEnabled: Boolean = false
+    val backgroundVideoEnhancementEnabled: Boolean = false,
+    val dohEnabled: Boolean = true,
+    val dohProviderUrl: String = DEFAULT_DOH_PROVIDER_URL,
+    val httpsOnlyEnabled: Boolean = false,
+    val privacyProtectionLevel: String = PRIVACY_PROTECTION_STANDARD
 ) {
+    val echEnabled: Boolean
+        get() = dohEnabled
+
+    val strictPrivacyEnabled: Boolean
+        get() = privacyProtectionLevel == PRIVACY_PROTECTION_STRICT
+
     val searchEngineName: String
         get() = when (searchEngineId) {
             SEARCH_ENGINE_BING -> "Bing"
@@ -52,6 +62,10 @@ data class BrowserSettings(
         const val DEFAULT_SEARCH_URL_TEMPLATE = "https://www.google.com/search?q=%s"
         const val TOOLBAR_POSITION_TOP = "top"
         const val TOOLBAR_POSITION_BOTTOM = "bottom"
+        const val DEFAULT_DOH_PROVIDER_URL = "https://mozilla.cloudflare-dns.com/dns-query"
+        const val PRIVACY_PROTECTION_NONE = "none"
+        const val PRIVACY_PROTECTION_STANDARD = "standard"
+        const val PRIVACY_PROTECTION_STRICT = "strict"
     }
 }
 
@@ -285,6 +299,27 @@ class BrowserProfileStore(context: Context) {
         saveSettings(next)
     }
 
+    fun updatePrivacySettings(
+        dohEnabled: Boolean,
+        dohProviderUrl: String,
+        httpsOnlyEnabled: Boolean,
+        privacyProtectionLevel: String
+    ) {
+        val next = settingsState.value.copy(
+            dohEnabled = dohEnabled,
+            dohProviderUrl = dohProviderUrl.trim().takeIf { it.startsWith("https://") }
+                ?: BrowserSettings.DEFAULT_DOH_PROVIDER_URL,
+            httpsOnlyEnabled = httpsOnlyEnabled,
+            privacyProtectionLevel = when (privacyProtectionLevel) {
+                BrowserSettings.PRIVACY_PROTECTION_NONE -> BrowserSettings.PRIVACY_PROTECTION_NONE
+                BrowserSettings.PRIVACY_PROTECTION_STRICT -> BrowserSettings.PRIVACY_PROTECTION_STRICT
+                else -> BrowserSettings.PRIVACY_PROTECTION_STANDARD
+            }
+        )
+        settingsState.value = next
+        saveSettings(next)
+    }
+
     private fun loadHistory(): List<BrowserHistoryEntry> {
         if (!historyFile.exists()) return emptyList()
         return runCatching {
@@ -364,6 +399,11 @@ class BrowserProfileStore(context: Context) {
                 .put("customSearchUrl", settings.customSearchUrl)
                 .put("toolbarPosition", settings.toolbarPosition)
                 .put("backgroundVideoEnhancementEnabled", settings.backgroundVideoEnhancementEnabled)
+                .put("dohEnabled", settings.dohEnabled)
+                .put("dohProviderUrl", settings.dohProviderUrl)
+                .put("httpsOnlyEnabled", settings.httpsOnlyEnabled)
+                .put("privacyProtectionLevel", settings.privacyProtectionLevel)
+                .put("privacySettingsVersion", CURRENT_PRIVACY_SETTINGS_VERSION)
                 .toString()
         )
     }
@@ -412,6 +452,7 @@ class BrowserProfileStore(context: Context) {
 
     companion object {
         private const val SETTINGS_FILE_NAME = "browser_settings.json"
+        private const val CURRENT_PRIVACY_SETTINGS_VERSION = 1
         private const val TAB_THUMBNAIL_MAX_WIDTH = 480
         private const val TAB_THUMBNAIL_MAX_HEIGHT = 720
 
@@ -422,11 +463,29 @@ class BrowserProfileStore(context: Context) {
             if (!file.exists()) return BrowserSettings()
             return runCatching {
                 val item = JSONObject(file.readText())
+                val privacySettingsVersion = item.optInt("privacySettingsVersion", 0)
                 BrowserSettings(
                     searchEngineId = item.optString("searchEngineId", BrowserSettings.SEARCH_ENGINE_GOOGLE),
                     customSearchUrl = item.optString("customSearchUrl"),
                     toolbarPosition = item.optString("toolbarPosition", BrowserSettings.TOOLBAR_POSITION_TOP),
-                    backgroundVideoEnhancementEnabled = item.optBoolean("backgroundVideoEnhancementEnabled", false)
+                    backgroundVideoEnhancementEnabled = item.optBoolean("backgroundVideoEnhancementEnabled", false),
+                    dohEnabled = item.optBoolean("dohEnabled", true),
+                    dohProviderUrl = item.optString(
+                        "dohProviderUrl",
+                        BrowserSettings.DEFAULT_DOH_PROVIDER_URL
+                    ).takeIf { it.startsWith("https://") } ?: BrowserSettings.DEFAULT_DOH_PROVIDER_URL,
+                    httpsOnlyEnabled = if (privacySettingsVersion > 0) {
+                        item.optBoolean("httpsOnlyEnabled", false)
+                    } else {
+                        false
+                    },
+                    privacyProtectionLevel = when (item.optString("privacyProtectionLevel")) {
+                        BrowserSettings.PRIVACY_PROTECTION_NONE ->
+                            BrowserSettings.PRIVACY_PROTECTION_NONE
+                        BrowserSettings.PRIVACY_PROTECTION_STRICT ->
+                            BrowserSettings.PRIVACY_PROTECTION_STRICT
+                        else -> BrowserSettings.PRIVACY_PROTECTION_STANDARD
+                    }
                 )
             }.getOrDefault(BrowserSettings())
         }

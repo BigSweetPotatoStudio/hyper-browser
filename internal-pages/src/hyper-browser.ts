@@ -43,6 +43,10 @@ type BrowserSettings = {
   customSearchUrl: string;
   toolbarPosition: "top" | "bottom";
   backgroundVideoEnhancementEnabled: boolean;
+  dohEnabled: boolean;
+  dohProviderUrl: string;
+  httpsOnlyEnabled: boolean;
+  privacyProtectionLevel: "none" | "standard" | "strict";
 };
 
 type UpdateAsset = {
@@ -109,6 +113,7 @@ type HyperBrowserApi = {
   updateSearchEngine(searchEngineId: BrowserSettings["searchEngineId"], customSearchUrl?: string): Promise<BrowserSettings>;
   updateToolbarPosition(toolbarPosition: BrowserSettings["toolbarPosition"]): Promise<BrowserSettings>;
   updateBackgroundVideoEnhancement(enabled: boolean): Promise<BrowserSettings>;
+  updatePrivacySettings(settings: Pick<BrowserSettings, "dohEnabled" | "dohProviderUrl" | "httpsOnlyEnabled" | "privacyProtectionLevel">): Promise<BrowserSettings>;
   requestBatteryOptimizationState(): Promise<BatteryOptimizationState>;
   openBatteryOptimizationSettings(): Promise<BatteryOptimizationState>;
   checkUpdate(ignoreSkipped?: boolean): Promise<UpdateCheckResult>;
@@ -216,6 +221,14 @@ window.hyperBrowser = {
   updateBackgroundVideoEnhancement(enabled) {
     return send("settings.backgroundVideoEnhancement.update", { enabled: enabled ? "true" : "false" })
       .then((response) => response.data as BrowserSettings);
+  },
+  updatePrivacySettings(settings) {
+    return send("settings.privacy.update", {
+      dohEnabled: settings.dohEnabled ? "true" : "false",
+      dohProviderUrl: settings.dohProviderUrl,
+      httpsOnlyEnabled: settings.httpsOnlyEnabled ? "true" : "false",
+      privacyProtectionLevel: settings.privacyProtectionLevel,
+    }).then((response) => response.data as BrowserSettings);
   },
   requestBatteryOptimizationState() {
     return requestObject<BatteryOptimizationState>("settings.batteryOptimizationState");

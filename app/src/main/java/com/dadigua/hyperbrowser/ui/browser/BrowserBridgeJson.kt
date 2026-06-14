@@ -33,6 +33,10 @@ internal fun BrowserSettings.toJson(): JSONObject =
         .put("customSearchUrl", customSearchUrl)
         .put("toolbarPosition", toolbarPosition)
         .put("backgroundVideoEnhancementEnabled", backgroundVideoEnhancementEnabled)
+        .put("dohEnabled", dohEnabled)
+        .put("dohProviderUrl", dohProviderUrl)
+        .put("httpsOnlyEnabled", httpsOnlyEnabled)
+        .put("privacyProtectionLevel", privacyProtectionLevel)
 
 internal fun UpdateCheckResult.toJson(): JSONObject =
     JSONObject()

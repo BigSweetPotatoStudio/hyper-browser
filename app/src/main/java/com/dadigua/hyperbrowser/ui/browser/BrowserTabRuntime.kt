@@ -97,7 +97,8 @@ internal class BrowserTabRuntime private constructor(
         return GeckoPageState(
             title = restoredTitle.orEmpty(),
             url = url,
-            insecureHttp = url.startsWith("http://")
+            insecureHttp = url.startsWith("http://"),
+            securityLevel = GeckoSessionController.securityLevelForUrl(url)
         )
     }
 

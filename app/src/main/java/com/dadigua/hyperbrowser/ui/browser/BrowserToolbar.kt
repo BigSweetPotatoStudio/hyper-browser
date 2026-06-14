@@ -88,6 +88,13 @@ private data class ToolbarSuggestion(
     val source: String
 )
 
+internal enum class AddressSecurityLevel {
+    Neutral,
+    Insecure,
+    Secure,
+    Enhanced
+}
+
 @Composable
 private fun ToolbarCurrentPagePanel(
     title: String,
@@ -216,6 +223,7 @@ internal fun BrowserToolbar(
     bookmarks: List<BrowserBookmark>,
     history: List<BrowserHistoryEntry>,
     downloads: List<BrowserDownloadEntry>,
+    addressSecurityLevel: AddressSecurityLevel,
     onSubmitAddress: (String) -> Unit,
     onBack: () -> Unit,
     onForward: () -> Unit,
@@ -371,7 +379,11 @@ internal fun BrowserToolbar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AddressSecurityIndicator(
-                    insecure = pageState.insecureHttp && !editingAddress,
+                    level = if (editingAddress) {
+                        AddressSecurityLevel.Neutral
+                    } else {
+                        addressSecurityLevel
+                    },
                     modifier = Modifier.width(26.dp)
                 )
                 BasicTextField(
@@ -482,36 +494,54 @@ internal fun BrowserToolbar(
 
 @Composable
 private fun AddressSecurityIndicator(
-    insecure: Boolean,
+    level: AddressSecurityLevel,
     modifier: Modifier = Modifier
 ) {
     Box(
         modifier = modifier,
         contentAlignment = Alignment.CenterStart
     ) {
-        if (insecure) {
-            Box(
-                modifier = Modifier
-                    .size(18.dp)
-                    .clip(CircleShape)
-                    .border(1.5.dp, MaterialTheme.colorScheme.error, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "!",
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        } else {
-            Icon(
+        when (level) {
+            AddressSecurityLevel.Insecure -> SecurityBadge(
+                label = "!",
+                color = MaterialTheme.colorScheme.error
+            )
+            AddressSecurityLevel.Secure -> SecurityBadge(
+                label = "✓",
+                color = Color(0xFF188038)
+            )
+            AddressSecurityLevel.Enhanced -> SecurityBadge(
+                label = "★",
+                color = Color(0xFF0B8043)
+            )
+            AddressSecurityLevel.Neutral -> Icon(
                 imageVector = Icons.Outlined.Public,
                 contentDescription = null,
                 tint = Color(0xFF5F6368),
                 modifier = Modifier.size(18.dp)
             )
         }
+    }
+}
+
+@Composable
+private fun SecurityBadge(
+    label: String,
+    color: Color
+) {
+    Box(
+        modifier = Modifier
+            .size(19.dp)
+            .clip(CircleShape)
+            .border(1.6.dp, color, CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = color,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 

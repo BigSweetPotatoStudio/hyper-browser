@@ -56,6 +56,8 @@ import com.dadigua.hyperbrowser.browser.SavedBrowserTabs
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
 import com.dadigua.hyperbrowser.gecko.GeckoContextMenuTarget
 import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
+import com.dadigua.hyperbrowser.gecko.GeckoPageSecurity
+import com.dadigua.hyperbrowser.gecko.GeckoRuntimeProvider
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.HyperCommand
 import com.dadigua.hyperbrowser.gecko.HyperRoute
@@ -368,6 +370,17 @@ private fun BrowserScreen(
             "settings.backgroundVideoEnhancement.update" -> {
                 profileStore.updateBackgroundVideoEnhancement(payload.optString("enabled") == "true")
                 okData(profileStore.observeSettings().value.toJson())
+            }
+            "settings.privacy.update" -> {
+                profileStore.updatePrivacySettings(
+                    dohEnabled = payload.optString("dohEnabled") == "true",
+                    dohProviderUrl = payload.optString("dohProviderUrl"),
+                    httpsOnlyEnabled = payload.optString("httpsOnlyEnabled") == "true",
+                    privacyProtectionLevel = payload.optString("privacyProtectionLevel")
+                )
+                val nextSettings = profileStore.observeSettings().value
+                GeckoRuntimeProvider.applyBrowserSettings(app, nextSettings)
+                okData(nextSettings.toJson())
             }
             "settings.batteryOptimizationState" -> okData(
                 JSONObject().put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
@@ -1123,6 +1136,7 @@ private fun BrowserScreen(
                         bookmarks = bookmarks,
                         history = history,
                         downloads = downloads,
+                        addressSecurityLevel = addressSecurityLevel(pageState.securityLevel, settings),
                         onSubmitAddress = { query ->
                             tab.input = query
                             controller.load(query, settings.searchUrlTemplate)
@@ -1248,4 +1262,21 @@ private fun shortcutRequestMessage(result: PinnedShortcutRequestResult): String 
         PinnedShortcutRequestResult.Unsupported -> "Home screen shortcuts are not supported by this launcher."
         PinnedShortcutRequestResult.Failed -> "Shortcut request failed."
         PinnedShortcutRequestResult.WebAppNotFound -> "WebApp not found."
+    }
+
+private fun addressSecurityLevel(
+    pageSecurity: GeckoPageSecurity,
+    settings: BrowserSettings
+): AddressSecurityLevel =
+    when (pageSecurity) {
+        GeckoPageSecurity.Insecure -> AddressSecurityLevel.Insecure
+        GeckoPageSecurity.Secure,
+        GeckoPageSecurity.Verified -> {
+            if (settings.dohEnabled && settings.echEnabled) {
+                AddressSecurityLevel.Enhanced
+            } else {
+                AddressSecurityLevel.Secure
+            }
+        }
+        GeckoPageSecurity.Neutral -> AddressSecurityLevel.Neutral
     }
