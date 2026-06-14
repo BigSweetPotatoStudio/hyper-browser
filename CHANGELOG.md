@@ -6,6 +6,11 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+## 0.1.6-beta.1 - 2026-06-14
+
+- Added DNS over HTTPS settings, automatic ECH attempts when DoH is enabled, HTTPS-Only controls, and standard/strict/no tracking protection levels.
+- Improved address-bar security indicators for HTTP, HTTPS, and enhanced HTTPS states.
+- Improved WebApp icon recovery so installed shortcuts keep existing icons, recover missing favicon files, and refresh when newer site icons are available.
 - Added prerelease publishing support: hyphenated version tags now create GitHub prereleases for manual testing without updating the stable in-app update index.
 
 ## 0.1.5 - 2026-06-11

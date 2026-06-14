@@ -309,6 +309,57 @@ popup 容器高度必须覆盖 WebExtension 内容的可交互区域。不要让
 
 保持结构简单，后续需要迁移再引入 Room/DataStore。
 
+## 发布与预发布
+
+正式发布和预发布都走 `.github/workflows/android-release.yml`。发布元数据以两个文件为准：
+
+- `app/build.gradle.kts`：维护 `versionCode` 和 `versionName`
+- `CHANGELOG.md`：维护对应版本的用户可读发布说明
+
+正式版本使用普通语义版本号，例如：
+
+```kotlin
+versionCode = 8
+versionName = "0.1.6"
+```
+
+正式版本 tag 必须匹配 `versionName`：
+
+```text
+versionName "0.1.6" -> tag v0.1.6
+```
+
+正式版本发布后 CI 会生成 GitHub Release，并更新 `update/stable.json`。App 内检查更新只读取 `update/stable.json`，不会直接查询 GitHub Releases。
+
+预发布版本只用于 GitHub Releases 页面手动下载安装测试，不作为 App 内稳定更新通道。预发布版本使用带 `-` 的 `versionName`，例如：
+
+```kotlin
+versionCode = 7
+versionName = "0.1.6-beta.1"
+```
+
+对应 tag：
+
+```text
+v0.1.6-beta.1
+```
+
+CI 看到 `versionName` 包含 `-` 时，应发布为 GitHub prerelease，并跳过 `update/stable.json`。不要让预发布污染稳定更新索引。
+
+如果测试用户手动安装了预发布，下一个正式版本必须使用更高的 `versionCode`，这样测试用户才能通过正常 Android 安装/更新路径升级到正式版：
+
+```kotlin
+// prerelease
+versionCode = 7
+versionName = "0.1.6-beta.1"
+
+// next stable
+versionCode = 8
+versionName = "0.1.6"
+```
+
+当前不做 App 内预发布通道；不要新增 `beta.json` 或设置里的更新通道，除非用户之后明确要求。
+
 ## 验证和交付重点
 
 每次改浏览器主交互后，默认完成：
