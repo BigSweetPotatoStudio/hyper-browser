@@ -49,6 +49,27 @@ class FaviconRepository(context: Context) {
     fun iconDataUrl(iconPath: String?, pageUrl: String): String? =
         iconDataUrl(iconPath) ?: cachedIconPath(pageUrl)?.let { iconDataUrl(it) }
 
+    fun saveIconDataUrl(pageUrl: String, iconDataUrl: String?): String? {
+        if (iconDataUrl.isNullOrBlank()) return null
+        val pageUri = runCatching { Uri.parse(pageUrl) }.getOrNull() ?: return null
+        val scheme = pageUri.scheme ?: return null
+        if (scheme != "http" && scheme != "https") return null
+        val commaIndex = iconDataUrl.indexOf(',')
+        if (!iconDataUrl.startsWith("data:image/", ignoreCase = true) || commaIndex <= 0) return null
+        val encoded = iconDataUrl.substring(commaIndex + 1)
+        val bytes = runCatching { Base64.decode(encoded, Base64.DEFAULT) }.getOrNull() ?: return null
+        if (bytes.isEmpty() || bytes.size > 1_500_000) return null
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+        iconDir.mkdirs()
+        val targetFile = iconFile(pageUri)
+        val saved = runCatching {
+            targetFile.outputStream().use { out ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            }
+        }.getOrDefault(false)
+        return targetFile.takeIf { saved && it.exists() && it.length() > 0 }?.absolutePath
+    }
+
     fun existingIconPath(iconPath: String?): String? {
         if (iconPath.isNullOrBlank()) return null
         return File(iconPath)

@@ -20,10 +20,12 @@ function SettingsPage() {
   const [privacyMessage, setPrivacyMessage] = useState("");
   const [privacyError, setPrivacyError] = useState("");
   const [updateMessage, setUpdateMessage] = useState("");
+  const [backupMessage, setBackupMessage] = useState("");
   const [searchEngineExpanded, setSearchEngineExpanded] = useState(false);
   const [toolbarExpanded, setToolbarExpanded] = useState(false);
   const [httpDnsExpanded, setHttpDnsExpanded] = useState(false);
   const [privacyExpanded, setPrivacyExpanded] = useState(false);
+  const [backupExpanded, setBackupExpanded] = useState(false);
   const [backgroundRuntimeExpanded, setBackgroundRuntimeExpanded] = useState(false);
   const [updateSettingsExpanded, setUpdateSettingsExpanded] = useState(false);
   const customInputRef = useRef<HTMLInputElement | null>(null);
@@ -51,6 +53,11 @@ function SettingsPage() {
     const needle = query.trim().toLowerCase();
     if (!needle) return true;
     return "隐私 跟踪 指纹 cookie 标准 严格 无".includes(needle);
+  }, [query]);
+  const showBackupSettings = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    return "备份 导出 导入 恢复 加载 json 书签 webapp".includes(needle);
   }, [query]);
   const showUpdateSettings = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -199,6 +206,20 @@ function SettingsPage() {
         }
       })
       .catch((error) => setBatteryMessage(error instanceof Error ? error.message : "无法打开电池设置。"));
+  }
+
+  function exportBackup() {
+    setBackupMessage("正在打开文件保存位置...");
+    window.hyperBrowser.exportBackup()
+      .then((result) => setBackupMessage(result.message || "请选择 JSON 备份保存位置。"))
+      .catch((error) => setBackupMessage(error instanceof Error ? error.message : "备份导出失败。"));
+  }
+
+  function importBackup() {
+    setBackupMessage("正在打开备份文件选择器...");
+    window.hyperBrowser.importBackup()
+      .then((result) => setBackupMessage(result.message || "请选择 Hyper Browser JSON 备份。"))
+      .catch((error) => setBackupMessage(error instanceof Error ? error.message : "备份导入失败。"));
   }
 
   function batteryOptimizationLabel() {
@@ -416,7 +437,7 @@ function SettingsPage() {
               </div>
             )}
           </div>
-        ) : !showToolbarPosition && !showHttpDnsSettings && !showPrivacySettings && !showBackgroundRuntime && !showUpdateSettings ? (
+        ) : !showToolbarPosition && !showHttpDnsSettings && !showPrivacySettings && !showBackupSettings && !showBackgroundRuntime && !showUpdateSettings ? (
           <div className="settings-empty">没有匹配的设置。</div>
         ) : null}
         {showToolbarPosition && (
@@ -573,6 +594,33 @@ function SettingsPage() {
                 </div>
                 <p className="settings-message">隐私保护使用 Firefox/GeckoView 内核能力。标准为默认等级，严格可能影响部分网站。</p>
                 {privacyMessage && <p className="settings-message">{privacyMessage}</p>}
+              </>
+            )}
+          </div>
+        )}
+        {showBackupSettings && (
+          <div className="settings-card settings-card-spaced">
+            <button
+              className="settings-row settings-row-button"
+              type="button"
+              aria-expanded={backupExpanded}
+              onClick={() => setBackupExpanded((expanded) => !expanded)}
+            >
+              <span className="settings-row-title">本地备份</span>
+              <span className="settings-row-value">书签与 WebApp</span>
+            </button>
+            {backupExpanded && (
+              <>
+                <div className="settings-actions">
+                  <button className="settings-action primary" type="button" onClick={exportBackup}>
+                    导出 JSON
+                  </button>
+                  <button className="settings-action" type="button" onClick={importBackup}>
+                    导入 JSON
+                  </button>
+                </div>
+                <p className="settings-message">导入会合并当前书签和 WebApp，不会清空现有数据；桌面快捷方式需要重新固定。</p>
+                {backupMessage && <p className="settings-message">{backupMessage}</p>}
               </>
             )}
           </div>

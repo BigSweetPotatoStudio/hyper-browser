@@ -38,6 +38,48 @@ class WebAppRepository(
 
     suspend fun get(id: String): WebAppDefinition? = state.value.firstOrNull { it.id == id }
 
+    fun mergeImported(items: List<WebAppDefinition>): Int {
+        val current = state.value
+        val currentByStartUrl = current.associateBy { it.startUrl }
+        val usedIds = current.map { it.id }.toMutableSet()
+        val importedStartUrls = mutableSetOf<String>()
+        val accepted = mutableListOf<WebAppDefinition>()
+        val shortcutUpdates = mutableListOf<WebAppDefinition>()
+        items.forEach { item ->
+            val startUrl = item.startUrl.trim()
+            if (startUrl.isBlank() || !importedStartUrls.add(startUrl)) return@forEach
+            val existing = currentByStartUrl[startUrl]
+            val id = existing?.id
+                ?: item.id.takeIf { it.isNotBlank() && usedIds.add(it) }
+                ?: UUID.randomUUID().toString().also { usedIds.add(it) }
+            val iconPath = faviconStore.existingIconPath(item.iconPath)
+                ?: faviconStore.cachedIconPath(startUrl)
+                ?: existing?.iconPath
+            val webApp = WebAppDefinition(
+                id = id,
+                name = item.name.trim().ifBlank { existing?.name ?: Uri.parse(startUrl).host ?: "WebApp" },
+                startUrl = startUrl,
+                scopeUrl = item.scopeUrl.trim().ifBlank { scopeFor(startUrl) },
+                iconPath = iconPath,
+                themeColor = item.themeColor,
+                displayMode = item.displayMode.ifBlank { existing?.displayMode ?: "standalone" },
+                createdAt = item.createdAt.takeIf { it > 0 }
+                    ?: existing?.createdAt
+                    ?: System.currentTimeMillis(),
+                lastOpenedAt = item.lastOpenedAt.takeIf { it > 0 }
+                    ?: existing?.lastOpenedAt
+                    ?: System.currentTimeMillis()
+            )
+            accepted.add(webApp)
+            if (existing != null) shortcutUpdates.add(webApp)
+        }
+        if (accepted.isEmpty()) return 0
+        val importedUrls = accepted.map { it.startUrl }.toSet()
+        save((accepted + current.filterNot { it.startUrl in importedUrls }).sortedByDescending { it.lastOpenedAt })
+        shortcutUpdates.forEach { updateShortcut(it) }
+        return accepted.size
+    }
+
     fun iconDataUrl(webApp: WebAppDefinition): String? {
         val icon = webAppIconBitmap(webApp, 192) ?: return null
         val output = ByteArrayOutputStream()

@@ -98,6 +98,33 @@ class BrowserProfileStore(context: Context) {
     fun observeBookmarks(): StateFlow<List<BrowserBookmark>> = bookmarksState
     fun observeSettings(): StateFlow<BrowserSettings> = settingsState
 
+    fun mergeBookmarks(imported: List<BrowserBookmark>): Int {
+        val accepted = mutableListOf<BrowserBookmark>()
+        val seenUrls = mutableSetOf<String>()
+        val existingByUrl = bookmarksState.value.associateBy { it.url }
+        imported.forEach { bookmark ->
+            val url = bookmark.url.trim()
+            if (url.isBlank() || !seenUrls.add(url)) return@forEach
+            val existing = existingByUrl[url]
+            accepted.add(
+                BrowserBookmark(
+                    url = url,
+                    title = bookmark.title.trim().ifBlank { existing?.title ?: url },
+                    createdAt = bookmark.createdAt.takeIf { it > 0 }
+                        ?: existing?.createdAt
+                        ?: System.currentTimeMillis(),
+                    iconPath = bookmark.iconPath ?: existing?.iconPath
+                )
+            )
+        }
+        if (accepted.isEmpty()) return 0
+        val importedUrls = accepted.map { it.url }.toSet()
+        val next = accepted + bookmarksState.value.filterNot { it.url in importedUrls }
+        bookmarksState.value = next
+        saveBookmarks(next)
+        return accepted.size
+    }
+
     fun loadSavedTabs(): SavedBrowserTabs {
         if (!tabsFile.exists()) return SavedBrowserTabs(selectedTabId = null, tabs = emptyList())
         return BrowserTabPersistenceCodec.decode(tabsFile.readText())

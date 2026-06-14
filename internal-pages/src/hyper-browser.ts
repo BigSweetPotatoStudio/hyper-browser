@@ -87,6 +87,10 @@ type BatteryOptimizationState = {
   opened?: boolean;
 };
 
+type BackupActionResult = {
+  message?: string;
+};
+
 declare global {
   const browser: {
     runtime?: {
@@ -116,6 +120,8 @@ type HyperBrowserApi = {
   updatePrivacySettings(settings: Pick<BrowserSettings, "dohEnabled" | "dohProviderUrl" | "httpsOnlyEnabled" | "privacyProtectionLevel">): Promise<BrowserSettings>;
   requestBatteryOptimizationState(): Promise<BatteryOptimizationState>;
   openBatteryOptimizationSettings(): Promise<BatteryOptimizationState>;
+  exportBackup(): Promise<BackupActionResult>;
+  importBackup(): Promise<BackupActionResult>;
   checkUpdate(ignoreSkipped?: boolean): Promise<UpdateCheckResult>;
   installUpdate(versionCode: number): Promise<UpdateDownloadState>;
   requestUpdateDownloadState(): Promise<UpdateDownloadState>;
@@ -236,6 +242,12 @@ window.hyperBrowser = {
   openBatteryOptimizationSettings() {
     return requestObject<BatteryOptimizationState>("settings.openBatteryOptimization");
   },
+  exportBackup() {
+    return send("backup.export").then((response) => response.data as BackupActionResult);
+  },
+  importBackup() {
+    return send("backup.import").then((response) => response.data as BackupActionResult);
+  },
   checkUpdate(ignoreSkipped = false) {
     return send("update.check", { ignoreSkipped: ignoreSkipped ? "true" : "false" })
       .then((response) => response.data as UpdateCheckResult);
@@ -291,4 +303,4 @@ window.hyperBrowser = {
   }
 };
 
-export type { AvailableUpdate, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem };
+export type { AvailableUpdate, BackupActionResult, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem };

@@ -49,6 +49,7 @@ import com.dadigua.hyperbrowser.browser.DownloadHandler
 import com.dadigua.hyperbrowser.browser.DownloadStatus
 import com.dadigua.hyperbrowser.browser.DownloadStore
 import com.dadigua.hyperbrowser.browser.FaviconRepository
+import com.dadigua.hyperbrowser.backup.BrowserBackupManager
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
@@ -77,6 +78,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoSession
 import java.util.UUID
@@ -201,6 +203,7 @@ private fun BrowserScreen(
     val clipboard = LocalClipboard.current
     val profileStore = remember { BrowserProfileStore(app) }
     val faviconStore = remember { FaviconRepository(app) }
+    val backupManager = remember { BrowserBackupManager(profileStore, app.webApps, faviconStore) }
     val downloadStore = remember { DownloadStore(app) }
     val downloadHandler = remember { DownloadHandler(app, downloadStore) }
     val updateManager = remember { AppUpdateManager(app, UpdateSettingsStore(app)) }
@@ -338,6 +341,57 @@ private fun BrowserScreen(
         return false
     }
 
+    fun defaultBackupFileName(): String =
+        "hyper-browser-backup-${System.currentTimeMillis()}.json"
+
+    val exportBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri == null) {
+            message = "已取消备份。"
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            message = "正在导出备份..."
+            runCatching {
+                val backupJson = withContext(Dispatchers.IO) { backupManager.exportJson() }
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)
+                        ?.bufferedWriter(Charsets.UTF_8)
+                        ?.use { writer -> writer.write(backupJson) }
+                        ?: error("无法写入备份文件。")
+                }
+            }
+                .onSuccess { message = "备份已导出。" }
+                .onFailure { message = it.message ?: "备份导出失败。" }
+        }
+    }
+
+    val importBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) {
+            message = "已取消导入。"
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            message = "正在导入备份..."
+            runCatching {
+                val backupJson = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)
+                        ?.bufferedReader(Charsets.UTF_8)
+                        ?.use { reader -> reader.readText() }
+                        ?: error("无法读取备份文件。")
+                }
+                withContext(Dispatchers.IO) { backupManager.importJson(backupJson) }
+            }
+                .onSuccess { result ->
+                    message = "已导入 ${result.bookmarks} 个书签和 ${result.webApps} 个 WebApp。"
+                }
+                .onFailure { message = it.message ?: "备份导入失败。" }
+        }
+    }
+
     fun handleHyperBridgeMessage(message: JSONObject): JSONObject {
         val payload = message.optJSONObject("payload") ?: JSONObject()
         return when (message.optString("type")) {
@@ -390,6 +444,16 @@ private fun BrowserScreen(
                     .put("opened", openBatteryOptimizationSettings())
                     .put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
             )
+            "backup.export" -> {
+                scope.launch { exportBackupLauncher.launch(defaultBackupFileName()) }
+                okData(JSONObject().put("message", "请选择 JSON 备份保存位置。"))
+            }
+            "backup.import" -> {
+                scope.launch {
+                    importBackupLauncher.launch(arrayOf("application/json", "text/json", "application/octet-stream", "*/*"))
+                }
+                okData(JSONObject().put("message", "请选择 Hyper Browser JSON 备份。"))
+            }
             "update.check" -> {
                 val result = runBlocking {
                     updateManager.check(ignoreSkipped = payload.optString("ignoreSkipped") == "true")
