@@ -613,6 +613,7 @@ private fun BrowserScreen(
 
     LaunchedEffect(Unit) {
         runCatching { app.extensions.refreshInstalledFromRuntime() }
+        runCatching { app.webApps.refreshMissingIcons() }
     }
 
     fun showPanel(panel: BrowserPanel) {
@@ -789,6 +790,7 @@ private fun BrowserScreen(
                 tab.iconPath = iconPath
                 profileStore.recordVisit(pageState.url, controller.state.value.title, iconPath)
                 profileStore.updateBookmarkIcon(pageState.url, iconPath)
+                runCatching { app.webApps.updateIconForUrl(pageState.url, iconPath) }
             }
         }
     }

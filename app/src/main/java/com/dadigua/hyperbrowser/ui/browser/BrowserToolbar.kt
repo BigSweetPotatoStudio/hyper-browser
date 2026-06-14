@@ -26,8 +26,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -502,17 +505,23 @@ private fun AddressSecurityIndicator(
         contentAlignment = Alignment.CenterStart
     ) {
         when (level) {
-            AddressSecurityLevel.Insecure -> SecurityBadge(
-                label = "!",
-                color = MaterialTheme.colorScheme.error
+            AddressSecurityLevel.Insecure -> Icon(
+                imageVector = Icons.Outlined.WarningAmber,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(20.dp)
             )
-            AddressSecurityLevel.Secure -> SecurityBadge(
-                label = "✓",
-                color = Color(0xFF188038)
+            AddressSecurityLevel.Secure -> Icon(
+                imageVector = Icons.Outlined.Lock,
+                contentDescription = null,
+                tint = Color(0xFF188038),
+                modifier = Modifier.size(18.dp)
             )
-            AddressSecurityLevel.Enhanced -> SecurityBadge(
-                label = "★",
-                color = Color(0xFF0B8043)
+            AddressSecurityLevel.Enhanced -> Icon(
+                imageVector = Icons.Outlined.Security,
+                contentDescription = null,
+                tint = Color(0xFF0B8043),
+                modifier = Modifier.size(20.dp)
             )
             AddressSecurityLevel.Neutral -> Icon(
                 imageVector = Icons.Outlined.Public,
@@ -521,27 +530,6 @@ private fun AddressSecurityIndicator(
                 modifier = Modifier.size(18.dp)
             )
         }
-    }
-}
-
-@Composable
-private fun SecurityBadge(
-    label: String,
-    color: Color
-) {
-    Box(
-        modifier = Modifier
-            .size(19.dp)
-            .clip(CircleShape)
-            .border(1.6.dp, color, CircleShape),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = label,
-            color = color,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold
-        )
     }
 }
 

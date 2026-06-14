@@ -52,7 +52,7 @@ class WebAppRepository(
         iconPath: String? = null
     ): WebAppInstallResult {
         val now = System.currentTimeMillis()
-        val resolvedIconPath = iconPath ?: faviconStore.cachedIconPath(url) ?: faviconStore.resolveIconPath(url)
+        val resolvedIconPath = resolveWebAppIconPath(url, iconPath)
         val webApp = WebAppDefinition(
             id = UUID.randomUUID().toString(),
             name = name.ifBlank { Uri.parse(url).host ?: "WebApp" },
@@ -80,7 +80,7 @@ class WebAppRepository(
         val current = state.value.firstOrNull { it.id == id } ?: return null
         val cleanUrl = startUrl.trim()
         if (cleanUrl.isBlank()) return null
-        val iconPath = faviconStore.cachedIconPath(cleanUrl) ?: faviconStore.resolveIconPath(cleanUrl)
+        val iconPath = resolveWebAppIconPath(cleanUrl, current.iconPath)
         val updated = current.copy(
             name = name.trim().ifBlank { Uri.parse(cleanUrl).host ?: current.name },
             startUrl = cleanUrl,
@@ -103,7 +103,7 @@ class WebAppRepository(
         val now = System.currentTimeMillis()
         val updated = state.value.map {
             if (it.id == id) {
-                val iconPath = it.iconPath ?: faviconStore.cachedIconPath(it.startUrl)
+                val iconPath = resolveWebAppIconPath(it.startUrl, it.iconPath)
                 it.copy(lastOpenedAt = now, iconPath = iconPath)
             } else {
                 it
@@ -111,6 +111,41 @@ class WebAppRepository(
         }
         save(updated)
         updated.firstOrNull { it.id == id }?.let { updateShortcut(it) }
+    }
+
+    suspend fun refreshMissingIcons() {
+        val shortcutUpdates = mutableListOf<WebAppDefinition>()
+        val updated = state.value.map { webApp ->
+            if (faviconStore.existingIconPath(webApp.iconPath) != null) {
+                webApp
+            } else {
+                val iconPath = resolveWebAppIconPath(webApp.startUrl, webApp.iconPath)
+                if (iconPath != webApp.iconPath) {
+                    webApp.copy(iconPath = iconPath).also { shortcutUpdates.add(it) }
+                } else {
+                    webApp
+                }
+            }
+        }
+        if (shortcutUpdates.isEmpty()) return
+        save(updated)
+        shortcutUpdates.forEach { updateShortcut(it) }
+    }
+
+    suspend fun updateIconForUrl(url: String, iconPath: String): Boolean {
+        val validIconPath = faviconStore.existingIconPath(iconPath) ?: return false
+        val shortcutUpdates = mutableListOf<WebAppDefinition>()
+        val updated = state.value.map { webApp ->
+            if (sameOrigin(webApp.startUrl, url) && webApp.iconPath != validIconPath) {
+                webApp.copy(iconPath = validIconPath).also { shortcutUpdates.add(it) }
+            } else {
+                webApp
+            }
+        }
+        if (shortcutUpdates.isEmpty()) return false
+        save(updated)
+        shortcutUpdates.forEach { updateShortcut(it) }
+        return true
     }
 
     fun applyTaskDescription(activity: Activity, webApp: WebAppDefinition) {
@@ -170,7 +205,32 @@ class WebAppRepository(
             ?: Icon.createWithResource(context, R.mipmap.ic_launcher)
 
     private fun iconPathFor(webApp: WebAppDefinition): String? =
-        webApp.iconPath ?: faviconStore.cachedIconPath(webApp.startUrl)
+        faviconStore.existingIconPath(webApp.iconPath)
+            ?: faviconStore.cachedIconPath(webApp.startUrl)
+
+    private suspend fun resolveWebAppIconPath(startUrl: String, currentIconPath: String?): String? {
+        val existing = faviconStore.existingIconPath(currentIconPath)
+        val cached = faviconStore.cachedIconPath(startUrl)
+        val resolved = runCatching { faviconStore.resolveIconPath(startUrl) }.getOrNull()
+        return resolved ?: cached ?: existing
+    }
+
+    private fun sameOrigin(left: String, right: String): Boolean {
+        val leftUri = runCatching { Uri.parse(left) }.getOrNull() ?: return false
+        val rightUri = runCatching { Uri.parse(right) }.getOrNull() ?: return false
+        val leftPort = if (leftUri.port > 0) leftUri.port else defaultPort(leftUri.scheme)
+        val rightPort = if (rightUri.port > 0) rightUri.port else defaultPort(rightUri.scheme)
+        return leftUri.scheme.equals(rightUri.scheme, ignoreCase = true) &&
+            leftUri.host.equals(rightUri.host, ignoreCase = true) &&
+            leftPort == rightPort
+    }
+
+    private fun defaultPort(scheme: String?): Int =
+        when (scheme?.lowercase()) {
+            "http" -> 80
+            "https" -> 443
+            else -> -1
+        }
 
     private fun shortcutId(id: String): String = "webapp-$id"
 

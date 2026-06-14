@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
@@ -30,7 +31,7 @@ class FaviconRepository(context: Context) {
         if (targetFile.exists() && targetFile.length() > 0) return@withContext targetFile.absolutePath
         cachedIconPath(pageUrl)?.let { return@withContext it }
 
-        val candidates = findIconCandidates(pageUrl).ifEmpty { listOf(defaultFaviconUrl(pageUri)) }
+        val candidates = (findIconCandidates(pageUrl) + defaultFaviconUrl(pageUri)).distinct()
         for (candidate in candidates.distinct()) {
             val bytes = downloadBytes(candidate, 1_500_000) ?: continue
             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
@@ -47,6 +48,13 @@ class FaviconRepository(context: Context) {
 
     fun iconDataUrl(iconPath: String?, pageUrl: String): String? =
         iconDataUrl(iconPath) ?: cachedIconPath(pageUrl)?.let { iconDataUrl(it) }
+
+    fun existingIconPath(iconPath: String?): String? {
+        if (iconPath.isNullOrBlank()) return null
+        return File(iconPath)
+            .takeIf { it.exists() && it.length() > 0 && it.length() <= 1_500_000 }
+            ?.absolutePath
+    }
 
     fun cachedIconPath(pageUrl: String): String? {
         val pageUri = runCatching { Uri.parse(pageUrl) }.getOrNull() ?: return null
@@ -69,22 +77,55 @@ class FaviconRepository(context: Context) {
     private fun findIconCandidates(pageUrl: String): List<String> {
         val body = downloadText(pageUrl, 300_000) ?: return emptyList()
         val links = linkTagRegex.findAll(body).map { it.value }.toList()
-        val iconLinks = links.filter { tag ->
-            val rel = attrValue(tag, "rel")?.lowercase().orEmpty()
-            rel.contains("icon")
-        }
-        return iconLinks
-            .sortedByDescending { iconScore(it) }
+        val manifestCandidates = links
+            .filter { tag -> attrValue(tag, "rel")?.lowercase().orEmpty().contains("manifest") }
             .mapNotNull { attrValue(it, "href") }
             .mapNotNull { resolveUrl(pageUrl, it) }
             .filter { isNetworkUrl(it) }
+            .flatMap { findManifestIconCandidates(it) }
+        val htmlCandidates = links.filter { tag ->
+            val rel = attrValue(tag, "rel")?.lowercase().orEmpty()
+            rel.contains("icon")
+        }
+            .mapNotNull { tag ->
+                attrValue(tag, "href")
+                    ?.let { resolveUrl(pageUrl, it) }
+                    ?.takeIf { isNetworkUrl(it) }
+                    ?.let { IconCandidate(it, htmlIconScore(tag)) }
+            }
+        return (manifestCandidates + htmlCandidates)
+            .sortedByDescending { it.score }
+            .map { it.url }
     }
 
-    private fun iconScore(tag: String): Int {
+    private fun findManifestIconCandidates(manifestUrl: String): List<IconCandidate> {
+        val body = downloadText(manifestUrl, 300_000) ?: return emptyList()
+        val icons = runCatching { JSONObject(body).optJSONArray("icons") }.getOrNull() ?: return emptyList()
+        return buildList {
+            for (index in 0 until icons.length()) {
+                val icon = icons.optJSONObject(index) ?: continue
+                val src = icon.optString("src").takeIf { it.isNotBlank() } ?: continue
+                val url = resolveUrl(manifestUrl, src)?.takeIf { isNetworkUrl(it) } ?: continue
+                add(IconCandidate(url, manifestIconScore(icon)))
+            }
+        }
+    }
+
+    private fun htmlIconScore(tag: String): Int {
         val rel = attrValue(tag, "rel")?.lowercase().orEmpty()
         val sizes = attrValue(tag, "sizes").orEmpty()
         val maxSize = sizeRegex.findAll(sizes).mapNotNull { it.groupValues.getOrNull(1)?.toIntOrNull() }.maxOrNull() ?: 0
         return maxSize + if (rel.contains("apple-touch-icon")) 512 else 0
+    }
+
+    private fun manifestIconScore(icon: JSONObject): Int {
+        val sizes = icon.optString("sizes")
+        val maxSize = sizeRegex.findAll(sizes).mapNotNull { it.groupValues.getOrNull(1)?.toIntOrNull() }.maxOrNull() ?: 0
+        val type = icon.optString("type").lowercase()
+        val purpose = icon.optString("purpose").lowercase()
+        val typeScore = if (type.contains("png")) 256 else 0
+        val purposePenalty = if (purpose.contains("maskable")) 8 else 0
+        return 1024 + maxSize + typeScore - purposePenalty
     }
 
     private fun downloadText(url: String, maxBytes: Long): String? {
@@ -96,7 +137,7 @@ class FaviconRepository(context: Context) {
         if (!isNetworkUrl(url)) return null
         val request = Request.Builder()
             .url(url)
-            .header("User-Agent", "Mozilla/5.0 HyperBrowser/0.1")
+            .header("User-Agent", FAVICON_USER_AGENT)
             .build()
         return runCatching {
             client.newCall(request).execute().use { response ->
@@ -153,7 +194,13 @@ class FaviconRepository(context: Context) {
         return regex.find(tag)?.groupValues?.getOrNull(2)
     }
 
+    private data class IconCandidate(
+        val url: String,
+        val score: Int
+    )
+
     private companion object {
+        const val FAVICON_USER_AGENT = "Mozilla/5.0 (Android 14; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0"
         val linkTagRegex = Regex("""<link\b[^>]*>""", RegexOption.IGNORE_CASE)
         val sizeRegex = Regex("""(\d+)x\d+""", RegexOption.IGNORE_CASE)
     }
