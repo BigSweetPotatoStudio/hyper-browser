@@ -8,6 +8,8 @@ function SettingsPage() {
   const [query, setQuery] = useState("");
   const [settings, setSettings] = useState<BrowserSettings | null>(null);
   const [customDraft, setCustomDraft] = useState("");
+  const [dohDraft, setDohDraft] = useState("");
+  const [dohDirty, setDohDirty] = useState(false);
   const [customError, setCustomError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
@@ -61,6 +63,8 @@ function SettingsPage() {
       .then((value) => {
         setSettings(value);
         setCustomDraft(value.customSearchUrl);
+        setDohDraft(value.dohProviderUrl);
+        setDohDirty(false);
       })
       .catch(() => setLoadError("设置暂时不可用。"));
     window.hyperBrowser.requestBatteryOptimizationState()
@@ -137,7 +141,7 @@ function SettingsPage() {
   }
 
   function updatePrivacySettings(patch: Partial<Pick<BrowserSettings, "dohEnabled" | "dohProviderUrl" | "httpsOnlyEnabled" | "privacyProtectionLevel">>) {
-    if (!settings) return;
+    if (!settings) return Promise.resolve<BrowserSettings | null>(null);
     const next = {
       dohEnabled: settings.dohEnabled,
       dohProviderUrl: settings.dohProviderUrl,
@@ -146,22 +150,43 @@ function SettingsPage() {
       ...patch,
     };
     const cleanUrl = next.dohProviderUrl.trim();
-    if (next.dohEnabled && !cleanUrl.startsWith("https://")) {
+    if (!isHttpsUrl(cleanUrl)) {
       setPrivacyError("DoH 地址必须是 https:// URL。");
-      return;
+      return Promise.resolve<BrowserSettings | null>(null);
     }
     setPrivacyError("");
     setPrivacyMessage("");
-    window.hyperBrowser.updatePrivacySettings({ ...next, dohProviderUrl: cleanUrl })
+    const dnsChanged = patch.dohEnabled !== undefined || patch.dohProviderUrl !== undefined;
+    return window.hyperBrowser.updatePrivacySettings({ ...next, dohProviderUrl: cleanUrl })
       .then((value) => {
         setSettings(value);
-        setPrivacyMessage("设置已保存；已打开页面刷新后生效，DoH 改动重启 App 后最完整。");
+        setPrivacyMessage(dnsChanged
+          ? "DNS 设置已保存，并已尝试热重载；ECH 和部分 Gecko 配置重启 App 后最完整。"
+          : "设置已保存；已打开页面刷新后生效。");
+        return value;
       })
-      .catch((error) => setPrivacyError(error instanceof Error ? error.message : "隐私设置暂时不可用。"));
+      .catch((error) => {
+        setPrivacyError(error instanceof Error ? error.message : "隐私设置暂时不可用。");
+        return null;
+      });
   }
 
-  function updateDohProviderUrl(value: string) {
-    updatePrivacySettings({ dohProviderUrl: value });
+  function isHttpsUrl(value: string) {
+    try {
+      return new URL(value).protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+
+  function commitDohProviderUrl() {
+    if (!settings || !dohDirty) return;
+    updatePrivacySettings({ dohProviderUrl: dohDraft })
+      .then((value) => {
+        if (!value) return;
+        setDohDraft(value.dohProviderUrl);
+        setDohDirty(false);
+      });
   }
 
   function openBatteryOptimizationSettings() {
@@ -454,15 +479,38 @@ function SettingsPage() {
                   />
                 </label>
                 <div className="settings-field-row">
-                  <span className="settings-row-title">DoH 地址</span>
-                  <input
-                    type="text"
-                    inputMode="url"
-                    value={settings?.dohProviderUrl || ""}
-                    disabled={!settings || !settings.dohEnabled}
-                    onChange={(event) => setSettings((value) => value ? { ...value, dohProviderUrl: event.currentTarget.value } : value)}
-                    onBlur={(event) => updateDohProviderUrl(event.currentTarget.value)}
-                  />
+                  <span className="settings-field-title">
+                    <span className="settings-row-title">DoH 地址</span>
+                    {dohDirty && <span>未保存</span>}
+                  </span>
+                  <span className="settings-input-action-row">
+                    <input
+                      type="text"
+                      inputMode="url"
+                      value={dohDraft}
+                      disabled={!settings}
+                      onChange={(event) => {
+                        setDohDraft(event.currentTarget.value);
+                        setDohDirty(true);
+                        setPrivacyError("");
+                        setPrivacyMessage("");
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.currentTarget.blur();
+                          commitDohProviderUrl();
+                        }
+                      }}
+                    />
+                    <button
+                      className="settings-field-action"
+                      type="button"
+                      disabled={!settings || !dohDirty}
+                      onClick={commitDohProviderUrl}
+                    >
+                      保存
+                    </button>
+                  </span>
                 </div>
                 <label className="settings-toggle-row">
                   <span className="settings-toggle-copy">

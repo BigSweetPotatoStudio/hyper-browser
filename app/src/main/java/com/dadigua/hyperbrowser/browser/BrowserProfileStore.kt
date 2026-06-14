@@ -29,7 +29,7 @@ data class BrowserSettings(
     val customSearchUrl: String = "",
     val toolbarPosition: String = TOOLBAR_POSITION_TOP,
     val backgroundVideoEnhancementEnabled: Boolean = false,
-    val dohEnabled: Boolean = true,
+    val dohEnabled: Boolean = false,
     val dohProviderUrl: String = DEFAULT_DOH_PROVIDER_URL,
     val httpsOnlyEnabled: Boolean = false,
     val privacyProtectionLevel: String = PRIVACY_PROTECTION_STANDARD
@@ -469,7 +469,7 @@ class BrowserProfileStore(context: Context) {
                     customSearchUrl = item.optString("customSearchUrl"),
                     toolbarPosition = item.optString("toolbarPosition", BrowserSettings.TOOLBAR_POSITION_TOP),
                     backgroundVideoEnhancementEnabled = item.optBoolean("backgroundVideoEnhancementEnabled", false),
-                    dohEnabled = item.optBoolean("dohEnabled", true),
+                    dohEnabled = item.optBoolean("dohEnabled", false),
                     dohProviderUrl = item.optString(
                         "dohProviderUrl",
                         BrowserSettings.DEFAULT_DOH_PROVIDER_URL
