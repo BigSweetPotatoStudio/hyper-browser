@@ -29,6 +29,7 @@ function SettingsPage() {
   const [backgroundRuntimeExpanded, setBackgroundRuntimeExpanded] = useState(false);
   const [updateSettingsExpanded, setUpdateSettingsExpanded] = useState(false);
   const customInputRef = useRef<HTMLInputElement | null>(null);
+  const didAutoCheckUpdateRef = useRef(false);
   const showSearchEngine = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return true;
@@ -77,6 +78,10 @@ function SettingsPage() {
     window.hyperBrowser.requestBatteryOptimizationState()
       .then((value) => setBatteryOptimization(value))
       .catch(() => setBatteryMessage("电池设置状态暂时不可用。"));
+    if (!didAutoCheckUpdateRef.current) {
+      didAutoCheckUpdateRef.current = true;
+      checkUpdate(false);
+    }
   }, []);
 
   useEffect(() => {
