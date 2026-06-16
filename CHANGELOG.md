@@ -6,6 +6,13 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+## 0.1.6-beta.3 - 2026-06-16
+
+- Added automatic update checks when opening Settings.
+- Added local backup support for bookmarks and installed WebApps.
+- Improved video fullscreen handling so fullscreen playback requests rotate and hide browser chrome more like Chrome.
+- Removed Picture-in-Picture support while fullscreen playback behavior is stabilized.
+
 ## 0.1.6-beta.2 - 2026-06-14
 
 - Changed DNS over HTTPS to be off by default for new installs while preserving existing user choices.
