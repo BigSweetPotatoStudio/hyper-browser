@@ -53,6 +53,7 @@ import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.gecko.GeckoContextMenuTarget
 import com.dadigua.hyperbrowser.gecko.GeckoBrowserView
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
+import com.dadigua.hyperbrowser.ui.FullscreenSystemBarsEffect
 import com.dadigua.hyperbrowser.ui.browser.BrowserActivity
 import com.dadigua.hyperbrowser.ui.browser.PageContextMenuDialog
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
@@ -215,6 +216,16 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
         )
     }
     val pageState by controller.state.collectAsState()
+    val pageFullScreen by controller.fullScreen.collectAsState()
+
+    FullscreenSystemBarsEffect(pageFullScreen)
+
+    LaunchedEffect(pageFullScreen, pageContextMenu) {
+        controller.setVisible(
+            visible = true,
+            focused = pageFullScreen || pageContextMenu == null
+        )
+    }
 
     DisposableEffect(current.id) {
         onDispose { controller.close(closeActivePlayback = false) }
@@ -222,16 +233,21 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
 
     BackHandler {
         when {
+            pageFullScreen -> controller.exitFullScreen()
             pageState.canGoBack -> controller.goBack()
             else -> controller.goBack()
         }
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
+        modifier = if (pageFullScreen) {
+            Modifier.fillMaxSize()
+        } else {
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+        }
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             GeckoBrowserView(controller = controller, modifier = Modifier.fillMaxSize())

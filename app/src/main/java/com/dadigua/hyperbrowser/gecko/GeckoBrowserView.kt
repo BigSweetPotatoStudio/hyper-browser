@@ -100,6 +100,7 @@ fun GeckoBrowserView(
                     triggerDistancePx = triggerDistancePx,
                     maxPullDistancePx = maxPullDistancePx,
                     onGestureStarted = controller::markPullRefreshGestureStarted,
+                    onContentTouchStarted = controller::focusForUserInteraction,
                     contentCanStartPullRefresh = controller::canStartPullRefreshFromContent,
                     onPull = { pullDistancePx = it },
                     onRefresh = {
@@ -134,6 +135,7 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
     private var pullDistancePx = 0f
     private var pulling = false
     private var onGestureStarted: () -> Unit = {}
+    private var onContentTouchStarted: () -> Unit = {}
     private var contentCanStartPullRefresh: () -> Boolean = { true }
     private var onPull: (Float) -> Unit = {}
     private var onRefresh: () -> Unit = {}
@@ -157,6 +159,7 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
         triggerDistancePx: Float,
         maxPullDistancePx: Float,
         onGestureStarted: () -> Unit,
+        onContentTouchStarted: () -> Unit,
         contentCanStartPullRefresh: () -> Boolean,
         onPull: (Float) -> Unit,
         onRefresh: () -> Unit
@@ -165,6 +168,7 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
         this.triggerDistancePx = triggerDistancePx
         this.maxPullDistancePx = maxPullDistancePx
         this.onGestureStarted = onGestureStarted
+        this.onContentTouchStarted = onContentTouchStarted
         this.contentCanStartPullRefresh = contentCanStartPullRefresh
         this.onPull = onPull
         this.onRefresh = onRefresh
@@ -179,6 +183,12 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            geckoView.isFocusable = true
+            geckoView.isFocusableInTouchMode = true
+            geckoView.requestFocusFromTouch()
+            onContentTouchStarted()
+        }
         if (!enabled) {
             return super.dispatchTouchEvent(event)
         }

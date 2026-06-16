@@ -82,6 +82,7 @@ class GeckoSessionController(
     private val appContext = context.applicationContext
     private val runtime = GeckoRuntimeProvider.get(context)
     private val _state = MutableStateFlow(pageStateForUrl(initialUrl))
+    private val _fullScreen = MutableStateFlow(false)
     private val _sessionChangeVersion = MutableStateFlow(0)
     private var currentRawUrl: String = initialUrl
     private var lastLoadTarget: String = initialUrl
@@ -94,6 +95,7 @@ class GeckoSessionController(
     private var lastContentTouchStateAt = 0L
     private var pullRefreshGestureStartedAt = 0L
     val state: StateFlow<GeckoPageState> = _state
+    val fullScreen: StateFlow<Boolean> = _fullScreen
     val sessionChangeVersion: StateFlow<Int> = _sessionChangeVersion
 
     init {
@@ -119,6 +121,10 @@ class GeckoSessionController(
         targetSession.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onTitleChange(session: GeckoSession, title: String?) {
                 _state.value = _state.value.copy(title = title.orEmpty())
+            }
+
+            override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
+                _fullScreen.value = fullScreen
             }
 
             override fun onContextMenu(
@@ -429,6 +435,11 @@ class GeckoSessionController(
         runCatching { session.goForward() }
     }
 
+    fun exitFullScreen() {
+        runCatching { session.exitFullScreen() }
+        _fullScreen.value = false
+    }
+
     fun reload() {
         if (sessionCrashed || !session.isOpen) {
             recoverSession(force = true)
@@ -460,6 +471,29 @@ class GeckoSessionController(
 
     fun attachView(view: GeckoView?) {
         this.view = view
+    }
+
+    fun setVisible(visible: Boolean, focused: Boolean = visible) {
+        session.setActive(visible)
+        session.setFocused(focused)
+        if (focused) {
+            focusForUserInteraction()
+        }
+    }
+
+    fun focusForUserInteraction() {
+        session.setActive(true)
+        session.setFocused(true)
+        view?.apply {
+            isFocusable = true
+            isFocusableInTouchMode = true
+            requestFocusFromTouch()
+            requestFocus()
+            post {
+                this@GeckoSessionController.session.setActive(true)
+                this@GeckoSessionController.session.setFocused(true)
+            }
+        }
     }
 
     fun markPullRefreshGestureStarted() {

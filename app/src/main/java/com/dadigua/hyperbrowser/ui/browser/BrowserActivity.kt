@@ -62,6 +62,7 @@ import com.dadigua.hyperbrowser.gecko.GeckoRuntimeProvider
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.HyperCommand
 import com.dadigua.hyperbrowser.gecko.HyperRoute
+import com.dadigua.hyperbrowser.ui.FullscreenSystemBarsEffect
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
 import com.dadigua.hyperbrowser.ui.webapp.WebAppActivity
 import com.dadigua.hyperbrowser.update.AppUpdateManager
@@ -657,6 +658,7 @@ private fun BrowserScreen(
     val currentSelectedTabId = rememberUpdatedState(selectedTabId)
     val controller = tab.ensureController()
     val pageState by controller.state.collectAsState()
+    val pageFullScreen by controller.fullScreen.collectAsState()
     val onHomePage = GeckoSessionController.isHomeUrl(pageState.url)
     val onSearchPage = GeckoSessionController.isSearchUrl(pageState.url)
     val history by profileStore.observeHistory().collectAsState()
@@ -719,6 +721,19 @@ private fun BrowserScreen(
 
     LaunchedEffect(selectedTabId, settings.searchUrlTemplate) {
         tab.loadIfNeeded(settings.searchUrlTemplate)
+    }
+
+    val pageCanOwnFocus = pageFullScreen ||
+        (activePanel == BrowserPanel.None && !editingAddress && extensionPopup == null && pageContextMenu == null)
+
+    LaunchedEffect(selectedTabId, tabs.map { it.id to it.controller }, pageCanOwnFocus) {
+        tabs.forEach { browserTab ->
+            val selected = browserTab.id == selectedTabId
+            browserTab.controller?.setVisible(
+                visible = selected,
+                focused = selected && pageCanOwnFocus
+            )
+        }
     }
 
     LaunchedEffect(thumbnailRefreshRequests) {
@@ -823,6 +838,7 @@ private fun BrowserScreen(
 
     BackHandler {
         when {
+            pageFullScreen -> controller.exitFullScreen()
             extensionPopup != null -> app.extensions.closePopup()
             editingAddress -> {
                 editingAddress = false
@@ -983,13 +999,28 @@ private fun BrowserScreen(
         }
     }
 
+    FullscreenSystemBarsEffect(pageFullScreen)
+
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
+        modifier = if (pageFullScreen) {
+            Modifier.fillMaxSize()
+        } else {
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+        }
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            if (showSearch) {
+            if (pageFullScreen) {
+                BrowserContent(
+                    controller = controller,
+                    tabId = tab.id,
+                    extensionPopup = null,
+                    onClosePopup = app.extensions::closePopup,
+                    modifier = Modifier.weight(1f),
+                    imeAvoidanceEnabled = false
+                )
+            } else if (showSearch) {
                 SearchPage(
                     initialInput = if (onHomePage) "" else tab.input,
                     history = history,
@@ -1314,11 +1345,13 @@ private fun BrowserScreen(
                 onCopyLink = { url -> copyContextUrl("link", url, "链接已复制") }
             )
         }
-        BrowserTip(
-            message = message,
-            toolbarPosition = settings.toolbarPosition,
-            modifier = Modifier.align(Alignment.BottomCenter)
-        )
+        if (!pageFullScreen) {
+            BrowserTip(
+                message = message,
+                toolbarPosition = settings.toolbarPosition,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
+        }
     }
 }
 

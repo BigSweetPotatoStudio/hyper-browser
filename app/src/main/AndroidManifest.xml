@@ -57,6 +57,7 @@
 
         <activity
             android:name=".ui.webapp.WebAppActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:documentLaunchMode="intoExisting"
             android:exported="true"
             android:resizeableActivity="true"
@@ -66,6 +67,7 @@
 
         <activity
             android:name=".ui.browser.BrowserActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:exported="true"
             android:launchMode="singleTask"
             android:resizeableActivity="true"
