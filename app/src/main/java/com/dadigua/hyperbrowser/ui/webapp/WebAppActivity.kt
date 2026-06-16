@@ -1,14 +1,12 @@
 package com.dadigua.hyperbrowser.ui.webapp
 
 import android.Manifest
-import android.app.PictureInPictureParams
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.util.Rational
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -104,16 +102,6 @@ class WebAppActivity : ComponentActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         BrowserMediaNotificationController.get(this).allowBackgroundPlaybackResume()
-        enterPictureInPictureIfMediaPlaying()
-    }
-
-    private fun enterPictureInPictureIfMediaPlaying() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || isInPictureInPictureMode) return
-        if (!BrowserMediaNotificationController.get(this).hasActiveVideoPlayback) return
-        val params = PictureInPictureParams.Builder()
-            .setAspectRatio(Rational(16, 9))
-            .build()
-        runCatching { enterPictureInPictureMode(params) }
     }
 
     companion object {

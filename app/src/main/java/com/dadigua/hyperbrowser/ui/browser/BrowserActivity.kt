@@ -1,17 +1,14 @@
 package com.dadigua.hyperbrowser.ui.browser
 
 import android.Manifest
-import android.app.PictureInPictureParams
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
-import android.util.Rational
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
@@ -86,11 +83,9 @@ import java.util.UUID
 
 class BrowserActivity : ComponentActivity() {
     private val externalIntents = MutableSharedFlow<ExternalBrowserIntent>(extraBufferCapacity = 1)
-    private var inPictureInPicture by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        inPictureInPicture = isInPictureInPictureMode
         val initialIntent = intent.toExternalBrowserIntent()
         val initialUrl = if (initialIntent?.download == false && initialIntent.url != null) {
             initialIntent.url
@@ -106,8 +101,7 @@ class BrowserActivity : ComponentActivity() {
                         initialDownloadUrl = initialIntent?.url?.takeIf { initialIntent.download },
                         initialShowDownloads = initialIntent?.showDownloads == true,
                         initialSelectTabId = initialIntent?.selectTabId,
-                        externalIntents = externalIntents,
-                        inPictureInPicture = inPictureInPicture
+                        externalIntents = externalIntents
                     )
                 }
             }
@@ -128,24 +122,6 @@ class BrowserActivity : ComponentActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         BrowserMediaNotificationController.get(this).allowBackgroundPlaybackResume()
-        enterPictureInPictureIfMediaPlaying()
-    }
-
-    override fun onPictureInPictureModeChanged(
-        isInPictureInPictureMode: Boolean,
-        newConfig: Configuration
-    ) {
-        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        inPictureInPicture = isInPictureInPictureMode
-    }
-
-    private fun enterPictureInPictureIfMediaPlaying() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || isInPictureInPictureMode) return
-        if (!BrowserMediaNotificationController.get(this).hasActiveVideoPlayback) return
-        val params = PictureInPictureParams.Builder()
-            .setAspectRatio(Rational(16, 9))
-            .build()
-        runCatching { enterPictureInPictureMode(params) }
     }
 
     companion object {
@@ -194,8 +170,7 @@ private fun BrowserScreen(
     initialDownloadUrl: String?,
     initialShowDownloads: Boolean,
     initialSelectTabId: String?,
-    externalIntents: MutableSharedFlow<ExternalBrowserIntent>,
-    inPictureInPicture: Boolean
+    externalIntents: MutableSharedFlow<ExternalBrowserIntent>
 ) {
     var pendingHyperRoute by remember { mutableStateOf<HyperRoute?>(null) }
     var pendingHyperCommand by remember { mutableStateOf<HyperCommand?>(null) }
@@ -1201,14 +1176,6 @@ private fun BrowserScreen(
                         selectedTabId = newTab.id
                         closePanel()
                     }
-                )
-            } else if (inPictureInPicture) {
-                BrowserContent(
-                    controller = controller,
-                    tabId = tab.id,
-                    extensionPopup = null,
-                    onClosePopup = app.extensions::closePopup,
-                    modifier = Modifier.weight(1f)
                 )
             } else if (!onSearchPage) {
                 val toolbar = @Composable {

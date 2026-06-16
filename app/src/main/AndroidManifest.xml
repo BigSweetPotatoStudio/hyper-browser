@@ -61,7 +61,6 @@
             android:documentLaunchMode="intoExisting"
             android:exported="true"
             android:resizeableActivity="true"
-            android:supportsPictureInPicture="true"
             android:taskAffinity="com.dadigua.hyperbrowser.webapp"
             android:windowSoftInputMode="stateUnspecified|adjustResize" />
 
@@ -71,7 +70,6 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:resizeableActivity="true"
-            android:supportsPictureInPicture="true"
             android:taskAffinity="com.dadigua.hyperbrowser.browser"
             android:windowSoftInputMode="stateUnspecified|adjustResize">
             <intent-filter>

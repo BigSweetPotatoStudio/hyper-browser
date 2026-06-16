@@ -38,9 +38,6 @@ class BrowserMediaNotificationController private constructor(context: Context) {
     val hasActivePlayback: Boolean
         get() = owners.values.any { it.hasActivePlayback }
 
-    val hasActiveVideoPlayback: Boolean
-        get() = owners.values.any { it.hasActivePlayback && it.fullscreenVideo }
-
     fun allowBackgroundPlaybackResume(durationMs: Long = BACKGROUND_RESUME_WINDOW_MS) {
         if (!BrowserProfileStore.loadBrowserSettings(appContext).backgroundVideoEnhancementEnabled) {
             logControllerEvent("backgroundResume.disabled", primaryState())
@@ -274,22 +271,6 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         }
         logControllerEvent("stop", state)
         removeOwner(owner)
-    }
-
-    fun onFullscreen(
-        owner: GeckoSession,
-        mediaSession: MediaSession,
-        enabled: Boolean,
-        elementMetadata: MediaSession.ElementMetadata?
-    ) {
-        val state = owners[owner] ?: return
-        if (state.mediaSession != mediaSession) return
-        state.fullscreenVideo = enabled && (elementMetadata?.videoTrackCount ?: 0) > 0
-        logControllerEvent(
-            "fullscreen",
-            state,
-            "enabled=$enabled videoTracks=${elementMetadata?.videoTrackCount ?: 0}"
-        )
     }
 
     fun onPositionState(owner: GeckoSession, mediaSession: MediaSession, value: MediaSession.PositionState) {
@@ -759,7 +740,6 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         var positionState: MediaSession.PositionState? = null
         var playing: Boolean = false
         var active: Boolean = false
-        var fullscreenVideo: Boolean = false
         var lastActiveAt: Long = System.currentTimeMillis()
 
         val hasActivePlayback: Boolean

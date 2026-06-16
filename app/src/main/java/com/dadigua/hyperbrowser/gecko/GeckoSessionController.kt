@@ -344,7 +344,6 @@ class GeckoSessionController(
                     mediaSession = mediaSession,
                     detail = "enabled=$enabled videoTracks=${meta?.videoTrackCount ?: 0}"
                 )
-                mediaNotifications.onFullscreen(session, mediaSession, enabled, meta)
             }
         })
     }
