@@ -6,24 +6,18 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
-## 0.1.6-beta.3 - 2026-06-16
+## 0.1.6 - 2026-06-17
 
+- Added DNS over HTTPS settings, automatic ECH attempts when DoH is enabled, HTTPS-Only controls, and standard/strict/no tracking protection levels.
+- Changed DNS over HTTPS to be off by default for new installs while preserving existing user choices.
+- Improved DoH provider editing with an explicit save action, validation, and clearer unsaved state.
+- DoH changes now attempt runtime reload and tell users that ECH and some Gecko settings are most complete after restarting the app.
+- Improved address-bar security indicators for HTTP, HTTPS, and enhanced HTTPS states.
+- Improved WebApp icon recovery so installed shortcuts keep existing icons, recover missing favicon files, and refresh when newer site icons are available.
 - Added automatic update checks when opening Settings.
 - Added local backup support for bookmarks and installed WebApps.
 - Improved video fullscreen handling so fullscreen playback requests rotate and hide browser chrome more like Chrome.
 - Removed Picture-in-Picture support while fullscreen playback behavior is stabilized.
-
-## 0.1.6-beta.2 - 2026-06-14
-
-- Changed DNS over HTTPS to be off by default for new installs while preserving existing user choices.
-- Improved DoH provider editing with an explicit save action, validation, and clearer unsaved state.
-- DoH changes now attempt runtime reload and tell users that ECH and some Gecko settings are most complete after restarting the app.
-
-## 0.1.6-beta.1 - 2026-06-14
-
-- Added DNS over HTTPS settings, automatic ECH attempts when DoH is enabled, HTTPS-Only controls, and standard/strict/no tracking protection levels.
-- Improved address-bar security indicators for HTTP, HTTPS, and enhanced HTTPS states.
-- Improved WebApp icon recovery so installed shortcuts keep existing icons, recover missing favicon files, and refresh when newer site icons are available.
 - Added prerelease publishing support: hyphenated version tags now create GitHub prereleases for manual testing without updating the stable in-app update index.
 
 ## 0.1.5 - 2026-06-11
