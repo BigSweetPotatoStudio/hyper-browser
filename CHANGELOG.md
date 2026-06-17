@@ -6,6 +6,13 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+## 0.1.7-beta.1 - 2026-06-18
+
+- Improved X/Twitter Google sign-in compatibility for popup-based account flows.
+- Fixed extension enable/disable state so disabled add-ons stay disabled after restarting the browser.
+- Moved address editing into a dedicated search page so the browser toolbar no longer keeps a persistent text input over web content.
+- Improved Android Autofill focus handling for web content and kept the dedicated search page controls compact.
+
 ## 0.1.6 - 2026-06-17
 
 - Added DNS over HTTPS settings, automatic ECH attempts when DoH is enabled, HTTPS-Only controls, and standard/strict/no tracking protection levels.
