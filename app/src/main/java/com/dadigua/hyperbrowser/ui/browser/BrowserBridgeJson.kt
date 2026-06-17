@@ -33,6 +33,7 @@ internal fun BrowserSettings.toJson(): JSONObject =
         .put("customSearchUrl", customSearchUrl)
         .put("toolbarPosition", toolbarPosition)
         .put("backgroundVideoEnhancementEnabled", backgroundVideoEnhancementEnabled)
+        .put("openNewTabsInCurrentTab", openNewTabsInCurrentTab)
         .put("dohEnabled", dohEnabled)
         .put("dohProviderUrl", dohProviderUrl)
         .put("httpsOnlyEnabled", httpsOnlyEnabled)

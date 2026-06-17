@@ -23,6 +23,7 @@ import java.util.UUID
 
 internal class BrowserTabRuntime private constructor(
     val id: String,
+    val openerTabId: String? = null,
     private val app: HyperBrowserApp,
     private val controllerFactory: (
         initialUrl: String,
@@ -147,6 +148,7 @@ internal class BrowserTabRuntime private constructor(
             app: HyperBrowserApp,
             url: String,
             id: String = UUID.randomUUID().toString(),
+            openerTabId: String? = null,
             initialInput: String = url,
             initialTitle: String? = null,
             initialIconPath: String? = null,
@@ -156,6 +158,10 @@ internal class BrowserTabRuntime private constructor(
             onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
             onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
             onDownload: (GeckoDownloadRequest) -> Unit = {},
+            openNewTabsInCurrentTab: () -> Boolean = { false },
+            onNewSession: (String) -> GeckoSession? = { null },
+            onCloseRequest: () -> Unit = {},
+            onFocusRequest: () -> Unit = {},
             onEngineSessionStateChange: (String?) -> Unit = {},
             onPageStop: (Boolean) -> Unit = {}
         ): BrowserTabRuntime {
@@ -173,6 +179,10 @@ internal class BrowserTabRuntime private constructor(
                     onHyperBridgeMessage = onHyperBridgeMessage,
                     onPageContextMenu = onPageContextMenu,
                     onDownload = onDownload,
+                    openNewTabsInCurrentTab = openNewTabsInCurrentTab,
+                    onNewSession = onNewSession,
+                    onCloseRequest = onCloseRequest,
+                    onFocusRequest = onFocusRequest,
                     onSessionStateChange = { sessionState ->
                         val currentUri = currentUriForEngineSessionState(sessionState)
                         if (shouldPersistEngineSessionStateUri(currentUri)) {
@@ -195,6 +205,7 @@ internal class BrowserTabRuntime private constructor(
             }
             return BrowserTabRuntime(
                 id = id,
+                openerTabId = openerTabId,
                 controllerFactory = controllerFactory,
                 initialController = if (loadImmediately) {
                     controllerFactory(url, true, restoredSessionState)
@@ -230,6 +241,7 @@ internal class BrowserTabRuntime private constructor(
             val id = UUID.randomUUID().toString()
             return BrowserTabRuntime(
                 id = id,
+                openerTabId = null,
                 app = app,
                 controllerFactory = { _, _, _ ->
                     val mediaLaunchIntent = BrowserActivity.selectTabIntent(app, id)
@@ -286,6 +298,75 @@ internal class BrowserTabRuntime private constructor(
                 pendingLoadUrl = null,
                 pendingRestoredSessionState = null,
                 engineStateAvailable = mutableStateOf(false)
+            )
+        }
+
+        fun fromExistingSession(
+            app: HyperBrowserApp,
+            url: String,
+            session: GeckoSession,
+            openerTabId: String? = null,
+            onHyperRoute: (HyperRoute) -> Unit = {},
+            onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
+            onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
+            onDownload: (GeckoDownloadRequest) -> Unit = {},
+            openNewTabsInCurrentTab: () -> Boolean = { false },
+            onNewSession: (String) -> GeckoSession? = { null },
+            onCloseRequest: () -> Unit = {},
+            onFocusRequest: () -> Unit = {},
+            onEngineSessionStateChange: (String?) -> Unit = {},
+            onPageStop: (Boolean) -> Unit = {}
+        ): BrowserTabRuntime {
+            val id = UUID.randomUUID().toString()
+            val initialUrl = url.ifBlank { GeckoSessionController.ABOUT_BLANK_URL }
+            val engineStateAvailable = mutableStateOf(false)
+            val mediaOwnerInfo = {
+                BrowserMediaOwnerInfo(
+                    id = id,
+                    kind = BrowserMediaOwnerKind.BrowserTab,
+                    launchIntent = BrowserActivity.selectTabIntent(app, id)
+                )
+            }
+            val controllerFactory = { _: String, _: Boolean, _: GeckoSession.SessionState? ->
+                val mediaLaunchIntent = BrowserActivity.selectTabIntent(app, id)
+                GeckoSessionController(
+                    context = app,
+                    initialUrl = initialUrl,
+                    existingSession = session,
+                    onHyperRoute = onHyperRoute,
+                    onHyperBridgeMessage = onHyperBridgeMessage,
+                    onPageContextMenu = onPageContextMenu,
+                    onDownload = onDownload,
+                    openNewTabsInCurrentTab = openNewTabsInCurrentTab,
+                    onNewSession = onNewSession,
+                    onCloseRequest = onCloseRequest,
+                    onFocusRequest = onFocusRequest,
+                    onSessionStateChange = { sessionState ->
+                        val currentUri = currentUriForEngineSessionState(sessionState)
+                        if (shouldPersistEngineSessionStateUri(currentUri)) {
+                            engineStateAvailable.value = true
+                            onEngineSessionStateChange(sessionState.toString())
+                        } else {
+                            onEngineSessionStateChange(null)
+                        }
+                    },
+                    onPageStop = onPageStop,
+                    mediaNotificationIntent = mediaLaunchIntent,
+                    mediaOwnerInfo = mediaOwnerInfo
+                )
+            }
+            return BrowserTabRuntime(
+                id = id,
+                openerTabId = openerTabId,
+                app = app,
+                controllerFactory = controllerFactory,
+                mediaOwnerInfo = mediaOwnerInfo,
+                initialController = controllerFactory(initialUrl, false, null),
+                input = initialUrl,
+                restoredTitle = null,
+                pendingLoadUrl = null,
+                pendingRestoredSessionState = null,
+                engineStateAvailable = engineStateAvailable
             )
         }
     }

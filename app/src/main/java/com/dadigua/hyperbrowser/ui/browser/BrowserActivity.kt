@@ -219,6 +219,49 @@ private fun BrowserScreen(
         }
     }
 
+    fun canRetryDownload(entry: BrowserDownloadEntry): Boolean =
+        entry.id != AppUpdateManager.APP_UPDATE_DOWNLOAD_ID &&
+            (entry.status == DownloadStatus.Failed || entry.status == DownloadStatus.Canceled) &&
+            (entry.sourceUrl.startsWith("http://") || entry.sourceUrl.startsWith("https://"))
+
+    fun canCancelDownload(entry: BrowserDownloadEntry): Boolean =
+        entry.id != AppUpdateManager.APP_UPDATE_DOWNLOAD_ID &&
+            (entry.status == DownloadStatus.Queued || entry.status == DownloadStatus.Running)
+
+    fun canClearDownload(entry: BrowserDownloadEntry): Boolean =
+        entry.id != AppUpdateManager.APP_UPDATE_DOWNLOAD_ID
+
+    fun retryDownload(entry: BrowserDownloadEntry) {
+        scope.launch {
+            message = "Retrying ${entry.name}..."
+            runCatching { downloadHandler.retry(entry) }
+                .onSuccess { message = "Download queued: ${it.name}" }
+                .onFailure { message = it.message ?: "Unable to retry download." }
+        }
+    }
+
+    fun cancelDownload(entry: BrowserDownloadEntry) {
+        scope.launch {
+            runCatching { downloadHandler.cancel(entry) }
+                .onSuccess { message = "Download canceled." }
+                .onFailure { message = it.message ?: "Unable to cancel download." }
+        }
+    }
+
+    fun clearFinishedDownloads() {
+        scope.launch {
+            runCatching { downloadHandler.clearFinishedRecords() }
+                .onSuccess { count ->
+                    message = if (count > 0) {
+                        "Cleared $count download records."
+                    } else {
+                        "No finished downloads to clear."
+                    }
+                }
+                .onFailure { message = it.message ?: "Unable to clear download records." }
+        }
+    }
+
     fun beginUpdateInstall(update: AvailableUpdate): UpdateDownloadState {
         if (updateInstallInFlight && updateDownloadState.versionCode == update.versionCode) {
             return updateDownloadState
@@ -401,6 +444,10 @@ private fun BrowserScreen(
                 profileStore.updateBackgroundVideoEnhancement(payload.optString("enabled") == "true")
                 okData(profileStore.observeSettings().value.toJson())
             }
+            "settings.openNewTabsInCurrentTab.update" -> {
+                profileStore.updateOpenNewTabsInCurrentTab(payload.optString("enabled") == "true")
+                okData(profileStore.observeSettings().value.toJson())
+            }
             "settings.privacy.update" -> {
                 profileStore.updatePrivacySettings(
                     dohEnabled = payload.optString("dohEnabled") == "true",
@@ -547,6 +594,10 @@ private fun BrowserScreen(
         return state
     }
 
+    var openNewSessionAsTab: ((String, String?) -> GeckoSession?)? = null
+    var closeTabById: ((String) -> Unit)? = null
+    var focusTabById: ((String) -> Unit)? = null
+
     fun createBrowserTab(
         url: String,
         id: String? = null,
@@ -571,6 +622,10 @@ private fun BrowserScreen(
             onHyperBridgeMessage = ::handleHyperBridgeMessage,
             onPageContextMenu = { pageContextMenu = it },
             onDownload = ::saveGeckoDownload,
+            openNewTabsInCurrentTab = { profileStore.observeSettings().value.openNewTabsInCurrentTab },
+            onNewSession = { uri -> openNewSessionAsTab?.invoke(uri, tabId) },
+            onCloseRequest = { closeTabById?.invoke(tabId) },
+            onFocusRequest = { focusTabById?.invoke(tabId) },
             onEngineSessionStateChange = { state ->
                 state?.let { profileStore.saveTabSessionState(tabId, it) }
             },
@@ -688,6 +743,80 @@ private fun BrowserScreen(
         profileStore.pruneTabSessionStates(keptTabIds)
         profileStore.pruneTabThumbnails(keptTabIds)
     }
+
+    fun closeBrowserTabById(id: String) {
+        val closing = tabs.firstOrNull { it.id == id } ?: return
+        val oldIndex = tabs.indexOf(closing)
+        closing.close()
+        profileStore.deleteTabSessionState(closing.id)
+        profileStore.deleteTabThumbnail(closing.id)
+        tabs.remove(closing)
+        if (tabs.isEmpty()) {
+            val replacement = createBrowserTab(GeckoSessionController.HOME_URL)
+            tabs.add(replacement)
+            selectedTabId = replacement.id
+        } else if (selectedTabId == id) {
+            selectedTabId = closing.openerTabId
+                ?.takeIf { openerId -> tabs.any { it.id == openerId } }
+                ?: tabs[(oldIndex - 1).coerceIn(0, tabs.lastIndex)].id
+        }
+        activePanel = BrowserPanel.None
+        editingAddress = false
+        message = null
+        persistBrowserTabs()
+    }
+
+    closeTabById = ::closeBrowserTabById
+    focusTabById = { id ->
+        if (tabs.any { it.id == id }) {
+            selectedTabId = id
+            activePanel = BrowserPanel.None
+            editingAddress = false
+        }
+    }
+
+    openNewSessionAsTab = { uri, openerTabId ->
+        val newSession = GeckoSessionController.createSession()
+        var createdTab: BrowserTabRuntime? = null
+        val newTab = BrowserTabRuntime.fromExistingSession(
+            app = app,
+            url = uri,
+            session = newSession,
+            openerTabId = openerTabId,
+            onHyperRoute = { pendingHyperRoute = it },
+            onHyperBridgeMessage = ::handleHyperBridgeMessage,
+            onPageContextMenu = { pageContextMenu = it },
+            onDownload = ::saveGeckoDownload,
+            openNewTabsInCurrentTab = { profileStore.observeSettings().value.openNewTabsInCurrentTab },
+            onNewSession = { nextUri -> openNewSessionAsTab?.invoke(nextUri, createdTab?.id) },
+            onCloseRequest = {
+                createdTab?.id?.let { closeTabById(it) }
+            },
+            onFocusRequest = {
+                createdTab?.id?.let { focusTabById(it) }
+            },
+            onEngineSessionStateChange = { state ->
+                val tabId = createdTab?.id
+                if (tabId != null && state != null) {
+                    profileStore.saveTabSessionState(tabId, state)
+                }
+            },
+            onPageStop = { success ->
+                val tabId = createdTab?.id
+                if (success && tabId != null) {
+                    thumbnailRefreshRequests.tryEmit(tabId)
+                }
+            }
+        )
+        createdTab = newTab
+        tabs.add(newTab)
+        selectedTabId = newTab.id
+        activePanel = BrowserPanel.None
+        editingAddress = false
+        message = null
+        persistBrowserTabs(newTab.id)
+        newSession
+    }
     val persistBrowserTabsForLifecycle by rememberUpdatedState(newValue = { persistBrowserTabs() })
 
     LaunchedEffect(initialDownloadUrl) {
@@ -701,11 +830,13 @@ private fun BrowserScreen(
     val pageCanOwnFocus = pageFullScreen ||
         (activePanel == BrowserPanel.None && !editingAddress && extensionPopup == null && pageContextMenu == null)
 
-    LaunchedEffect(selectedTabId, tabs.map { it.id to it.controller }, pageCanOwnFocus) {
+    LaunchedEffect(selectedTabId, tabs.map { Triple(it.id, it.openerTabId, it.controller) }, pageCanOwnFocus) {
+        val openPopupOpenerIds = tabs.mapNotNull { it.openerTabId }.toSet()
         tabs.forEach { browserTab ->
             val selected = browserTab.id == selectedTabId
+            val ownsOpenPopup = browserTab.id in openPopupOpenerIds
             browserTab.controller?.setVisible(
-                visible = selected,
+                visible = selected || ownsOpenPopup,
                 focused = selected && pageCanOwnFocus
             )
         }
@@ -1067,6 +1198,8 @@ private fun BrowserScreen(
                             }
                         }
                     },
+                    onRetry = ::retryDownload,
+                    onCancel = ::cancelDownload,
                     onRemove = { entry, deleteFile ->
                         scope.launch {
                             if (entry.id == AppUpdateManager.APP_UPDATE_DOWNLOAD_ID) {
@@ -1083,7 +1216,11 @@ private fun BrowserScreen(
                                     .onFailure { message = it.message ?: "Unable to remove download." }
                             }
                         }
-                    }
+                    },
+                    onClearFinished = ::clearFinishedDownloads,
+                    canRetry = ::canRetryDownload,
+                    canCancel = ::canCancelDownload,
+                    canClear = ::canClearDownload
                 )
             } else if (showExtensions) {
                 ExtensionsPage(
@@ -1155,21 +1292,7 @@ private fun BrowserScreen(
                         selectedTabId = it
                         closePanel()
                     },
-                    onClose = { id ->
-                        val closing = tabs.firstOrNull { it.id == id } ?: return@TabTray
-                        val oldIndex = tabs.indexOf(closing)
-                        closing.close()
-                        profileStore.deleteTabSessionState(closing.id)
-                        profileStore.deleteTabThumbnail(closing.id)
-                        tabs.remove(closing)
-                        if (tabs.isEmpty()) {
-                            val replacement = createBrowserTab(GeckoSessionController.HOME_URL)
-                            tabs.add(replacement)
-                            selectedTabId = replacement.id
-                        } else if (selectedTabId == id) {
-                            selectedTabId = tabs[oldIndex.coerceAtMost(tabs.lastIndex)].id
-                        }
-                    },
+                    onClose = ::closeBrowserTabById,
                     onNewTab = {
                         val newTab = createBrowserTab(GeckoSessionController.HOME_URL)
                         tabs.add(newTab)

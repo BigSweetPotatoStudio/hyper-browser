@@ -71,12 +71,16 @@ class GeckoSessionController(
     private val onHyperBridgeMessage: ((org.json.JSONObject) -> org.json.JSONObject)? = null,
     private val onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
     private val onDownload: (GeckoDownloadRequest) -> Unit = {},
+    private val openNewTabsInCurrentTab: () -> Boolean = { false },
+    private val onNewSession: (String) -> GeckoSession? = { null },
+    private val onCloseRequest: () -> Unit = {},
+    private val onFocusRequest: () -> Unit = {},
     private val onSessionStateChange: (GeckoSession.SessionState) -> Unit = {},
     private val onPageStop: (Boolean) -> Unit = {},
     private val mediaNotificationIntent: Intent? = null,
     private val mediaOwnerInfo: () -> BrowserMediaOwnerInfo? = { null }
 ) {
-    var session: GeckoSession = existingSession ?: createSession()
+    var session: GeckoSession = existingSession ?: createBrowserSession()
         private set
 
     private val appContext = context.applicationContext
@@ -90,6 +94,7 @@ class GeckoSessionController(
     private var view: GeckoView? = null
     private var sessionCrashed = false
     private var automaticRecoveryTarget: String? = null
+    private var closeRequestScheduled = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var contentTouchCanScrollUp = false
     private var lastContentTouchStateAt = 0L
@@ -125,6 +130,19 @@ class GeckoSessionController(
 
             override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
                 _fullScreen.value = fullScreen
+            }
+
+            override fun onFocusRequest(session: GeckoSession) {
+                onFocusRequest()
+            }
+
+            override fun onCloseRequest(session: GeckoSession) {
+                if (closeRequestScheduled) return
+                closeRequestScheduled = true
+                mainHandler.postDelayed({
+                    closeRequestScheduled = false
+                    onCloseRequest()
+                }, POPUP_CLOSE_DELAY_MS)
             }
 
             override fun onContextMenu(
@@ -171,6 +189,24 @@ class GeckoSessionController(
                         body = body
                     )
                 )
+            }
+        }
+        targetSession.permissionDelegate = object : GeckoSession.PermissionDelegate {
+            override fun onContentPermissionRequest(
+                session: GeckoSession,
+                perm: GeckoSession.PermissionDelegate.ContentPermission
+            ): GeckoResult<Int> {
+                val value = when (perm.permission) {
+                    GeckoSession.PermissionDelegate.PERMISSION_STORAGE_ACCESS,
+                    GeckoSession.PermissionDelegate.PERMISSION_PERSISTENT_STORAGE,
+                    GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE,
+                    GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE,
+                    GeckoSession.PermissionDelegate.PERMISSION_MEDIA_KEY_SYSTEM_ACCESS -> {
+                        GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                    }
+                    else -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY
+                }
+                return GeckoResult.fromValue(value)
             }
         }
         targetSession.progressDelegate = object : GeckoSession.ProgressDelegate {
@@ -264,10 +300,15 @@ class GeckoSessionController(
             }
 
             override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession> {
-                if (uri.isNotBlank()) {
+                if (openNewTabsInCurrentTab() && uri.isNotBlank()) {
+                    load(uri)
+                    return GeckoResult.fromValue(null)
+                }
+                val newSession = onNewSession(uri)
+                if (newSession == null && uri.isNotBlank()) {
                     load(uri)
                 }
-                return GeckoResult.fromValue(null)
+                return GeckoResult.fromValue(newSession)
             }
         }
         targetSession.setMediaSessionDelegate(object : MediaSession.Delegate {
@@ -707,12 +748,8 @@ class GeckoSessionController(
         mainHandler.post { recoverSession(force = false) }
     }
 
-    private fun createSession(): GeckoSession =
-        GeckoSession(
-            GeckoSessionSettings.Builder()
-                .suspendMediaWhenInactive(false)
-                .build()
-        )
+    private fun createBrowserSession(): GeckoSession =
+        GeckoSessionController.createSession()
 
     private fun recoverSession(force: Boolean) {
         val target = currentRecoveryTarget()
@@ -726,7 +763,7 @@ class GeckoSessionController(
             mediaNotifications.clearIfOwner(session)
             runCatching { session.close() }
         }
-        session = createSession()
+        session = createBrowserSession()
         waitingForInitialLocation = true
         configureSession(session)
         registerBridgeHandler(session)
@@ -764,7 +801,15 @@ class GeckoSessionController(
         private const val BOOKMARKS_ASSET_URL = "resource://android/assets/bookmarks.html"
         private const val HISTORY_ASSET_URL = "resource://android/assets/history.html"
         private const val CONTENT_TOUCH_STATE_TTL_MS = 700L
+        private const val POPUP_CLOSE_DELAY_MS = 150L
         private const val MEDIA_DEBUG_TAG = "HyperMediaDebug"
+
+        fun createSession(): GeckoSession =
+            GeckoSession(
+                GeckoSessionSettings.Builder()
+                    .suspendMediaWhenInactive(false)
+                    .build()
+            )
 
         fun isHomeUrl(url: String): Boolean = url == HOME_URL
         fun isSearchUrl(url: String): Boolean = url == SEARCH_URL

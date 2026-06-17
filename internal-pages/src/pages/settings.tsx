@@ -23,6 +23,7 @@ function SettingsPage() {
   const [backupMessage, setBackupMessage] = useState("");
   const [searchEngineExpanded, setSearchEngineExpanded] = useState(false);
   const [toolbarExpanded, setToolbarExpanded] = useState(false);
+  const [tabBehaviorExpanded, setTabBehaviorExpanded] = useState(false);
   const [httpDnsExpanded, setHttpDnsExpanded] = useState(false);
   const [privacyExpanded, setPrivacyExpanded] = useState(false);
   const [backupExpanded, setBackupExpanded] = useState(false);
@@ -39,6 +40,11 @@ function SettingsPage() {
     const needle = query.trim().toLowerCase();
     if (!needle) return true;
     return "地址栏 工具栏 位置 顶部 底部".includes(needle);
+  }, [query]);
+  const showTabBehavior = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    return "新标签页 弹窗 window open popup 登录 跳转 当前页".includes(needle);
   }, [query]);
   const showBackgroundRuntime = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -152,6 +158,12 @@ function SettingsPage() {
       .catch(() => setBatteryMessage("设置暂时不可用。"));
   }
 
+  function updateOpenNewTabsInCurrentTab(enabled: boolean) {
+    window.hyperBrowser.updateOpenNewTabsInCurrentTab(enabled)
+      .then((value) => setSettings(value))
+      .catch(() => setLoadError("设置暂时不可用。"));
+  }
+
   function updatePrivacySettings(patch: Partial<Pick<BrowserSettings, "dohEnabled" | "dohProviderUrl" | "httpsOnlyEnabled" | "privacyProtectionLevel">>) {
     if (!settings) return Promise.resolve<BrowserSettings | null>(null);
     const next = {
@@ -233,6 +245,10 @@ function SettingsPage() {
 
   function toolbarPositionLabel(toolbarPosition?: BrowserSettings["toolbarPosition"]) {
     return toolbarPosition === "bottom" ? "底部" : "顶部";
+  }
+
+  function tabBehaviorLabel() {
+    return settings?.openNewTabsInCurrentTab ? "当前页跳转" : "新标签页";
   }
 
   function privacyStatusLabel() {
@@ -442,7 +458,7 @@ function SettingsPage() {
               </div>
             )}
           </div>
-        ) : !showToolbarPosition && !showHttpDnsSettings && !showPrivacySettings && !showBackupSettings && !showBackgroundRuntime && !showUpdateSettings ? (
+        ) : !showToolbarPosition && !showTabBehavior && !showHttpDnsSettings && !showPrivacySettings && !showBackupSettings && !showBackgroundRuntime && !showUpdateSettings ? (
           <div className="settings-empty">没有匹配的设置。</div>
         ) : null}
         {showToolbarPosition && (
@@ -475,6 +491,43 @@ function SettingsPage() {
                   <span>工具栏显示在页面下方</span>
                 </button>
               </div>
+            )}
+          </div>
+        )}
+        {showTabBehavior && (
+          <div className="settings-card settings-card-spaced">
+            <button
+              className="settings-row settings-row-button"
+              type="button"
+              aria-expanded={tabBehaviorExpanded}
+              onClick={() => setTabBehaviorExpanded((expanded) => !expanded)}
+            >
+              <span className="settings-row-title">新标签页</span>
+              <span className="settings-row-value">{tabBehaviorLabel()}</span>
+            </button>
+            {tabBehaviorExpanded && (
+              <>
+                <div className="settings-options">
+                  <button
+                    className={!settings?.openNewTabsInCurrentTab ? "settings-option selected" : "settings-option"}
+                    type="button"
+                    disabled={!settings}
+                    onClick={() => updateOpenNewTabsInCurrentTab(false)}
+                  >
+                    <span>新标签页</span>
+                    <span>保留 window.open / popup 新窗口，兼容 Google、X 等登录流程。</span>
+                  </button>
+                  <button
+                    className={settings?.openNewTabsInCurrentTab ? "settings-option selected" : "settings-option"}
+                    type="button"
+                    disabled={!settings}
+                    onClick={() => updateOpenNewTabsInCurrentTab(true)}
+                  >
+                    <span>当前页跳转</span>
+                    <span>把新窗口请求改为当前标签页打开，部分登录流程可能受影响。</span>
+                  </button>
+                </div>
+              </>
             )}
           </div>
         )}

@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Hyper Browser Internal Pages",
-  "version": "1.15",
+  "version": "1.20",
   "browser_specific_settings": {
     "gecko": {
       "id": "hyper-browser-internal@dadigua.com"
@@ -11,11 +11,15 @@
     "nativeMessaging",
     "nativeMessagingFromContent",
     "geckoViewAddons",
+    "webRequest",
+    "webRequestBlocking",
     "<all_urls>"
   ],
   "background": {
     "scripts": [
-      "background.js"
+      "background.js",
+      "site-compat/x-prelude-worker-fallback.js",
+      "site-compat/index.js"
     ]
   },
   "content_scripts": [

@@ -29,6 +29,7 @@ data class BrowserSettings(
     val customSearchUrl: String = "",
     val toolbarPosition: String = TOOLBAR_POSITION_TOP,
     val backgroundVideoEnhancementEnabled: Boolean = false,
+    val openNewTabsInCurrentTab: Boolean = false,
     val dohEnabled: Boolean = false,
     val dohProviderUrl: String = DEFAULT_DOH_PROVIDER_URL,
     val httpsOnlyEnabled: Boolean = false,
@@ -326,6 +327,12 @@ class BrowserProfileStore(context: Context) {
         saveSettings(next)
     }
 
+    fun updateOpenNewTabsInCurrentTab(enabled: Boolean) {
+        val next = settingsState.value.copy(openNewTabsInCurrentTab = enabled)
+        settingsState.value = next
+        saveSettings(next)
+    }
+
     fun updatePrivacySettings(
         dohEnabled: Boolean,
         dohProviderUrl: String,
@@ -426,6 +433,7 @@ class BrowserProfileStore(context: Context) {
                 .put("customSearchUrl", settings.customSearchUrl)
                 .put("toolbarPosition", settings.toolbarPosition)
                 .put("backgroundVideoEnhancementEnabled", settings.backgroundVideoEnhancementEnabled)
+                .put("openNewTabsInCurrentTab", settings.openNewTabsInCurrentTab)
                 .put("dohEnabled", settings.dohEnabled)
                 .put("dohProviderUrl", settings.dohProviderUrl)
                 .put("httpsOnlyEnabled", settings.httpsOnlyEnabled)
@@ -496,6 +504,7 @@ class BrowserProfileStore(context: Context) {
                     customSearchUrl = item.optString("customSearchUrl"),
                     toolbarPosition = item.optString("toolbarPosition", BrowserSettings.TOOLBAR_POSITION_TOP),
                     backgroundVideoEnhancementEnabled = item.optBoolean("backgroundVideoEnhancementEnabled", false),
+                    openNewTabsInCurrentTab = item.optBoolean("openNewTabsInCurrentTab", false),
                     dohEnabled = item.optBoolean("dohEnabled", false),
                     dohProviderUrl = item.optString(
                         "dohProviderUrl",

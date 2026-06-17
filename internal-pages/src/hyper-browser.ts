@@ -43,6 +43,7 @@ type BrowserSettings = {
   customSearchUrl: string;
   toolbarPosition: "top" | "bottom";
   backgroundVideoEnhancementEnabled: boolean;
+  openNewTabsInCurrentTab: boolean;
   dohEnabled: boolean;
   dohProviderUrl: string;
   httpsOnlyEnabled: boolean;
@@ -117,6 +118,7 @@ type HyperBrowserApi = {
   updateSearchEngine(searchEngineId: BrowserSettings["searchEngineId"], customSearchUrl?: string): Promise<BrowserSettings>;
   updateToolbarPosition(toolbarPosition: BrowserSettings["toolbarPosition"]): Promise<BrowserSettings>;
   updateBackgroundVideoEnhancement(enabled: boolean): Promise<BrowserSettings>;
+  updateOpenNewTabsInCurrentTab(enabled: boolean): Promise<BrowserSettings>;
   updatePrivacySettings(settings: Pick<BrowserSettings, "dohEnabled" | "dohProviderUrl" | "httpsOnlyEnabled" | "privacyProtectionLevel">): Promise<BrowserSettings>;
   requestBatteryOptimizationState(): Promise<BatteryOptimizationState>;
   openBatteryOptimizationSettings(): Promise<BatteryOptimizationState>;
@@ -226,6 +228,10 @@ window.hyperBrowser = {
   },
   updateBackgroundVideoEnhancement(enabled) {
     return send("settings.backgroundVideoEnhancement.update", { enabled: enabled ? "true" : "false" })
+      .then((response) => response.data as BrowserSettings);
+  },
+  updateOpenNewTabsInCurrentTab(enabled) {
+    return send("settings.openNewTabsInCurrentTab.update", { enabled: enabled ? "true" : "false" })
       .then((response) => response.data as BrowserSettings);
   },
   updatePrivacySettings(settings) {
