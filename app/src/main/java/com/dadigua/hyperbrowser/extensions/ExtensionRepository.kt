@@ -82,7 +82,12 @@ class ExtensionRepository(
         val merged = (
             installedState.value.filterNot { it.guid in runtimeGuids } +
                 runtimeExtensions.map { extension ->
-                    extension.toInstalledState(existingByGuid[extension.id])
+                    val existing = existingByGuid[extension.id]
+                    val desiredEnabled = existing?.enabled ?: extension.metaData.enabled
+                    if (existing != null && extension.metaData.enabled != desiredEnabled) {
+                        invokeWebExtensionMethod(if (desiredEnabled) "enable" else "disable", extension, ENABLE_SOURCE_APP)
+                    }
+                    extension.toInstalledState(existing, desiredEnabled)
                 }
             ).sortedByDescending { it.installedAt }
 
@@ -251,13 +256,11 @@ class ExtensionRepository(
 
     suspend fun setEnabled(guid: String, enabled: Boolean) {
         val installed = installedState.value.firstOrNull { it.guid == guid } ?: error("Extension is not installed.")
-        runCatching {
-            val extension = findRuntimeExtension(guid)
-            if (extension != null) {
-                invokeWebExtensionMethod(if (enabled) "enable" else "disable", extension)
-            } else if (enabled && installed.xpiPath != null) {
-                installRaw(File(installed.xpiPath))
-            }
+        val extension = findRuntimeExtension(guid)
+        if (extension != null) {
+            invokeWebExtensionMethod(if (enabled) "enable" else "disable", extension, ENABLE_SOURCE_USER)
+        } else if (enabled && installed.xpiPath != null) {
+            installRaw(File(installed.xpiPath))
         }
         saveInstalled(installedState.value.map { if (it.guid == guid) it.copy(enabled = enabled) else it })
     }
@@ -292,12 +295,15 @@ class ExtensionRepository(
         )
     }
 
-    private fun WebExtension.toInstalledState(existing: InstalledExtensionState?): InstalledExtensionState =
+    private fun WebExtension.toInstalledState(
+        existing: InstalledExtensionState?,
+        enabledOverride: Boolean? = null
+    ): InstalledExtensionState =
         InstalledExtensionState(
             guid = id,
             name = metaData.name?.takeIf { it.isNotBlank() } ?: existing?.name ?: id,
             version = metaData.version.takeIf { it.isNotBlank() } ?: existing?.version ?: "unknown",
-            enabled = metaData.enabled,
+            enabled = enabledOverride ?: metaData.enabled,
             source = existing?.source ?: "Gecko Runtime",
             permissionsSnapshot = existing?.permissionsSnapshot?.takeIf { it.isNotBlank() }
                 ?: extensionPermissionsSnapshot(),
@@ -341,13 +347,27 @@ class ExtensionRepository(
             ?: emptyList()
     }
 
-    private suspend fun invokeWebExtensionMethod(methodName: String, extension: Any) {
+    private suspend fun invokeWebExtensionMethod(
+        methodName: String,
+        extension: Any,
+        enableSource: Int = ENABLE_SOURCE_APP
+    ) {
         withContext(Dispatchers.Main.immediate) {
             val controller = GeckoRuntimeProvider.get(context).webExtensionController
             val method = controller.javaClass.methods.firstOrNull {
-                it.name == methodName && it.parameterTypes.isNotEmpty()
-            } ?: return@withContext
-            val result = method.invoke(controller, extension)
+                it.name == methodName &&
+                    it.parameterTypes.firstOrNull()?.isInstance(extension) == true &&
+                    (it.parameterTypes.size == 1 || it.parameterTypes.size == 2 && it.parameterTypes[1] == Int::class.javaPrimitiveType)
+            } ?: error("GeckoView WebExtensionController.$methodName is unavailable.")
+            val args = if (method.parameterTypes.size == 2) {
+                arrayOf(extension, enableSource)
+            } else {
+                arrayOf(extension)
+            }
+            val result = runCatching { method.invoke(controller, *args) }
+                .getOrElse { error ->
+                    throw (error.cause ?: error)
+                }
             if (result is GeckoResult<*>) {
                 result.await()
             }
@@ -469,6 +489,8 @@ class ExtensionRepository(
 
     private companion object {
         const val INTERNAL_EXTENSION_ID = "hyper-browser-internal@dadigua.com"
+        const val ENABLE_SOURCE_USER = 1
+        const val ENABLE_SOURCE_APP = 2
     }
 }
 
