@@ -1,28 +1,28 @@
 {
   "channel": "stable",
-  "versionCode": 6,
-  "versionName": "0.1.5",
+  "versionCode": 10,
+  "versionName": "0.1.6",
   "minSdk": 26,
-  "notes": "Release workflow now uses Linux-friendly Node scripts to extract notes from `CHANGELOG.md`, publish GitHub Release notes, generate `update/stable.json`, and commit the stable index back to `main` automatically.\nImproved the background video playback enhancement setting for more reliable page behavior while Hyper Browser is in the background.\nRefined the extension install flow.",
-  "releaseUrl": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/tag/v0.1.5",
+  "notes": "Added DNS over HTTPS settings, automatic ECH attempts when DoH is enabled, HTTPS-Only controls, and standard/strict/no tracking protection levels.\nChanged DNS over HTTPS to be off by default for new installs while preserving existing user choices.\nImproved DoH provider editing with an explicit save action, validation, and clearer unsaved state.\nDoH changes now attempt runtime reload and tell users that ECH and some Gecko settings are most complete after restarting the app.\nImproved address-bar security indicators for HTTP, HTTPS, and enhanced HTTPS states.\nImproved WebApp icon recovery so installed shortcuts keep existing icons, recover missing favicon files, and refresh when newer site icons are available.\nAdded automatic update checks when opening Settings.\nAdded local backup support for bookmarks and installed WebApps.\nImproved video fullscreen handling so fullscreen playback requests rotate and hide browser chrome more like Chrome.\nRemoved Picture-in-Picture support while fullscreen playback behavior is stabilized.\nAdded prerelease publishing support: hyphenated version tags now create GitHub prereleases for manual testing without updating the stable in-app update index.",
+  "releaseUrl": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/tag/v0.1.6",
   "assets": [
     {
       "abi": "arm64-v8a",
-      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.5/HyperBrowser-arm64-v8a-release.apk",
-      "sha256": "23129f1c702536d43763ff4ba8ae17a83be4c10d21479347f03ffaaf6fecdffc",
-      "sizeBytes": 203600960
+      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.6/HyperBrowser-arm64-v8a-release.apk",
+      "sha256": "93ebdae369347d422bd56ff3752f5cd247a96d38005fa265498c5ae98aae2f27",
+      "sizeBytes": 203617344
     },
     {
       "abi": "armeabi-v7a",
-      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.5/HyperBrowser-armeabi-v7a-release.apk",
-      "sha256": "6bbe0bb66baec0aa27be6eb3cc27a757436f03d1d89ff162a175a91eefc7ea62",
-      "sizeBytes": 165901404
+      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.6/HyperBrowser-armeabi-v7a-release.apk",
+      "sha256": "1d74889c62310170140672aec67953a22e4f2ec909adfe697e3639dfaa535df8",
+      "sizeBytes": 165921884
     },
     {
       "abi": "x86_64",
-      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.5/HyperBrowser-x86_64-release.apk",
-      "sha256": "b2b9a94e09be13d0e02ae53fdf1892c2f3f31317d758452e826ef54e12845f0f",
-      "sizeBytes": 222462998
+      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.6/HyperBrowser-x86_64-release.apk",
+      "sha256": "bbc9a8a1cbeed44f70d13d9dc8a025bf5c5d8fd002dfb666ae47cc65310dbbe6",
+      "sizeBytes": 222483478
     }
   ]
 }
