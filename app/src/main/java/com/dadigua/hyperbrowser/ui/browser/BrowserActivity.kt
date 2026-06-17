@@ -53,6 +53,7 @@ import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.SavedBrowserTabs
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
+import com.dadigua.hyperbrowser.gecko.GeckoAuthPromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoContextMenuTarget
 import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
 import com.dadigua.hyperbrowser.gecko.GeckoPageSecurity
@@ -564,6 +565,7 @@ private fun BrowserScreen(
         }
     }
     var pageContextMenu by remember { mutableStateOf<GeckoContextMenuTarget?>(null) }
+    var authPrompt by remember { mutableStateOf<GeckoAuthPromptRequest?>(null) }
     fun refreshTabThumbnail(
         tab: BrowserTabRuntime,
         shouldApply: () -> Boolean = { true },
@@ -623,6 +625,7 @@ private fun BrowserScreen(
             onHyperRoute = { pendingHyperRoute = it },
             onHyperBridgeMessage = ::handleHyperBridgeMessage,
             onPageContextMenu = { pageContextMenu = it },
+            onAuthPrompt = { authPrompt = it },
             onDownload = ::saveGeckoDownload,
             openNewTabsInCurrentTab = { profileStore.observeSettings().value.openNewTabsInCurrentTab },
             onNewSession = { uri -> openNewSessionAsTab?.invoke(uri, tabId) },
@@ -789,6 +792,7 @@ private fun BrowserScreen(
             onHyperRoute = { pendingHyperRoute = it },
             onHyperBridgeMessage = ::handleHyperBridgeMessage,
             onPageContextMenu = { pageContextMenu = it },
+            onAuthPrompt = { authPrompt = it },
             onDownload = ::saveGeckoDownload,
             openNewTabsInCurrentTab = { profileStore.observeSettings().value.openNewTabsInCurrentTab },
             onNewSession = { nextUri -> openNewSessionAsTab?.invoke(nextUri, createdTab?.id) },
@@ -987,6 +991,7 @@ private fun BrowserScreen(
                 onHyperRoute = { pendingHyperRoute = it },
                 onHyperBridgeMessage = ::handleHyperBridgeMessage,
                 onPageContextMenu = { pageContextMenu = it },
+                onAuthPrompt = { authPrompt = it },
                 onDownload = ::saveGeckoDownload
             )
             tabs.add(newTab)
@@ -1431,6 +1436,12 @@ private fun BrowserScreen(
                 onCopyImage = { url -> copyContextUrl("image", url, "图片地址已复制") },
                 onOpenLink = ::openLinkInBackgroundTab,
                 onCopyLink = { url -> copyContextUrl("link", url, "链接已复制") }
+            )
+        }
+        authPrompt?.let { request ->
+            AuthPromptDialog(
+                request = request,
+                onFinished = { authPrompt = null }
             )
         }
         if (!pageFullScreen) {

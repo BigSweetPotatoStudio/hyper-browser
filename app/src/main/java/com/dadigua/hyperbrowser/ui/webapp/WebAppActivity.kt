@@ -48,10 +48,12 @@ import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
 import com.dadigua.hyperbrowser.browser.closeBrowserMediaPlaybackOwner
 import com.dadigua.hyperbrowser.data.WebAppDefinition
+import com.dadigua.hyperbrowser.gecko.GeckoAuthPromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoContextMenuTarget
 import com.dadigua.hyperbrowser.gecko.GeckoBrowserView
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.ui.FullscreenSystemBarsEffect
+import com.dadigua.hyperbrowser.ui.browser.AuthPromptDialog
 import com.dadigua.hyperbrowser.ui.browser.BrowserActivity
 import com.dadigua.hyperbrowser.ui.browser.PageContextMenuDialog
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
@@ -127,6 +129,7 @@ class WebAppActivity : ComponentActivity() {
 private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppId: String) {
     var webApp by remember { mutableStateOf<WebAppDefinition?>(null) }
     var pageContextMenu by remember { mutableStateOf<GeckoContextMenuTarget?>(null) }
+    var authPrompt by remember { mutableStateOf<GeckoAuthPromptRequest?>(null) }
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     val downloadStore = remember { DownloadStore(app) }
@@ -190,6 +193,7 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
             context = app,
             initialUrl = current.startUrl,
             onPageContextMenu = { pageContextMenu = it },
+            onAuthPrompt = { authPrompt = it },
             mediaNotificationIntent = WebAppActivity.intent(app, current.id, true),
             mediaOwnerInfo = {
                 BrowserMediaOwnerInfo(
@@ -258,6 +262,12 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
                     onCopyLink = { url -> copyContextUrl("link", url, "链接已复制") },
                     openImageLabel = "在浏览器中打开图片",
                     openLinkLabel = "在浏览器中打开链接"
+                )
+            }
+            authPrompt?.let { request ->
+                AuthPromptDialog(
+                    request = request,
+                    onFinished = { authPrompt = null }
                 )
             }
         }

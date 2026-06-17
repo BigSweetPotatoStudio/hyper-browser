@@ -56,6 +56,30 @@ data class GeckoContextMenuTarget(
     val label: String?
 )
 
+class GeckoAuthPromptRequest(
+    val title: String,
+    val message: String,
+    val uri: String,
+    val username: String,
+    val password: String,
+    private val onConfirmResponse: (String, String) -> Unit,
+    private val onDismissResponse: () -> Unit
+) {
+    private var completed = false
+
+    fun confirm(username: String, password: String) {
+        if (completed) return
+        completed = true
+        onConfirmResponse(username, password)
+    }
+
+    fun dismiss() {
+        if (completed) return
+        completed = true
+        onDismissResponse()
+    }
+}
+
 enum class GeckoSessionCloseResult {
     Closed,
     DetachedForPlayback
@@ -70,6 +94,7 @@ class GeckoSessionController(
     private val onHyperRoute: (HyperRoute) -> Unit = {},
     private val onHyperBridgeMessage: ((org.json.JSONObject) -> org.json.JSONObject)? = null,
     private val onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
+    private val onAuthPrompt: (GeckoAuthPromptRequest) -> Unit = { it.dismiss() },
     private val onDownload: (GeckoDownloadRequest) -> Unit = {},
     private val openNewTabsInCurrentTab: () -> Boolean = { false },
     private val onNewSession: (String) -> GeckoSession? = { null },
@@ -207,6 +232,30 @@ class GeckoSessionController(
                     else -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY
                 }
                 return GeckoResult.fromValue(value)
+            }
+        }
+        targetSession.promptDelegate = object : GeckoSession.PromptDelegate {
+            override fun onAuthPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.AuthPrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onAuthPrompt(
+                    GeckoAuthPromptRequest(
+                        title = prompt.title.orEmpty(),
+                        message = prompt.message.orEmpty(),
+                        uri = prompt.authOptions.uri.orEmpty(),
+                        username = prompt.authOptions.username.orEmpty(),
+                        password = prompt.authOptions.password.orEmpty(),
+                        onConfirmResponse = { username, password ->
+                            result.complete(prompt.confirm(username, password))
+                        },
+                        onDismissResponse = {
+                            result.complete(prompt.dismiss())
+                        }
+                    )
+                )
+                return result
             }
         }
         targetSession.progressDelegate = object : GeckoSession.ProgressDelegate {
