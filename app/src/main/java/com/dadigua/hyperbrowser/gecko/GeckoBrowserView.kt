@@ -42,7 +42,8 @@ import kotlin.math.abs
 fun GeckoBrowserView(
     controller: GeckoSessionController,
     modifier: Modifier = Modifier,
-    imeAvoidanceEnabled: Boolean = true
+    imeAvoidanceEnabled: Boolean = true,
+    onContentTouchStarted: () -> Unit = {}
 ) {
     val pageState by controller.state.collectAsState()
     val sessionChangeVersion by controller.sessionChangeVersion.collectAsState()
@@ -82,6 +83,7 @@ fun GeckoBrowserView(
             modifier = Modifier.matchParentSize(),
             factory = { context ->
                 PullRefreshGeckoContainer(context).apply {
+                    configureAndroidAutofill()
                     geckoView.configureAndroidAutofill()
                     geckoView.setSession(controller.session)
                     controller.attachView(geckoView)
@@ -100,7 +102,10 @@ fun GeckoBrowserView(
                     triggerDistancePx = triggerDistancePx,
                     maxPullDistancePx = maxPullDistancePx,
                     onGestureStarted = controller::markPullRefreshGestureStarted,
-                    onContentTouchStarted = controller::focusForUserInteraction,
+                    onContentTouchStarted = {
+                        onContentTouchStarted()
+                        controller.focusForUserInteraction()
+                    },
                     contentCanStartPullRefresh = controller::canStartPullRefreshFromContent,
                     onPull = { pullDistancePx = it },
                     onRefresh = {
@@ -329,6 +334,11 @@ private fun GeckoView.configureAndroidAutofill() {
     importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_YES
     isSaveEnabled = true
     setAutofillEnabled(true)
+}
+
+private fun View.configureAndroidAutofill() {
+    importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_YES
+    isSaveEnabled = true
 }
 
 @Composable

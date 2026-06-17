@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -177,6 +178,7 @@ private fun BrowserScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val clipboard = LocalClipboard.current
+    val focusManager = LocalFocusManager.current
     val profileStore = remember { BrowserProfileStore(app) }
     val faviconStore = remember { FaviconRepository(app) }
     val backupManager = remember { BrowserBackupManager(profileStore, app.webApps, faviconStore) }
@@ -700,12 +702,15 @@ private fun BrowserScreen(
     val extensionActions by app.extensions.observeMenuActions().collectAsState()
     val extensionPopup by app.extensions.observePopup().collectAsState()
     val extensionNewTabRequest by app.extensions.observeNewTabRequests().collectAsState()
-    var editingAddress by remember { mutableStateOf(false) }
     var extensionQuery by remember { mutableStateOf("ublock") }
     var extensionResults by remember { mutableStateOf<List<AmoAddonListing>>(emptyList()) }
     var extensionMessage by remember { mutableStateOf<String?>(null) }
     var installingAddonGuid by remember { mutableStateOf<String?>(null) }
     var currentIconPath by remember { mutableStateOf<String?>(null) }
+
+    fun handlePageContentTouchStarted() {
+        focusManager.clearFocus(force = true)
+    }
 
     LaunchedEffect(Unit) {
         runCatching { app.extensions.refreshInstalledFromRuntime() }
@@ -761,7 +766,6 @@ private fun BrowserScreen(
                 ?: tabs[(oldIndex - 1).coerceIn(0, tabs.lastIndex)].id
         }
         activePanel = BrowserPanel.None
-        editingAddress = false
         message = null
         persistBrowserTabs()
     }
@@ -771,7 +775,6 @@ private fun BrowserScreen(
         if (tabs.any { it.id == id }) {
             selectedTabId = id
             activePanel = BrowserPanel.None
-            editingAddress = false
         }
     }
 
@@ -812,7 +815,6 @@ private fun BrowserScreen(
         tabs.add(newTab)
         selectedTabId = newTab.id
         activePanel = BrowserPanel.None
-        editingAddress = false
         message = null
         persistBrowserTabs(newTab.id)
         newSession
@@ -828,7 +830,7 @@ private fun BrowserScreen(
     }
 
     val pageCanOwnFocus = pageFullScreen ||
-        (activePanel == BrowserPanel.None && !editingAddress && extensionPopup == null && pageContextMenu == null)
+        (activePanel == BrowserPanel.None && extensionPopup == null && pageContextMenu == null)
 
     LaunchedEffect(selectedTabId, tabs.map { Triple(it.id, it.openerTabId, it.controller) }, pageCanOwnFocus) {
         val openPopupOpenerIds = tabs.mapNotNull { it.openerTabId }.toSet()
@@ -899,18 +901,15 @@ private fun BrowserScreen(
             if (targetTabId != null) {
                 selectedTabId = targetTabId
                 closePanel()
-                editingAddress = false
                 message = null
             } else if (command.showDownloads) {
                 showPanel(BrowserPanel.Downloads)
-                editingAddress = false
                 message = null
             } else if (command.openInNewTab && commandUrl != null) {
                 val newTab = createBrowserTab(commandUrl)
                 tabs.add(newTab)
                 selectedTabId = newTab.id
                 closePanel()
-                editingAddress = false
                 message = null
             } else if (command.download && commandUrl != null) {
                 enqueueUrlDownload(commandUrl)
@@ -918,7 +917,6 @@ private fun BrowserScreen(
                 tab.input = commandUrl
                 controller.load(commandUrl, settings.searchUrlTemplate)
                 closePanel()
-                editingAddress = false
                 message = null
             }
         }
@@ -946,10 +944,6 @@ private fun BrowserScreen(
         when {
             pageFullScreen -> controller.exitFullScreen()
             extensionPopup != null -> app.extensions.closePopup()
-            editingAddress -> {
-                editingAddress = false
-                message = null
-            }
             activePanel != BrowserPanel.None -> closePanel()
             pageState.canGoBack -> controller.goBack()
             else -> controller.goBack()
@@ -1128,7 +1122,9 @@ private fun BrowserScreen(
                 )
             } else if (showSearch) {
                 SearchPage(
-                    initialInput = if (onHomePage) "" else tab.input,
+                    initialInput = "",
+                    currentTitle = pageState.title,
+                    currentUrl = browserAddressText(pageState.url, tab.input),
                     history = history,
                     bookmarks = bookmarks,
                     onCancel = ::closePanel,
@@ -1318,15 +1314,11 @@ private fun BrowserScreen(
                         installedExtensions = installedExtensions,
                         extensionActions = extensionActions,
                         toolbarPosition = settings.toolbarPosition,
-                        editingAddress = editingAddress,
-                        onEditingAddressChange = { editingAddress = it },
-                        bookmarks = bookmarks,
-                        history = history,
                         downloads = downloads,
                         addressSecurityLevel = addressSecurityLevel(pageState.securityLevel, settings),
-                        onSubmitAddress = { query ->
-                            tab.input = query
-                            controller.load(query, settings.searchUrlTemplate)
+                        onOpenSearchPage = {
+                            showPanel(BrowserPanel.Search)
+                            message = null
                         },
                         onBack = controller::goBack,
                         onForward = controller::goForward,
@@ -1396,7 +1388,7 @@ private fun BrowserScreen(
                         extensionPopup = extensionPopup,
                         onClosePopup = app.extensions::closePopup,
                         modifier = Modifier.weight(1f),
-                        imeAvoidanceEnabled = !editingAddress
+                        onContentTouchStarted = ::handlePageContentTouchStarted
                     )
                     toolbar()
                 } else {
@@ -1407,11 +1399,17 @@ private fun BrowserScreen(
                         extensionPopup = extensionPopup,
                         onClosePopup = app.extensions::closePopup,
                         modifier = Modifier.weight(1f),
-                        imeAvoidanceEnabled = !editingAddress
+                        onContentTouchStarted = ::handlePageContentTouchStarted
                     )
                 }
             } else {
-                BrowserContent(controller = controller, tabId = tab.id, extensionPopup = extensionPopup, onClosePopup = app.extensions::closePopup)
+                BrowserContent(
+                    controller = controller,
+                    tabId = tab.id,
+                    extensionPopup = extensionPopup,
+                    onClosePopup = app.extensions::closePopup,
+                    onContentTouchStarted = ::handlePageContentTouchStarted
+                )
             }
         }
         pageContextMenu?.let { menu ->

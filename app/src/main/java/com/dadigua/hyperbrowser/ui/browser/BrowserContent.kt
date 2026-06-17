@@ -33,7 +33,8 @@ internal fun BrowserContent(
     extensionPopup: ExtensionPopupState?,
     onClosePopup: () -> Unit,
     modifier: Modifier = Modifier,
-    imeAvoidanceEnabled: Boolean = true
+    imeAvoidanceEnabled: Boolean = true,
+    onContentTouchStarted: () -> Unit = {}
 ) {
     val contentPageState by controller.state.collectAsState()
     Box(modifier = modifier.fillMaxSize()) {
@@ -41,7 +42,8 @@ internal fun BrowserContent(
             GeckoBrowserView(
                 controller = controller,
                 modifier = Modifier.fillMaxSize(),
-                imeAvoidanceEnabled = imeAvoidanceEnabled
+                imeAvoidanceEnabled = imeAvoidanceEnabled,
+                onContentTouchStarted = onContentTouchStarted
             )
         }
         TopPageLoadingProgressBar(
