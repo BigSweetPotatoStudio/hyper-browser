@@ -6,6 +6,12 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+## 0.1.7-beta.2 - 2026-06-18
+
+- Added HTTP authentication and Gecko prompt handling for protected sites and browser permission flows.
+- Added language settings and localized built-in browser pages.
+- Improved fullscreen video rotation so fullscreen playback follows device sensors even when system rotation is locked.
+
 ## 0.1.7-beta.1 - 2026-06-18
 
 - Improved X/Twitter Google sign-in compatibility for popup-based account flows.
