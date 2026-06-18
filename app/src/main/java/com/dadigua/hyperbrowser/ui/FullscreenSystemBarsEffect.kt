@@ -19,7 +19,7 @@ internal fun FullscreenSystemBarsEffect(fullScreen: Boolean) {
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         val previousOrientation = activity.requestedOrientation
         if (fullScreen) {
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_USER
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
             WindowCompat.setDecorFitsSystemWindows(window, false)
             controller.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
