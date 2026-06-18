@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.security.KeyChain
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
@@ -42,6 +43,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.dadigua.hyperbrowser.HyperBrowserApp
+import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.browser.BrowserDownloadEntry
 import com.dadigua.hyperbrowser.browser.DownloadHandler
 import com.dadigua.hyperbrowser.browser.DownloadStatus
@@ -54,9 +56,13 @@ import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.SavedBrowserTabs
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
 import com.dadigua.hyperbrowser.gecko.GeckoAuthPromptRequest
+import com.dadigua.hyperbrowser.gecko.GeckoCertificatePromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoContextMenuTarget
 import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
+import com.dadigua.hyperbrowser.gecko.GeckoFilePromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoPageSecurity
+import com.dadigua.hyperbrowser.gecko.GeckoPromptRequest
+import com.dadigua.hyperbrowser.gecko.GeckoSharePromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoRuntimeProvider
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.HyperCommand
@@ -566,6 +572,86 @@ private fun BrowserScreen(
     }
     var pageContextMenu by remember { mutableStateOf<GeckoContextMenuTarget?>(null) }
     var authPrompt by remember { mutableStateOf<GeckoAuthPromptRequest?>(null) }
+    var geckoPrompt by remember { mutableStateOf<GeckoPromptRequest?>(null) }
+    var pendingFilePrompt by remember { mutableStateOf<GeckoFilePromptRequest?>(null) }
+    val singleFilePromptLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val request = pendingFilePrompt ?: return@rememberLauncherForActivityResult
+        pendingFilePrompt = null
+        if (uri == null) {
+            request.dismiss()
+        } else {
+            request.confirm(listOf(uri))
+        }
+    }
+    val multipleFilePromptLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        val request = pendingFilePrompt ?: return@rememberLauncherForActivityResult
+        pendingFilePrompt = null
+        if (uris.isEmpty()) {
+            request.dismiss()
+        } else {
+            request.confirm(uris)
+        }
+    }
+    fun handleFilePrompt(request: GeckoFilePromptRequest) {
+        pendingFilePrompt?.dismiss()
+        pendingFilePrompt = request
+        if (request.multiple) {
+            multipleFilePromptLauncher.launch(request.pickerMimeTypes())
+        } else {
+            singleFilePromptLauncher.launch(request.pickerMimeTypes())
+        }
+    }
+    fun handleCertificatePrompt(request: GeckoCertificatePromptRequest) {
+        val activity = context as? BrowserActivity
+        if (activity == null) {
+            request.dismiss()
+            return
+        }
+        KeyChain.choosePrivateKeyAlias(
+            activity,
+            { alias ->
+                if (alias == null) {
+                    request.dismiss()
+                } else {
+                    request.confirm(alias)
+                }
+            },
+            null,
+            request.issuers,
+            request.host.takeIf { it.isNotBlank() },
+            -1,
+            null
+        )
+    }
+    fun handleSharePrompt(request: GeckoSharePromptRequest) {
+        val shareText = listOf(request.text, request.uri)
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
+        if (shareText.isBlank()) {
+            request.dismiss()
+            return
+        }
+        val sendIntent = Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_TEXT, shareText)
+        request.title.takeIf { it.isNotBlank() }?.let {
+            sendIntent.putExtra(Intent.EXTRA_TITLE, it)
+        }
+        runCatching {
+            context.startActivity(
+                Intent.createChooser(sendIntent, context.getString(R.string.prompt_share_title))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }.onSuccess {
+            request.confirm(GeckoSession.PromptDelegate.SharePrompt.Result.SUCCESS)
+        }.onFailure {
+            request.confirm(GeckoSession.PromptDelegate.SharePrompt.Result.FAILURE)
+        }
+    }
     fun refreshTabThumbnail(
         tab: BrowserTabRuntime,
         shouldApply: () -> Boolean = { true },
@@ -626,6 +712,10 @@ private fun BrowserScreen(
             onHyperBridgeMessage = ::handleHyperBridgeMessage,
             onPageContextMenu = { pageContextMenu = it },
             onAuthPrompt = { authPrompt = it },
+            onPrompt = { geckoPrompt = it },
+            onFilePrompt = ::handleFilePrompt,
+            onCertificatePrompt = ::handleCertificatePrompt,
+            onSharePrompt = ::handleSharePrompt,
             onDownload = ::saveGeckoDownload,
             openNewTabsInCurrentTab = { profileStore.observeSettings().value.openNewTabsInCurrentTab },
             onNewSession = { uri -> openNewSessionAsTab?.invoke(uri, tabId) },
@@ -793,6 +883,10 @@ private fun BrowserScreen(
             onHyperBridgeMessage = ::handleHyperBridgeMessage,
             onPageContextMenu = { pageContextMenu = it },
             onAuthPrompt = { authPrompt = it },
+            onPrompt = { geckoPrompt = it },
+            onFilePrompt = ::handleFilePrompt,
+            onCertificatePrompt = ::handleCertificatePrompt,
+            onSharePrompt = ::handleSharePrompt,
             onDownload = ::saveGeckoDownload,
             openNewTabsInCurrentTab = { profileStore.observeSettings().value.openNewTabsInCurrentTab },
             onNewSession = { nextUri -> openNewSessionAsTab?.invoke(nextUri, createdTab?.id) },
@@ -992,6 +1086,10 @@ private fun BrowserScreen(
                 onHyperBridgeMessage = ::handleHyperBridgeMessage,
                 onPageContextMenu = { pageContextMenu = it },
                 onAuthPrompt = { authPrompt = it },
+                onPrompt = { geckoPrompt = it },
+                onFilePrompt = ::handleFilePrompt,
+                onCertificatePrompt = ::handleCertificatePrompt,
+                onSharePrompt = ::handleSharePrompt,
                 onDownload = ::saveGeckoDownload
             )
             tabs.add(newTab)
@@ -1442,6 +1540,12 @@ private fun BrowserScreen(
             AuthPromptDialog(
                 request = request,
                 onFinished = { authPrompt = null }
+            )
+        }
+        geckoPrompt?.let { request ->
+            GeckoPromptDialog(
+                prompt = request,
+                onFinished = { geckoPrompt = null }
             )
         }
         if (!pageFullScreen) {

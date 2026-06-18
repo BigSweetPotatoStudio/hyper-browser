@@ -19,6 +19,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.res.stringResource
+import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.gecko.GeckoAuthPromptRequest
 
 @Composable
@@ -43,7 +45,7 @@ internal fun AuthPromptDialog(
         onDismissRequest = ::dismiss,
         title = {
             Text(
-                text = request.title.ifBlank { "需要登录" },
+                text = request.title.ifBlank { stringResource(R.string.prompt_title_login_required) },
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
@@ -63,7 +65,7 @@ internal fun AuthPromptDialog(
                     value = username,
                     onValueChange = { username = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("用户名") },
+                    label = { Text(stringResource(R.string.prompt_label_username)) },
                     singleLine = true
                 )
                 Spacer(modifier = Modifier.height(10.dp))
@@ -71,7 +73,7 @@ internal fun AuthPromptDialog(
                     value = password,
                     onValueChange = { password = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("密码") },
+                    label = { Text(stringResource(R.string.prompt_label_password)) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
@@ -80,12 +82,12 @@ internal fun AuthPromptDialog(
         },
         confirmButton = {
             TextButton(onClick = ::confirm) {
-                Text("登录")
+                Text(stringResource(R.string.prompt_action_login))
             }
         },
         dismissButton = {
             TextButton(onClick = ::dismiss) {
-                Text("取消")
+                Text(stringResource(R.string.prompt_action_cancel))
             }
         }
     )

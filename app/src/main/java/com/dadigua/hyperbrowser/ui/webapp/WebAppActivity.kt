@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.security.KeyChain
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -41,6 +42,7 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.unit.dp
 import com.dadigua.hyperbrowser.HyperBrowserApp
+import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.browser.DownloadHandler
 import com.dadigua.hyperbrowser.browser.DownloadStore
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
@@ -49,15 +51,21 @@ import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
 import com.dadigua.hyperbrowser.browser.closeBrowserMediaPlaybackOwner
 import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.gecko.GeckoAuthPromptRequest
+import com.dadigua.hyperbrowser.gecko.GeckoCertificatePromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoContextMenuTarget
 import com.dadigua.hyperbrowser.gecko.GeckoBrowserView
+import com.dadigua.hyperbrowser.gecko.GeckoFilePromptRequest
+import com.dadigua.hyperbrowser.gecko.GeckoPromptRequest
+import com.dadigua.hyperbrowser.gecko.GeckoSharePromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.ui.FullscreenSystemBarsEffect
 import com.dadigua.hyperbrowser.ui.browser.AuthPromptDialog
 import com.dadigua.hyperbrowser.ui.browser.BrowserActivity
+import com.dadigua.hyperbrowser.ui.browser.GeckoPromptDialog
 import com.dadigua.hyperbrowser.ui.browser.PageContextMenuDialog
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
 import kotlinx.coroutines.launch
+import org.mozilla.geckoview.GeckoSession
 
 class WebAppActivity : ComponentActivity() {
     private var activeWebAppId: String? = null
@@ -130,6 +138,8 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
     var webApp by remember { mutableStateOf<WebAppDefinition?>(null) }
     var pageContextMenu by remember { mutableStateOf<GeckoContextMenuTarget?>(null) }
     var authPrompt by remember { mutableStateOf<GeckoAuthPromptRequest?>(null) }
+    var geckoPrompt by remember { mutableStateOf<GeckoPromptRequest?>(null) }
+    var pendingFilePrompt by remember { mutableStateOf<GeckoFilePromptRequest?>(null) }
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     val downloadStore = remember { DownloadStore(app) }
@@ -137,6 +147,28 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
+    val singleFilePromptLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val request = pendingFilePrompt ?: return@rememberLauncherForActivityResult
+        pendingFilePrompt = null
+        if (uri == null) {
+            request.dismiss()
+        } else {
+            request.confirm(listOf(uri))
+        }
+    }
+    val multipleFilePromptLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        val request = pendingFilePrompt ?: return@rememberLauncherForActivityResult
+        pendingFilePrompt = null
+        if (uris.isEmpty()) {
+            request.dismiss()
+        } else {
+            request.confirm(uris)
+        }
+    }
 
     fun showToast(text: String) {
         Toast.makeText(activity, text, Toast.LENGTH_SHORT).show()
@@ -172,6 +204,59 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
             .onFailure { showToast(it.message ?: "Unable to open link.") }
     }
 
+    fun handleFilePrompt(request: GeckoFilePromptRequest) {
+        pendingFilePrompt?.dismiss()
+        pendingFilePrompt = request
+        if (request.multiple) {
+            multipleFilePromptLauncher.launch(request.pickerMimeTypes())
+        } else {
+            singleFilePromptLauncher.launch(request.pickerMimeTypes())
+        }
+    }
+
+    fun handleCertificatePrompt(request: GeckoCertificatePromptRequest) {
+        KeyChain.choosePrivateKeyAlias(
+            activity,
+            { alias ->
+                if (alias == null) {
+                    request.dismiss()
+                } else {
+                    request.confirm(alias)
+                }
+            },
+            null,
+            request.issuers,
+            request.host.takeIf { it.isNotBlank() },
+            -1,
+            null
+        )
+    }
+
+    fun handleSharePrompt(request: GeckoSharePromptRequest) {
+        val shareText = listOf(request.text, request.uri)
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
+        if (shareText.isBlank()) {
+            request.dismiss()
+            return
+        }
+        val sendIntent = Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_TEXT, shareText)
+        request.title.takeIf { it.isNotBlank() }?.let {
+            sendIntent.putExtra(Intent.EXTRA_TITLE, it)
+        }
+        runCatching {
+            activity.startActivity(
+                Intent.createChooser(sendIntent, activity.getString(R.string.prompt_share_title))
+            )
+        }.onSuccess {
+            request.confirm(GeckoSession.PromptDelegate.SharePrompt.Result.SUCCESS)
+        }.onFailure {
+            request.confirm(GeckoSession.PromptDelegate.SharePrompt.Result.FAILURE)
+        }
+    }
+
     LaunchedEffect(webAppId) {
         webApp = app.webApps.get(webAppId)
         webApp?.let {
@@ -194,6 +279,10 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
             initialUrl = current.startUrl,
             onPageContextMenu = { pageContextMenu = it },
             onAuthPrompt = { authPrompt = it },
+            onPrompt = { geckoPrompt = it },
+            onFilePrompt = ::handleFilePrompt,
+            onCertificatePrompt = ::handleCertificatePrompt,
+            onSharePrompt = ::handleSharePrompt,
             mediaNotificationIntent = WebAppActivity.intent(app, current.id, true),
             mediaOwnerInfo = {
                 BrowserMediaOwnerInfo(
@@ -268,6 +357,12 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
                 AuthPromptDialog(
                     request = request,
                     onFinished = { authPrompt = null }
+                )
+            }
+            geckoPrompt?.let { request ->
+                GeckoPromptDialog(
+                    prompt = request,
+                    onFinished = { geckoPrompt = null }
                 )
             }
         }

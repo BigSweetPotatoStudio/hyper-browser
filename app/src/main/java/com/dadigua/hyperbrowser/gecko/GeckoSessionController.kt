@@ -3,6 +3,7 @@ package com.dadigua.hyperbrowser.gecko
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -16,8 +17,10 @@ import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.MediaSession
 import org.mozilla.geckoview.WebResponse
+import java.security.Principal
 import java.net.URLEncoder
 import java.io.InputStream
+import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.browser.DownloadHandler
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
@@ -80,6 +83,254 @@ class GeckoAuthPromptRequest(
     }
 }
 
+class GeckoAlertPromptRequest(
+    val title: String,
+    val message: String,
+    private val onDismissResponse: () -> Unit
+) {
+    private var completed = false
+
+    fun dismiss() {
+        if (completed) return
+        completed = true
+        onDismissResponse()
+    }
+}
+
+class GeckoButtonPromptRequest(
+    val title: String,
+    val message: String,
+    private val onConfirmResponse: (Int) -> Unit,
+    private val onDismissResponse: () -> Unit
+) {
+    private var completed = false
+
+    fun confirm(button: Int) {
+        if (completed) return
+        completed = true
+        onConfirmResponse(button)
+    }
+
+    fun dismiss() {
+        if (completed) return
+        completed = true
+        onDismissResponse()
+    }
+}
+
+class GeckoTextPromptRequest(
+    val title: String,
+    val message: String,
+    val defaultValue: String,
+    private val onConfirmResponse: (String) -> Unit,
+    private val onDismissResponse: () -> Unit
+) {
+    private var completed = false
+
+    fun confirm(value: String) {
+        if (completed) return
+        completed = true
+        onConfirmResponse(value)
+    }
+
+    fun dismiss() {
+        if (completed) return
+        completed = true
+        onDismissResponse()
+    }
+}
+
+data class GeckoChoicePromptItem(
+    val id: String,
+    val label: String,
+    val disabled: Boolean,
+    val selected: Boolean,
+    val level: Int
+)
+
+class GeckoChoicePromptRequest(
+    val title: String,
+    val message: String,
+    val choices: List<GeckoChoicePromptItem>,
+    val multiple: Boolean,
+    private val onConfirmResponse: (List<String>) -> Unit,
+    private val onDismissResponse: () -> Unit
+) {
+    private var completed = false
+
+    fun confirm(ids: List<String>) {
+        if (completed) return
+        completed = true
+        onConfirmResponse(ids)
+    }
+
+    fun dismiss() {
+        if (completed) return
+        completed = true
+        onDismissResponse()
+    }
+}
+
+class GeckoConfirmPromptRequest(
+    val title: String,
+    val message: String,
+    val confirmLabel: String,
+    val dismissLabel: String,
+    private val onConfirmResponse: () -> Unit,
+    private val onDismissResponse: () -> Unit
+) {
+    private var completed = false
+
+    fun confirm() {
+        if (completed) return
+        completed = true
+        onConfirmResponse()
+    }
+
+    fun dismiss() {
+        if (completed) return
+        completed = true
+        onDismissResponse()
+    }
+}
+
+class GeckoFilePromptRequest(
+    val title: String,
+    val mimeTypes: Array<String>,
+    val multiple: Boolean,
+    private val onConfirmResponse: (Array<Uri>) -> Unit,
+    private val onDismissResponse: () -> Unit
+) {
+    private var completed = false
+
+    fun confirm(uris: List<Uri>) {
+        if (completed) return
+        completed = true
+        onConfirmResponse(uris.toTypedArray())
+    }
+
+    fun dismiss() {
+        if (completed) return
+        completed = true
+        onDismissResponse()
+    }
+
+    fun pickerMimeTypes(): Array<String> =
+        mimeTypes.takeIf { it.isNotEmpty() } ?: arrayOf("*/*")
+}
+
+class GeckoCertificatePromptRequest(
+    val title: String,
+    val host: String,
+    val issuers: Array<Principal>,
+    private val onConfirmResponse: (String) -> Unit,
+    private val onDismissResponse: () -> Unit
+) {
+    private var completed = false
+
+    fun confirm(alias: String) {
+        if (completed) return
+        completed = true
+        onConfirmResponse(alias)
+    }
+
+    fun dismiss() {
+        if (completed) return
+        completed = true
+        onDismissResponse()
+    }
+}
+
+class GeckoColorPromptRequest(
+    val title: String,
+    val defaultValue: String,
+    val predefinedValues: Array<String>,
+    private val onConfirmResponse: (String) -> Unit,
+    private val onDismissResponse: () -> Unit
+) {
+    private var completed = false
+
+    fun confirm(value: String) {
+        if (completed) return
+        completed = true
+        onConfirmResponse(value)
+    }
+
+    fun dismiss() {
+        if (completed) return
+        completed = true
+        onDismissResponse()
+    }
+}
+
+class GeckoDateTimePromptRequest(
+    val title: String,
+    val defaultValue: String,
+    val minValue: String,
+    val maxValue: String,
+    val stepValue: String,
+    private val onConfirmResponse: (String) -> Unit,
+    private val onDismissResponse: () -> Unit
+) {
+    private var completed = false
+
+    fun confirm(value: String) {
+        if (completed) return
+        completed = true
+        onConfirmResponse(value)
+    }
+
+    fun dismiss() {
+        if (completed) return
+        completed = true
+        onDismissResponse()
+    }
+}
+
+class GeckoSharePromptRequest(
+    val title: String,
+    val text: String,
+    val uri: String,
+    private val onConfirmResponse: (Int) -> Unit,
+    private val onDismissResponse: () -> Unit
+) {
+    private var completed = false
+
+    fun confirm(result: Int) {
+        if (completed) return
+        completed = true
+        onConfirmResponse(result)
+    }
+
+    fun dismiss() {
+        if (completed) return
+        completed = true
+        onDismissResponse()
+    }
+}
+
+sealed class GeckoPromptRequest {
+    data class Alert(val request: GeckoAlertPromptRequest) : GeckoPromptRequest()
+    data class Button(val request: GeckoButtonPromptRequest) : GeckoPromptRequest()
+    data class Text(val request: GeckoTextPromptRequest) : GeckoPromptRequest()
+    data class Choice(val request: GeckoChoicePromptRequest) : GeckoPromptRequest()
+    data class Confirm(val request: GeckoConfirmPromptRequest) : GeckoPromptRequest()
+    data class Color(val request: GeckoColorPromptRequest) : GeckoPromptRequest()
+    data class DateTime(val request: GeckoDateTimePromptRequest) : GeckoPromptRequest()
+
+    fun dismiss() {
+        when (this) {
+            is Alert -> request.dismiss()
+            is Button -> request.dismiss()
+            is Text -> request.dismiss()
+            is Choice -> request.dismiss()
+            is Confirm -> request.dismiss()
+            is Color -> request.dismiss()
+            is DateTime -> request.dismiss()
+        }
+    }
+}
+
 enum class GeckoSessionCloseResult {
     Closed,
     DetachedForPlayback
@@ -95,6 +346,12 @@ class GeckoSessionController(
     private val onHyperBridgeMessage: ((org.json.JSONObject) -> org.json.JSONObject)? = null,
     private val onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
     private val onAuthPrompt: (GeckoAuthPromptRequest) -> Unit = { it.dismiss() },
+    private val onPrompt: (GeckoPromptRequest) -> Unit = { it.dismiss() },
+    private val onFilePrompt: (GeckoFilePromptRequest) -> Unit = { it.dismiss() },
+    private val onCertificatePrompt: (GeckoCertificatePromptRequest) -> Unit = { it.dismiss() },
+    private val onSharePrompt: (GeckoSharePromptRequest) -> Unit = {
+        it.confirm(GeckoSession.PromptDelegate.SharePrompt.Result.FAILURE)
+    },
     private val onDownload: (GeckoDownloadRequest) -> Unit = {},
     private val openNewTabsInCurrentTab: () -> Boolean = { false },
     private val onNewSession: (String) -> GeckoSession? = { null },
@@ -235,6 +492,60 @@ class GeckoSessionController(
             }
         }
         targetSession.promptDelegate = object : GeckoSession.PromptDelegate {
+            override fun onAlertPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.AlertPrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onPrompt(
+                    GeckoPromptRequest.Alert(
+                        GeckoAlertPromptRequest(
+                            title = prompt.title.orEmpty(),
+                            message = prompt.message.orEmpty(),
+                            onDismissResponse = { result.complete(prompt.dismiss()) }
+                        )
+                    )
+                )
+                return result
+            }
+
+            override fun onButtonPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.ButtonPrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onPrompt(
+                    GeckoPromptRequest.Button(
+                        GeckoButtonPromptRequest(
+                            title = prompt.title.orEmpty(),
+                            message = prompt.message.orEmpty(),
+                            onConfirmResponse = { button -> result.complete(prompt.confirm(button)) },
+                            onDismissResponse = { result.complete(prompt.dismiss()) }
+                        )
+                    )
+                )
+                return result
+            }
+
+            override fun onTextPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.TextPrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onPrompt(
+                    GeckoPromptRequest.Text(
+                        GeckoTextPromptRequest(
+                            title = prompt.title.orEmpty(),
+                            message = prompt.message.orEmpty(),
+                            defaultValue = prompt.defaultValue.orEmpty(),
+                            onConfirmResponse = { value -> result.complete(prompt.confirm(value)) },
+                            onDismissResponse = { result.complete(prompt.dismiss()) }
+                        )
+                    )
+                )
+                return result
+            }
+
             override fun onAuthPrompt(
                 session: GeckoSession,
                 prompt: GeckoSession.PromptDelegate.AuthPrompt
@@ -253,6 +564,250 @@ class GeckoSessionController(
                         onDismissResponse = {
                             result.complete(prompt.dismiss())
                         }
+                    )
+                )
+                return result
+            }
+
+            override fun onChoicePrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.ChoicePrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onPrompt(
+                    GeckoPromptRequest.Choice(
+                        GeckoChoicePromptRequest(
+                            title = prompt.title.orEmpty(),
+                            message = prompt.message.orEmpty(),
+                            choices = prompt.choices.toPromptItems(),
+                            multiple = prompt.type == GeckoSession.PromptDelegate.ChoicePrompt.Type.MULTIPLE,
+                            onConfirmResponse = { ids ->
+                                if (prompt.type == GeckoSession.PromptDelegate.ChoicePrompt.Type.MULTIPLE) {
+                                    result.complete(prompt.confirm(ids.toTypedArray()))
+                                } else {
+                                    result.complete(prompt.confirm(ids.firstOrNull().orEmpty()))
+                                }
+                            },
+                            onDismissResponse = { result.complete(prompt.dismiss()) }
+                        )
+                    )
+                )
+                return result
+            }
+
+            override fun onBeforeUnloadPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.BeforeUnloadPrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onPrompt(
+                    GeckoPromptRequest.Confirm(
+                        GeckoConfirmPromptRequest(
+                            title = prompt.title.orEmpty().ifBlank {
+                                appContext.getString(R.string.prompt_title_leave_site)
+                            },
+                            message = appContext.getString(R.string.prompt_message_leave_site),
+                            confirmLabel = appContext.getString(R.string.prompt_action_leave),
+                            dismissLabel = appContext.getString(R.string.prompt_action_stay),
+                            onConfirmResponse = { result.complete(prompt.confirm(AllowOrDeny.ALLOW)) },
+                            onDismissResponse = { result.complete(prompt.confirm(AllowOrDeny.DENY)) }
+                        )
+                    )
+                )
+                return result
+            }
+
+            override fun onRepostConfirmPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.RepostConfirmPrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onPrompt(
+                    GeckoPromptRequest.Confirm(
+                        GeckoConfirmPromptRequest(
+                            title = prompt.title.orEmpty().ifBlank {
+                                appContext.getString(R.string.prompt_title_resend_form)
+                            },
+                            message = appContext.getString(R.string.prompt_message_resend_form),
+                            confirmLabel = appContext.getString(R.string.prompt_action_resend),
+                            dismissLabel = appContext.getString(R.string.prompt_action_cancel),
+                            onConfirmResponse = { result.complete(prompt.confirm(AllowOrDeny.ALLOW)) },
+                            onDismissResponse = { result.complete(prompt.confirm(AllowOrDeny.DENY)) }
+                        )
+                    )
+                )
+                return result
+            }
+
+            override fun onColorPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.ColorPrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onPrompt(
+                    GeckoPromptRequest.Color(
+                        GeckoColorPromptRequest(
+                            title = prompt.title.orEmpty(),
+                            defaultValue = prompt.defaultValue.orEmpty(),
+                            predefinedValues = prompt.predefinedValues ?: emptyArray(),
+                            onConfirmResponse = { value -> result.complete(prompt.confirm(value)) },
+                            onDismissResponse = { result.complete(prompt.dismiss()) }
+                        )
+                    )
+                )
+                return result
+            }
+
+            override fun onDateTimePrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.DateTimePrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onPrompt(
+                    GeckoPromptRequest.DateTime(
+                        GeckoDateTimePromptRequest(
+                            title = prompt.title.orEmpty(),
+                            defaultValue = prompt.defaultValue.orEmpty(),
+                            minValue = prompt.minValue.orEmpty(),
+                            maxValue = prompt.maxValue.orEmpty(),
+                            stepValue = prompt.stepValue.orEmpty(),
+                            onConfirmResponse = { value -> result.complete(prompt.confirm(value)) },
+                            onDismissResponse = { result.complete(prompt.dismiss()) }
+                        )
+                    )
+                )
+                return result
+            }
+
+            override fun onFilePrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.FilePrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onFilePrompt(
+                    GeckoFilePromptRequest(
+                        title = prompt.title.orEmpty(),
+                        mimeTypes = prompt.mimeTypes ?: emptyArray(),
+                        multiple = prompt.type == GeckoSession.PromptDelegate.FilePrompt.Type.MULTIPLE,
+                        onConfirmResponse = { uris ->
+                            if (prompt.type == GeckoSession.PromptDelegate.FilePrompt.Type.MULTIPLE) {
+                                result.complete(prompt.confirm(appContext, uris))
+                            } else {
+                                val uri = uris.firstOrNull()
+                                if (uri == null) {
+                                    result.complete(prompt.dismiss())
+                                } else {
+                                    result.complete(prompt.confirm(appContext, uri))
+                                }
+                            }
+                        },
+                        onDismissResponse = { result.complete(prompt.dismiss()) }
+                    )
+                )
+                return result
+            }
+
+            override fun onFolderUploadPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.FolderUploadPrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onPrompt(
+                    GeckoPromptRequest.Confirm(
+                        GeckoConfirmPromptRequest(
+                            title = prompt.title.orEmpty().ifBlank {
+                                appContext.getString(R.string.prompt_title_upload_folder)
+                            },
+                            message = prompt.directoryName.takeIfNotBlank()
+                                ?.let { appContext.getString(R.string.prompt_message_upload_folder_named, it) }
+                                ?: appContext.getString(R.string.prompt_message_upload_folder),
+                            confirmLabel = appContext.getString(R.string.prompt_action_allow),
+                            dismissLabel = appContext.getString(R.string.prompt_action_cancel),
+                            onConfirmResponse = { result.complete(prompt.confirm(AllowOrDeny.ALLOW)) },
+                            onDismissResponse = { result.complete(prompt.confirm(AllowOrDeny.DENY)) }
+                        )
+                    )
+                )
+                return result
+            }
+
+            override fun onPopupPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.PopupPrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onPrompt(
+                    GeckoPromptRequest.Confirm(
+                        GeckoConfirmPromptRequest(
+                            title = prompt.title.orEmpty().ifBlank {
+                                appContext.getString(R.string.prompt_title_open_popup)
+                            },
+                            message = prompt.targetUri.takeIfNotBlank()
+                                ?.let { appContext.getString(R.string.prompt_message_open_popup_url, it) }
+                                ?: appContext.getString(R.string.prompt_message_open_popup),
+                            confirmLabel = appContext.getString(R.string.prompt_action_open),
+                            dismissLabel = appContext.getString(R.string.prompt_action_block),
+                            onConfirmResponse = { result.complete(prompt.confirm(AllowOrDeny.ALLOW)) },
+                            onDismissResponse = { result.complete(prompt.confirm(AllowOrDeny.DENY)) }
+                        )
+                    )
+                )
+                return result
+            }
+
+            override fun onRedirectPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.RedirectPrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onPrompt(
+                    GeckoPromptRequest.Confirm(
+                        GeckoConfirmPromptRequest(
+                            title = prompt.title.orEmpty().ifBlank {
+                                appContext.getString(R.string.prompt_title_redirect)
+                            },
+                            message = prompt.targetUri.takeIfNotBlank()
+                                ?.let { appContext.getString(R.string.prompt_message_redirect_url, it) }
+                                ?: appContext.getString(R.string.prompt_message_redirect),
+                            confirmLabel = appContext.getString(R.string.prompt_action_continue),
+                            dismissLabel = appContext.getString(R.string.prompt_action_cancel),
+                            onConfirmResponse = { result.complete(prompt.confirm(AllowOrDeny.ALLOW)) },
+                            onDismissResponse = { result.complete(prompt.confirm(AllowOrDeny.DENY)) }
+                        )
+                    )
+                )
+                return result
+            }
+
+            override fun onRequestCertificate(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.CertificateRequest
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onCertificatePrompt(
+                    GeckoCertificatePromptRequest(
+                        title = prompt.title.orEmpty(),
+                        host = prompt.host.orEmpty(),
+                        issuers = prompt.issuers ?: emptyArray(),
+                        onConfirmResponse = { alias -> result.complete(prompt.confirm(alias)) },
+                        onDismissResponse = { result.complete(prompt.dismiss()) }
+                    )
+                )
+                return result
+            }
+
+            override fun onSharePrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.SharePrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                onSharePrompt(
+                    GeckoSharePromptRequest(
+                        title = prompt.title.orEmpty(),
+                        text = prompt.text.orEmpty(),
+                        uri = prompt.uri.orEmpty(),
+                        onConfirmResponse = { value -> result.complete(prompt.confirm(value)) },
+                        onDismissResponse = { result.complete(prompt.dismiss()) }
                     )
                 )
                 return result
@@ -992,6 +1547,26 @@ private fun String.withoutFragment(): String =
 
 private fun String?.takeIfNotBlank(): String? =
     this?.takeIf { it.isNotBlank() }
+
+private fun Array<GeckoSession.PromptDelegate.ChoicePrompt.Choice>.toPromptItems(
+    level: Int = 0
+): List<GeckoChoicePromptItem> =
+    flatMap { choice ->
+        val childItems = choice.items?.toPromptItems(level + 1).orEmpty()
+        if (choice.separator) {
+            childItems
+        } else {
+            listOf(
+                GeckoChoicePromptItem(
+                    id = choice.id.orEmpty(),
+                    label = choice.label.orEmpty(),
+                    disabled = choice.disabled,
+                    selected = choice.selected,
+                    level = level
+                )
+            ) + childItems
+        }
+    }
 
 private fun WebResponse.headerValue(name: String): String? {
     val wanted = name.lowercase()

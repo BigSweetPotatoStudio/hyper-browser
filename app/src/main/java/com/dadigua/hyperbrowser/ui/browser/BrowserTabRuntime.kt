@@ -12,9 +12,13 @@ import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
 import com.dadigua.hyperbrowser.browser.closeBrowserMediaPlaybackOwner
 import com.dadigua.hyperbrowser.gecko.GeckoAuthPromptRequest
+import com.dadigua.hyperbrowser.gecko.GeckoCertificatePromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoContextMenuTarget
 import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
+import com.dadigua.hyperbrowser.gecko.GeckoFilePromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
+import com.dadigua.hyperbrowser.gecko.GeckoPromptRequest
+import com.dadigua.hyperbrowser.gecko.GeckoSharePromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoSessionCloseResult
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.HyperRoute
@@ -159,6 +163,12 @@ internal class BrowserTabRuntime private constructor(
             onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
             onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
             onAuthPrompt: (GeckoAuthPromptRequest) -> Unit = { it.dismiss() },
+            onPrompt: (GeckoPromptRequest) -> Unit = { it.dismiss() },
+            onFilePrompt: (GeckoFilePromptRequest) -> Unit = { it.dismiss() },
+            onCertificatePrompt: (GeckoCertificatePromptRequest) -> Unit = { it.dismiss() },
+            onSharePrompt: (GeckoSharePromptRequest) -> Unit = {
+                it.confirm(GeckoSession.PromptDelegate.SharePrompt.Result.FAILURE)
+            },
             onDownload: (GeckoDownloadRequest) -> Unit = {},
             openNewTabsInCurrentTab: () -> Boolean = { false },
             onNewSession: (String) -> GeckoSession? = { null },
@@ -181,6 +191,10 @@ internal class BrowserTabRuntime private constructor(
                     onHyperBridgeMessage = onHyperBridgeMessage,
                     onPageContextMenu = onPageContextMenu,
                     onAuthPrompt = onAuthPrompt,
+                    onPrompt = onPrompt,
+                    onFilePrompt = onFilePrompt,
+                    onCertificatePrompt = onCertificatePrompt,
+                    onSharePrompt = onSharePrompt,
                     onDownload = onDownload,
                     openNewTabsInCurrentTab = openNewTabsInCurrentTab,
                     onNewSession = onNewSession,
@@ -240,6 +254,12 @@ internal class BrowserTabRuntime private constructor(
             onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
             onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
             onAuthPrompt: (GeckoAuthPromptRequest) -> Unit = { it.dismiss() },
+            onPrompt: (GeckoPromptRequest) -> Unit = { it.dismiss() },
+            onFilePrompt: (GeckoFilePromptRequest) -> Unit = { it.dismiss() },
+            onCertificatePrompt: (GeckoCertificatePromptRequest) -> Unit = { it.dismiss() },
+            onSharePrompt: (GeckoSharePromptRequest) -> Unit = {
+                it.confirm(GeckoSession.PromptDelegate.SharePrompt.Result.FAILURE)
+            },
             onDownload: (GeckoDownloadRequest) -> Unit = {}
         ): BrowserTabRuntime {
             val id = UUID.randomUUID().toString()
@@ -257,6 +277,10 @@ internal class BrowserTabRuntime private constructor(
                         onHyperBridgeMessage = onHyperBridgeMessage,
                         onPageContextMenu = onPageContextMenu,
                         onAuthPrompt = onAuthPrompt,
+                        onPrompt = onPrompt,
+                        onFilePrompt = onFilePrompt,
+                        onCertificatePrompt = onCertificatePrompt,
+                        onSharePrompt = onSharePrompt,
                         onDownload = onDownload,
                         mediaNotificationIntent = mediaLaunchIntent,
                         mediaOwnerInfo = {
@@ -287,6 +311,10 @@ internal class BrowserTabRuntime private constructor(
                     onHyperBridgeMessage = onHyperBridgeMessage,
                     onPageContextMenu = onPageContextMenu,
                     onAuthPrompt = onAuthPrompt,
+                    onPrompt = onPrompt,
+                    onFilePrompt = onFilePrompt,
+                    onCertificatePrompt = onCertificatePrompt,
+                    onSharePrompt = onSharePrompt,
                     onDownload = onDownload,
                     mediaNotificationIntent = BrowserActivity.selectTabIntent(app, id),
                     mediaOwnerInfo = {
@@ -316,6 +344,12 @@ internal class BrowserTabRuntime private constructor(
             onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
             onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
             onAuthPrompt: (GeckoAuthPromptRequest) -> Unit = { it.dismiss() },
+            onPrompt: (GeckoPromptRequest) -> Unit = { it.dismiss() },
+            onFilePrompt: (GeckoFilePromptRequest) -> Unit = { it.dismiss() },
+            onCertificatePrompt: (GeckoCertificatePromptRequest) -> Unit = { it.dismiss() },
+            onSharePrompt: (GeckoSharePromptRequest) -> Unit = {
+                it.confirm(GeckoSession.PromptDelegate.SharePrompt.Result.FAILURE)
+            },
             onDownload: (GeckoDownloadRequest) -> Unit = {},
             openNewTabsInCurrentTab: () -> Boolean = { false },
             onNewSession: (String) -> GeckoSession? = { null },
@@ -344,6 +378,10 @@ internal class BrowserTabRuntime private constructor(
                     onHyperBridgeMessage = onHyperBridgeMessage,
                     onPageContextMenu = onPageContextMenu,
                     onAuthPrompt = onAuthPrompt,
+                    onPrompt = onPrompt,
+                    onFilePrompt = onFilePrompt,
+                    onCertificatePrompt = onCertificatePrompt,
+                    onSharePrompt = onSharePrompt,
                     onDownload = onDownload,
                     openNewTabsInCurrentTab = openNewTabsInCurrentTab,
                     onNewSession = onNewSession,
