@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
 import { readBootstrapData } from "../bootstrap";
+import { t } from "../i18n";
 import type { HistoryItem } from "../hyper-browser";
 
 function HomePage() {
@@ -28,21 +29,21 @@ function HomePage() {
   return (
     <main className="home-main">
       <h1 className="home-title">Hyper Browser</h1>
-      <nav className="shortcut-grid" aria-label="Browser shortcuts">
-        <a className="shortcut" href="hyper://apps">Apps</a>
-        <a className="shortcut" href="hyper://bookmarks">Bookmarks</a>
-        <a className="shortcut" href="hyper://history">History</a>
+      <nav className="shortcut-grid" aria-label={t("home.shortcutsLabel")}>
+        <a className="shortcut" href="hyper://apps">{t("home.apps")}</a>
+        <a className="shortcut" href="hyper://bookmarks">{t("home.bookmarks")}</a>
+        <a className="shortcut" href="hyper://history">{t("home.history")}</a>
         <button className="shortcut" type="button" onClick={() => window.hyperBrowser.showExtensions()}>
-          Extensions
+          {t("home.extensions")}
         </button>
       </nav>
-      <p className="section-title">Recent</p>
+      <p className="section-title">{t("home.recent")}</p>
       {failed ? (
-        <div className="empty">最近访问记录暂时不可用。</div>
+        <div className="empty">{t("home.recentFailed")}</div>
       ) : recent === null ? (
-        <div className="empty">正在加载最近访问记录...</div>
+        <div className="empty">{t("home.recentLoading")}</div>
       ) : items.length === 0 ? (
-        <div className="empty">最近访问记录在历史页中管理。</div>
+        <div className="empty">{t("home.recentEmpty")}</div>
       ) : (
         <div className="recent-list">
           {items.map((entry) => (

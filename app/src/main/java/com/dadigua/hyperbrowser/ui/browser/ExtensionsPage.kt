@@ -30,10 +30,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
 
@@ -77,7 +79,7 @@ internal fun ExtensionsPage(
                     Text("‹", fontSize = ExtensionActionIconSize, color = Color(0xFF202124))
                 }
                 Text(
-                    "扩展",
+                    stringResource(R.string.extensions_title),
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
@@ -98,7 +100,7 @@ internal fun ExtensionsPage(
                 modifier = Modifier.padding(horizontal = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Find more add-ons", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.extensions_find_more), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier
@@ -117,20 +119,20 @@ internal fun ExtensionsPage(
                             modifier = Modifier.weight(1f),
                             decorationBox = { inner ->
                                 if (query.isBlank()) {
-                                    Text("搜索扩展", color = Color(0xFF6F737B), style = MaterialTheme.typography.titleMedium)
+                                    Text(stringResource(R.string.extensions_search_placeholder), color = Color(0xFF6F737B), style = MaterialTheme.typography.titleMedium)
                                 }
                                 inner()
                             }
                         )
                     }
-                    Button(onClick = onSearch) { Text("Search") }
+                    Button(onClick = onSearch) { Text(stringResource(R.string.common_action_search)) }
                 }
                 message?.let { Text(it, color = Color(0xFF126D6A)) }
             }
         }
         item {
             Text(
-                "Installed add-ons",
+                stringResource(R.string.extensions_installed_title),
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
@@ -139,7 +141,7 @@ internal fun ExtensionsPage(
         if (installed.isEmpty()) {
             item {
                 Text(
-                    "还没有安装扩展。",
+                    stringResource(R.string.extensions_empty_installed),
                     modifier = Modifier.padding(horizontal = 18.dp),
                     color = Color(0xFF5F6368)
                 )
@@ -157,7 +159,7 @@ internal fun ExtensionsPage(
         if (installableResults.isNotEmpty()) {
             item {
                 Text(
-                    "Recommended from AMO",
+                    stringResource(R.string.extensions_recommended_from_amo),
                     modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
@@ -174,7 +176,7 @@ internal fun ExtensionsPage(
         }
         item {
             Text(
-                "Search uses the Android AMO catalog. Installed add-ons appear in the browser menu like Iceraven's extensions section.",
+                stringResource(R.string.extensions_amo_catalog_note),
                 modifier = Modifier.padding(horizontal = 18.dp),
                 color = Color(0xFF5F6368),
                 style = MaterialTheme.typography.bodySmall
@@ -213,15 +215,15 @@ private fun ExtensionSummaryCard(
                 Text("E", fontWeight = FontWeight.Bold, fontSize = 22.sp, color = Color(0xFF202124))
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("Extensions", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.extensions_summary_title), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "$enabledCount enabled · $installedCount installed",
+                    stringResource(R.string.extensions_summary_counts, enabledCount, installedCount),
                     color = Color(0xFF5F6368),
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
             TextButton(onClick = onSearch) {
-                Text("Refresh")
+                Text(stringResource(R.string.common_action_refresh))
             }
         }
     }
@@ -255,16 +257,19 @@ private fun InstalledExtensionRow(
                 }
                 Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
                     Text(extension.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${extension.version} · ${if (extension.enabled) "Enabled" else "Disabled"}", color = Color(0xFF5F6368))
+                    Text(
+                        "${extension.version} · ${if (extension.enabled) stringResource(R.string.extensions_status_enabled) else stringResource(R.string.extensions_status_disabled)}",
+                        color = Color(0xFF5F6368)
+                    )
                 }
             }
             amoListing?.let { listing ->
                 val updateAvailable = listing.version != extension.version
                 Text(
                     if (updateAvailable) {
-                        "AMO update available: ${listing.version}"
+                        stringResource(R.string.extensions_amo_update_available, listing.version)
                     } else {
-                        "AMO latest: ${listing.version}"
+                        stringResource(R.string.extensions_amo_latest, listing.version)
                     },
                     color = if (updateAvailable) Color(0xFF126D6A) else Color(0xFF5F6368),
                     style = MaterialTheme.typography.bodyMedium,
@@ -281,9 +286,9 @@ private fun InstalledExtensionRow(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = onToggle) {
-                    Text(if (extension.enabled) "Disable" else "Enable")
+                    Text(if (extension.enabled) stringResource(R.string.common_action_disable) else stringResource(R.string.common_action_enable))
                 }
-                TextButton(onClick = onUninstall) { Text("Uninstall") }
+                TextButton(onClick = onUninstall) { Text(stringResource(R.string.extensions_uninstall)) }
             }
         }
     }
@@ -317,11 +322,11 @@ private fun AddonResultRow(
                 }
                 Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
                     Text(addon.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("Version ${addon.version} · ${addon.userCount} users", color = Color(0xFF5F6368))
+                    Text(stringResource(R.string.extensions_version_users, addon.version, addon.userCount), color = Color(0xFF5F6368))
                 }
             }
             Text(
-                if (addon.permissions.isEmpty()) "No declared permissions" else addon.permissions.take(5).joinToString(", "),
+                if (addon.permissions.isEmpty()) stringResource(R.string.extensions_no_permissions) else addon.permissions.take(5).joinToString(", "),
                 color = Color(0xFF5F6368),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
@@ -332,9 +337,9 @@ private fun AddonResultRow(
             ) {
                 Text(
                     when {
-                        installed -> "Installed"
-                        installing -> "Installing..."
-                        else -> "Add"
+                        installed -> stringResource(R.string.extensions_installed)
+                        installing -> stringResource(R.string.extensions_installing)
+                        else -> stringResource(R.string.common_action_add)
                     }
                 )
             }

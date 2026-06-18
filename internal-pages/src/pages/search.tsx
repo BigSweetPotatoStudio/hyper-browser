@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
 import { readHashParam } from "../bootstrap";
+import { t } from "../i18n";
 import type { SearchSuggestionItem } from "../hyper-browser";
 
 function SearchPage() {
@@ -45,7 +46,7 @@ function SearchPage() {
   return (
     <main className="omnibox-page">
       <form className="omnibox-bar" autoComplete="off" onSubmit={submit}>
-        <button className="back" type="button" aria-label="Back" onClick={() => window.history.back()}>‹</button>
+        <button className="back" type="button" aria-label={t("common.back")} onClick={() => window.history.back()}>‹</button>
         <div className="omnibox-input-wrap">
           <input
             ref={inputRef}
@@ -53,25 +54,25 @@ function SearchPage() {
             name="q"
             type="search"
             inputMode="search"
-            placeholder="搜索或输入网址"
+            placeholder={t("search.placeholder")}
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
           />
           {query && (
-            <button className="clear-query" type="button" aria-label="Clear" onClick={() => setQuery("")}>×</button>
+            <button className="clear-query" type="button" aria-label={t("common.clear")} onClick={() => setQuery("")}>×</button>
           )}
         </div>
-        <button className="go-button" type="submit">Go</button>
+        <button className="go-button" type="submit">{t("search.go")}</button>
       </form>
 
       <section className="suggestion-section">
-        <h2>书签和历史记录</h2>
+        <h2>{t("search.heading")}</h2>
         {failed ? (
-          <div className="empty">建议暂时不可用。</div>
+          <div className="empty">{t("search.failed")}</div>
         ) : query.trim() === "" ? (
-          <div className="empty">输入关键词、网址或页面标题。</div>
+          <div className="empty">{t("search.emptyQuery")}</div>
         ) : matches.length === 0 ? (
-          <div className="empty">没有匹配记录。</div>
+          <div className="empty">{t("search.noMatches")}</div>
         ) : (
           <div className="suggestion-list">
             {matches.map((item) => (

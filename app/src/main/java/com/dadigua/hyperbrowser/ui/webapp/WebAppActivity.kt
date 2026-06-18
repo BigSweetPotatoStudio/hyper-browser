@@ -40,11 +40,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.browser.DownloadHandler
 import com.dadigua.hyperbrowser.browser.DownloadStore
+import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
@@ -64,11 +66,17 @@ import com.dadigua.hyperbrowser.ui.browser.BrowserActivity
 import com.dadigua.hyperbrowser.ui.browser.GeckoPromptDialog
 import com.dadigua.hyperbrowser.ui.browser.PageContextMenuDialog
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
+import com.dadigua.hyperbrowser.ui.withAppLocale
 import kotlinx.coroutines.launch
 import org.mozilla.geckoview.GeckoSession
 
 class WebAppActivity : ComponentActivity() {
     private var activeWebAppId: String? = null
+
+    override fun attachBaseContext(newBase: Context) {
+        val localePreference = BrowserProfileStore.loadBrowserSettings(newBase).localePreference
+        super.attachBaseContext(newBase.withAppLocale(localePreference))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,11 +85,12 @@ class WebAppActivity : ComponentActivity() {
             ?: return finish()
         activeWebAppId = webAppId
         setContent {
+            val app = application as HyperBrowserApp
             HyperBrowserTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     WebAppScreen(
-                        activity = this,
-                        app = application as HyperBrowserApp,
+                        activity = this@WebAppActivity,
+                        app = app,
                         webAppId = webAppId
                     )
                 }
@@ -142,6 +151,13 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
     var pendingFilePrompt by remember { mutableStateOf<GeckoFilePromptRequest?>(null) }
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
+    val downloadingText = stringResource(R.string.download_toast_downloading)
+    val downloadFailedText = stringResource(R.string.download_toast_failed)
+    val unableOpenLinkText = stringResource(R.string.browser_toast_unable_open_link)
+    val imageCopiedText = stringResource(R.string.browser_toast_image_url_copied)
+    val linkCopiedText = stringResource(R.string.browser_toast_link_copied)
+    val openImageInBrowserLabel = stringResource(R.string.browser_context_open_image_browser)
+    val openLinkInBrowserLabel = stringResource(R.string.browser_context_open_link_browser)
     val downloadStore = remember { DownloadStore(app) }
     val downloadHandler = remember { DownloadHandler(app, downloadStore) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -183,10 +199,10 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
     fun enqueueUrlDownload(url: String) {
         requestDownloadNotificationsIfNeeded()
         scope.launch {
-            showToast("Downloading...")
+            showToast(downloadingText)
             runCatching { downloadHandler.enqueueUrlDownload(url) }
-                .onSuccess { showToast("Download queued: ${it.name}") }
-                .onFailure { showToast(it.message ?: "Download failed.") }
+                .onSuccess { showToast(activity.getString(R.string.download_toast_queued, it.name)) }
+                .onFailure { showToast(it.message ?: downloadFailedText) }
         }
     }
 
@@ -201,7 +217,7 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
     fun openInBrowserNewTab(url: String) {
         pageContextMenu = null
         runCatching { activity.startActivity(BrowserActivity.newTabIntent(activity, url)) }
-            .onFailure { showToast(it.message ?: "Unable to open link.") }
+            .onFailure { showToast(it.message ?: unableOpenLinkText) }
     }
 
     fun handleFilePrompt(request: GeckoFilePromptRequest) {
@@ -269,7 +285,7 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
 
     val current = webApp
     if (current == null) {
-        Text("WebApp not found", modifier = Modifier.padding(16.dp))
+        Text(stringResource(R.string.webapp_not_found), modifier = Modifier.padding(16.dp))
         return
     }
 
@@ -346,11 +362,11 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
                         enqueueUrlDownload(url)
                     },
                     onOpenImage = ::openInBrowserNewTab,
-                    onCopyImage = { url -> copyContextUrl("image", url, "图片地址已复制") },
+                    onCopyImage = { url -> copyContextUrl("image", url, imageCopiedText) },
                     onOpenLink = ::openInBrowserNewTab,
-                    onCopyLink = { url -> copyContextUrl("link", url, "链接已复制") },
-                    openImageLabel = "在浏览器中打开图片",
-                    openLinkLabel = "在浏览器中打开链接"
+                    onCopyLink = { url -> copyContextUrl("link", url, linkCopiedText) },
+                    openImageLabel = openImageInBrowserLabel,
+                    openLinkLabel = openLinkInBrowserLabel
                 )
             }
             authPrompt?.let { request ->

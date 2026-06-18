@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
 import { readBootstrapData } from "../bootstrap";
+import { t } from "../i18n";
 import type { HistoryItem } from "../hyper-browser";
 
 function HistoryPage() {
@@ -33,27 +34,27 @@ function HistoryPage() {
   return (
     <div className="page">
       <header className="chrome-header">
-        <a className="back" href="hyper://home" aria-label="Back">‹</a>
-        <h1 className="chrome-title">历史记录</h1>
-        {items.length > 0 && <button className="clear" type="button" onClick={clear}>清空</button>}
+        <a className="back" href="hyper://home" aria-label={t("common.back")}>‹</a>
+        <h1 className="chrome-title">{t("history.title")}</h1>
+        {items.length > 0 && <button className="clear" type="button" onClick={clear}>{t("history.clear")}</button>}
       </header>
       <main className="content">
         {failed ? (
-          <div className="empty">历史记录暂时不可用。</div>
+          <div className="empty">{t("history.failed")}</div>
         ) : history === null ? (
-          <div className="empty">正在加载历史记录...</div>
+          <div className="empty">{t("history.loading")}</div>
         ) : items.length === 0 ? (
-          <div className="empty">还没有历史记录。访问过的网页会显示在这里。</div>
+          <div className="empty">{t("history.empty")}</div>
         ) : (
           <>
             <SearchBox
-              label="搜索历史记录"
-              placeholder="搜索标题、网址或时间"
+              label={t("history.searchLabel")}
+              placeholder={t("history.searchPlaceholder")}
               value={query}
               onChange={setQuery}
             />
             {visibleItems.length === 0 ? (
-              <div className="empty">没有匹配的历史记录。</div>
+              <div className="empty">{t("history.noMatches")}</div>
             ) : (
               <div className="list">
                 {visibleItems.map((entry) => (
@@ -72,7 +73,7 @@ function HistoryPage() {
                         <span className="item-meta">{formatVisitTime(entry.visitedAt)}</span>
                       </span>
                     </button>
-                    <button className="icon-button" type="button" aria-label="Remove history entry" onClick={() => remove(entry.url)}>
+                    <button className="icon-button" type="button" aria-label={t("history.removeLabel")} onClick={() => remove(entry.url)}>
                       ×
                     </button>
                   </div>
@@ -103,7 +104,7 @@ function SearchBox(props: {
         onChange={(event) => props.onChange(event.currentTarget.value)}
       />
       {props.value && (
-        <button className="page-search-clear" type="button" aria-label="清除搜索" onClick={() => props.onChange("")}>
+        <button className="page-search-clear" type="button" aria-label={t("common.clear")} onClick={() => props.onChange("")}>
           ×
         </button>
       )}

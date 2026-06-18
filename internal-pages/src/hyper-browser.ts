@@ -48,6 +48,7 @@ type BrowserSettings = {
   dohProviderUrl: string;
   httpsOnlyEnabled: boolean;
   privacyProtectionLevel: "none" | "standard" | "strict";
+  localePreference: "default" | "zh" | "en";
 };
 
 type UpdateAsset = {
@@ -119,6 +120,7 @@ type HyperBrowserApi = {
   updateToolbarPosition(toolbarPosition: BrowserSettings["toolbarPosition"]): Promise<BrowserSettings>;
   updateBackgroundVideoEnhancement(enabled: boolean): Promise<BrowserSettings>;
   updateOpenNewTabsInCurrentTab(enabled: boolean): Promise<BrowserSettings>;
+  updateLocalePreference(localePreference: BrowserSettings["localePreference"]): Promise<BrowserSettings>;
   updatePrivacySettings(settings: Pick<BrowserSettings, "dohEnabled" | "dohProviderUrl" | "httpsOnlyEnabled" | "privacyProtectionLevel">): Promise<BrowserSettings>;
   requestBatteryOptimizationState(): Promise<BatteryOptimizationState>;
   openBatteryOptimizationSettings(): Promise<BatteryOptimizationState>;
@@ -232,6 +234,10 @@ window.hyperBrowser = {
   },
   updateOpenNewTabsInCurrentTab(enabled) {
     return send("settings.openNewTabsInCurrentTab.update", { enabled: enabled ? "true" : "false" })
+      .then((response) => response.data as BrowserSettings);
+  },
+  updateLocalePreference(localePreference) {
+    return send("settings.locale.update", { localePreference })
       .then((response) => response.data as BrowserSettings);
   },
   updatePrivacySettings(settings) {

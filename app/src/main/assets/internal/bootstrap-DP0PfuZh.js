@@ -1,1 +1,0 @@
-function n(){const a=t("data");if(!a)return null;try{const r=JSON.parse(a);return Array.isArray(r)?r:[]}catch{return[]}}function t(a){const r=window.location.hash.startsWith("#")?window.location.hash.slice(1):window.location.hash;return new URLSearchParams(r).get(a)}export{t as a,n as r};

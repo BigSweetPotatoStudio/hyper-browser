@@ -38,6 +38,7 @@ internal fun BrowserSettings.toJson(): JSONObject =
         .put("dohProviderUrl", dohProviderUrl)
         .put("httpsOnlyEnabled", httpsOnlyEnabled)
         .put("privacyProtectionLevel", privacyProtectionLevel)
+        .put("localePreference", localePreference)
 
 internal fun UpdateCheckResult.toJson(): JSONObject =
     JSONObject()

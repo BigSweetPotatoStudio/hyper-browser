@@ -26,6 +26,7 @@ import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
+import com.dadigua.hyperbrowser.ui.localeTagForPreference
 
 data class GeckoPageState(
     val title: String = "",
@@ -872,7 +873,7 @@ class GeckoSessionController(
                     title = when {
                         isHomeUrl(target) -> "Hyper Browser"
                         isSearchUrl(target) -> "Search"
-                        isSettingsUrl(target) -> "设置"
+                        isSettingsUrl(target) -> appContext.getString(R.string.internal_title_settings)
                         isAppsUrl(target) -> "Apps"
                         isBookmarksUrl(target) -> "Bookmarks"
                         isHistoryUrl(target) -> "History"
@@ -1037,11 +1038,11 @@ class GeckoSessionController(
 
     fun loadSearch(query: String = "") {
         lastLoadTarget = SEARCH_URL
-        _state.value = pageStateForUrl(SEARCH_URL).copy(title = "Search")
+        _state.value = pageStateForUrl(SEARCH_URL).copy(title = appContext.getString(R.string.internal_title_search))
         val loadPage = {
             HyperBridge.pageUrl("search.html")?.let { url ->
                 currentRawUrl = url
-                session.loadUri(urlWithHashParams(url, mapOf("q" to query)))
+                session.loadUri(urlWithHashParams(url, mapOf("q" to query, "locale" to currentLocaleTag())))
             }
         }
         if (HyperBridge.pageUrl("search.html") == null) {
@@ -1053,22 +1054,22 @@ class GeckoSessionController(
 
     fun loadSettings() {
         lastLoadTarget = SETTINGS_URL
-        loadInternalPage(SETTINGS_URL, "设置", "settings.html", null)
+        loadInternalPage(SETTINGS_URL, appContext.getString(R.string.internal_title_settings), "settings.html", null)
     }
 
     fun loadApps(appsJson: String? = null) {
         lastLoadTarget = APPS_URL
-        loadInternalPage(APPS_URL, "Apps", "apps.html", appsJson)
+        loadInternalPage(APPS_URL, appContext.getString(R.string.internal_title_apps), "apps.html", appsJson)
     }
 
     fun loadBookmarks(bookmarksJson: String? = null) {
         lastLoadTarget = BOOKMARKS_URL
-        loadInternalPage(BOOKMARKS_URL, "Bookmarks", "bookmarks.html", bookmarksJson)
+        loadInternalPage(BOOKMARKS_URL, appContext.getString(R.string.internal_title_bookmarks), "bookmarks.html", bookmarksJson)
     }
 
     fun loadHistory(historyJson: String? = null) {
         lastLoadTarget = HISTORY_URL
-        loadInternalPage(HISTORY_URL, "History", "history.html", historyJson)
+        loadInternalPage(HISTORY_URL, appContext.getString(R.string.internal_title_history), "history.html", historyJson)
     }
 
     fun goBack() {
@@ -1390,6 +1391,26 @@ class GeckoSessionController(
         }
     }
 
+    private fun assetUrlWithData(assetUrl: String, json: String?): String {
+        val params = mutableMapOf("locale" to currentLocaleTag())
+        if (json != null) params["data"] = json
+        return urlWithHashParams(assetUrl, params)
+    }
+
+    private fun urlWithHashParams(assetUrl: String, params: Map<String, String>): String {
+        val encoded = params
+            .filterValues { it.isNotBlank() }
+            .map { (key, value) ->
+                "${URLEncoder.encode(key, "UTF-8")}=${URLEncoder.encode(value, "UTF-8").replace("+", "%20")}"
+            }
+            .joinToString("&")
+        if (encoded.isBlank()) return assetUrl
+        return "$assetUrl#$encoded"
+    }
+
+    private fun currentLocaleTag(): String =
+        localeTagForPreference(BrowserProfileStore.loadBrowserSettings(appContext).localePreference)
+
     companion object {
         internal const val ABOUT_BLANK_URL = "about:blank"
         const val HOME_URL = "hyper://home"
@@ -1523,22 +1544,6 @@ class GeckoSessionController(
             }
         }
 
-        private fun assetUrlWithData(assetUrl: String, json: String?): String {
-            if (json == null) return assetUrl
-            val encoded = URLEncoder.encode(json, "UTF-8").replace("+", "%20")
-            return "$assetUrl#data=$encoded"
-        }
-
-        private fun urlWithHashParams(assetUrl: String, params: Map<String, String>): String {
-            val encoded = params
-                .filterValues { it.isNotBlank() }
-                .map { (key, value) ->
-                    "${URLEncoder.encode(key, "UTF-8")}=${URLEncoder.encode(value, "UTF-8").replace("+", "%20")}"
-                }
-                .joinToString("&")
-            if (encoded.isBlank()) return assetUrl
-            return "$assetUrl#$encoded"
-        }
     }
 }
 

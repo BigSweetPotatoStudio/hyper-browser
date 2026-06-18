@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
 import { readBootstrapData } from "../bootstrap";
+import { t } from "../i18n";
 import type { WebAppItem } from "../hyper-browser";
 
 function AppsPage() {
@@ -23,18 +24,18 @@ function AppsPage() {
   return (
     <div className="apps-page">
       <header className="apps-header">
-        <a className="back apps-back" href="hyper://home" aria-label="Back">‹</a>
-        <h1>Apps</h1>
+        <a className="back apps-back" href="hyper://home" aria-label={t("common.back")}>‹</a>
+        <h1>{t("apps.title")}</h1>
       </header>
       <main className="apps-content">
         {failed ? (
-          <div className="apps-empty">App 列表暂时不可用。</div>
+          <div className="apps-empty">{t("apps.failed")}</div>
         ) : apps === null ? (
-          <div className="apps-empty">正在加载 App...</div>
+          <div className="apps-empty">{t("apps.loading")}</div>
         ) : items.length === 0 ? (
-          <div className="apps-empty">还没有安装 WebApp。打开网页后从菜单选择 Install as WebApp。</div>
+          <div className="apps-empty">{t("apps.empty")}</div>
         ) : (
-          <div className="apps-grid" aria-label="Installed web apps">
+          <div className="apps-grid" aria-label={t("apps.installedLabel")}>
             {items.map((app) => (
               <AppTile app={app} key={app.id} onMenu={setMenuApp} />
             ))}
@@ -147,9 +148,9 @@ function AppActionSheet(props: {
     <div className="app-menu-scrim" onClick={props.onClose}>
       <div className="app-menu" role="menu" onClick={(event) => event.stopPropagation()}>
         <div className="app-menu-title">{props.app.name || hostLabel(props.app.startUrl)}</div>
-        <button type="button" role="menuitem" onClick={props.onPin}>发送到桌面</button>
-        <button type="button" role="menuitem" onClick={props.onEdit}>修改</button>
-        <button className="danger" type="button" role="menuitem" onClick={props.onDelete}>删除</button>
+        <button type="button" role="menuitem" onClick={props.onPin}>{t("apps.pin")}</button>
+        <button type="button" role="menuitem" onClick={props.onEdit}>{t("common.edit")}</button>
+        <button className="danger" type="button" role="menuitem" onClick={props.onDelete}>{t("common.delete")}</button>
       </div>
     </div>
   );
@@ -173,18 +174,18 @@ function EditAppDialog(props: {
   return (
     <div className="app-menu-scrim">
       <form className="app-edit-dialog" onSubmit={submit}>
-        <h2>修改 WebApp</h2>
+        <h2>{t("apps.editTitle")}</h2>
         <label>
-          <span>名称</span>
+          <span>{t("common.name")}</span>
           <input value={name} onChange={(event) => setName(event.currentTarget.value)} />
         </label>
         <label>
-          <span>URL</span>
+          <span>{t("common.url")}</span>
           <input value={startUrl} inputMode="url" onChange={(event) => setStartUrl(event.currentTarget.value)} />
         </label>
         <div className="app-edit-actions">
-          <button type="button" onClick={props.onClose}>取消</button>
-          <button type="submit">保存</button>
+          <button type="button" onClick={props.onClose}>{t("common.cancel")}</button>
+          <button type="submit">{t("common.save")}</button>
         </div>
       </form>
     </div>

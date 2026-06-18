@@ -33,7 +33,8 @@ data class BrowserSettings(
     val dohEnabled: Boolean = false,
     val dohProviderUrl: String = DEFAULT_DOH_PROVIDER_URL,
     val httpsOnlyEnabled: Boolean = false,
-    val privacyProtectionLevel: String = PRIVACY_PROTECTION_STANDARD
+    val privacyProtectionLevel: String = PRIVACY_PROTECTION_STANDARD,
+    val localePreference: String = LOCALE_DEFAULT
 ) {
     val echEnabled: Boolean
         get() = dohEnabled
@@ -67,6 +68,16 @@ data class BrowserSettings(
         const val PRIVACY_PROTECTION_NONE = "none"
         const val PRIVACY_PROTECTION_STANDARD = "standard"
         const val PRIVACY_PROTECTION_STRICT = "strict"
+        const val LOCALE_DEFAULT = "default"
+        const val LOCALE_CHINESE = "zh"
+        const val LOCALE_ENGLISH = "en"
+
+        fun normalizedLocalePreference(value: String): String =
+            when (value) {
+                LOCALE_CHINESE -> LOCALE_CHINESE
+                LOCALE_ENGLISH -> LOCALE_ENGLISH
+                else -> LOCALE_DEFAULT
+            }
     }
 }
 
@@ -333,6 +344,14 @@ class BrowserProfileStore(context: Context) {
         saveSettings(next)
     }
 
+    fun updateLocalePreference(localePreference: String) {
+        val next = settingsState.value.copy(
+            localePreference = BrowserSettings.normalizedLocalePreference(localePreference)
+        )
+        settingsState.value = next
+        saveSettings(next)
+    }
+
     fun updatePrivacySettings(
         dohEnabled: Boolean,
         dohProviderUrl: String,
@@ -438,6 +457,7 @@ class BrowserProfileStore(context: Context) {
                 .put("dohProviderUrl", settings.dohProviderUrl)
                 .put("httpsOnlyEnabled", settings.httpsOnlyEnabled)
                 .put("privacyProtectionLevel", settings.privacyProtectionLevel)
+                .put("localePreference", settings.localePreference)
                 .put("privacySettingsVersion", CURRENT_PRIVACY_SETTINGS_VERSION)
                 .toString()
         )
@@ -521,7 +541,10 @@ class BrowserProfileStore(context: Context) {
                         BrowserSettings.PRIVACY_PROTECTION_STRICT ->
                             BrowserSettings.PRIVACY_PROTECTION_STRICT
                         else -> BrowserSettings.PRIVACY_PROTECTION_STANDARD
-                    }
+                    },
+                    localePreference = BrowserSettings.normalizedLocalePreference(
+                        item.optString("localePreference", BrowserSettings.LOCALE_DEFAULT)
+                    )
                 )
             }.getOrDefault(BrowserSettings())
         }

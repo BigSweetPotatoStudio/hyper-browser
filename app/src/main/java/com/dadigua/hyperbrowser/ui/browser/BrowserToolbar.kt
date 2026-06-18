@@ -40,6 +40,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.browser.BrowserDownloadEntry
 import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
@@ -51,8 +53,8 @@ private val ToolbarActionButtonSize = 40.dp
 private val ToolbarAddressBarHeight = 44.dp
 private val ToolbarActionIconSize = 24.sp
 
-internal fun browserAddressText(url: String, input: String): String {
-    return url.ifBlank { input.ifBlank { "搜索或输入网址" } }
+internal fun browserAddressText(url: String, input: String, placeholder: String = ""): String {
+    return url.ifBlank { input.ifBlank { placeholder } }
 }
 
 internal enum class AddressSecurityLevel {
@@ -90,7 +92,8 @@ internal fun BrowserToolbar(
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var extensionsExpanded by remember { mutableStateOf(false) }
-    val currentAddress = browserAddressText(pageState.url, input)
+    val placeholder = stringResource(R.string.browser_placeholder_search_or_url)
+    val currentAddress = browserAddressText(pageState.url, input, placeholder)
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val imeVisible = imeBottomPx > 0
@@ -125,7 +128,7 @@ internal fun BrowserToolbar(
                     modifier = Modifier.width(26.dp)
                 )
                 Text(
-                    text = currentAddress.ifBlank { "搜索或输入网址" },
+                    text = currentAddress.ifBlank { placeholder },
                     modifier = Modifier.weight(1f),
                     color = if (currentAddress.isBlank()) Color(0xFF6F737B) else Color(0xFF202124),
                     style = MaterialTheme.typography.titleMedium,

@@ -46,10 +46,12 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.browser.BrowserBookmark
 import com.dadigua.hyperbrowser.browser.BrowserDownloadEntry
 import com.dadigua.hyperbrowser.browser.BrowserHistoryEntry
@@ -63,6 +65,16 @@ private val LibraryActionBarHeight = 48.dp
 private val LibraryActionButtonSize = 40.dp
 private val LibraryActionIconSize = 24.sp
 
+private data class DownloadMetaLabels(
+    val queued: String,
+    val downloading: String,
+    val complete: String,
+    val failed: String,
+    val canceled: String,
+    val unknownSize: String,
+    val unknown: String
+)
+
 @Composable
 internal fun BookmarksPage(
     bookmarks: List<BrowserBookmark>,
@@ -70,17 +82,18 @@ internal fun BookmarksPage(
     onOpen: (String) -> Unit,
     onRemove: (String) -> Unit
 ) {
+    val savedLabel = stringResource(R.string.library_bookmarks_saved)
     BrowserLibraryPage(
-        title = "书签",
-        emptyTitle = "没有书签",
-        emptyBody = "打开网页后，从菜单里点 Bookmark，就会保存到这里。",
+        title = stringResource(R.string.library_bookmarks_title),
+        emptyTitle = stringResource(R.string.library_bookmarks_empty_title),
+        emptyBody = stringResource(R.string.library_bookmarks_empty_body),
         items = bookmarks,
         onBack = onBack,
         onOpen = { onOpen(it.url) },
         onRemove = { onRemove(it.url) },
         itemTitle = { it.title },
         itemUrl = { it.url },
-        itemMeta = { "已保存" },
+        itemMeta = { savedLabel },
         leading = "★",
         action = null
     )
@@ -95,9 +108,9 @@ internal fun HistoryPage(
     onClear: () -> Unit
 ) {
     BrowserLibraryPage(
-        title = "历史记录",
-        emptyTitle = "没有历史记录",
-        emptyBody = "你访问过的页面会显示在这里，也会出现在地址栏建议里。",
+        title = stringResource(R.string.library_history_title),
+        emptyTitle = stringResource(R.string.library_history_empty_title),
+        emptyBody = stringResource(R.string.library_history_empty_body),
         items = history,
         onBack = onBack,
         onOpen = { onOpen(it.url) },
@@ -106,7 +119,7 @@ internal fun HistoryPage(
         itemUrl = { it.url },
         itemMeta = { formatVisitTime(it.visitedAt) },
         leading = "◷",
-        action = if (history.isEmpty()) null else "清空" to onClear
+        action = if (history.isEmpty()) null else stringResource(R.string.common_action_clear) to onClear
     )
 }
 
@@ -153,7 +166,7 @@ internal fun DownloadsPage(
                 Text("‹", fontSize = LibraryActionIconSize, color = Color(0xFF202124))
             }
             Text(
-                "下载内容",
+                stringResource(R.string.library_downloads_title),
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
@@ -161,7 +174,7 @@ internal fun DownloadsPage(
             )
             if (clearableCount > 0) {
                 TextButton(onClick = { pendingClearFinished = true }) {
-                    Text("清理记录")
+                    Text(stringResource(R.string.library_downloads_clear_records))
                 }
             }
         }
@@ -183,8 +196,8 @@ internal fun DownloadsPage(
                     ) {
                         Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(34.dp), tint = Color(0xFF5F6368))
                     }
-                    Text("还没有下载内容", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("下载过的文件会显示在这里。", color = Color(0xFF5F6368))
+                    Text(stringResource(R.string.library_downloads_empty_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.library_downloads_empty_body), color = Color(0xFF5F6368))
                 }
             }
         } else {
@@ -205,7 +218,7 @@ internal fun DownloadsPage(
                                     ClipEntry(ClipData.newPlainText("download_url", entry.sourceUrl))
                                 )
                             }
-                            Toast.makeText(context, "已复制下载地址", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.library_downloads_url_copied), Toast.LENGTH_SHORT).show()
                         },
                         onRemove = {
                             pendingDelete = entry
@@ -235,10 +248,10 @@ internal fun DownloadsPage(
     pendingDelete?.let { entry ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("删除下载") },
+            title = { Text(stringResource(R.string.library_downloads_delete_title)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("是否删除 ${entry.name}？")
+                    Text(stringResource(R.string.library_downloads_delete_message, entry.name))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -247,7 +260,7 @@ internal fun DownloadsPage(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Checkbox(checked = deleteFile, onCheckedChange = { deleteFile = it })
-                        Text("同时删除文件")
+                        Text(stringResource(R.string.library_downloads_delete_file))
                     }
                 }
             },
@@ -258,12 +271,12 @@ internal fun DownloadsPage(
                         pendingDelete = null
                     }
                 ) {
-                    Text("删除")
+                    Text(stringResource(R.string.common_action_delete))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDelete = null }) {
-                    Text("取消")
+                    Text(stringResource(R.string.common_action_cancel))
                 }
             }
         )
@@ -272,9 +285,9 @@ internal fun DownloadsPage(
     if (pendingClearFinished) {
         AlertDialog(
             onDismissRequest = { pendingClearFinished = false },
-            title = { Text("清理下载记录") },
+            title = { Text(stringResource(R.string.library_downloads_clear_title)) },
             text = {
-                Text("从列表移除已完成、失败和已取消的下载记录，不删除已保存的文件；正在下载的项目会保留。")
+                Text(stringResource(R.string.library_downloads_clear_message))
             },
             confirmButton = {
                 TextButton(
@@ -283,12 +296,12 @@ internal fun DownloadsPage(
                         pendingClearFinished = false
                     }
                 ) {
-                    Text("清理")
+                    Text(stringResource(R.string.library_downloads_clear_action))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { pendingClearFinished = false }) {
-                    Text("取消")
+                    Text(stringResource(R.string.common_action_cancel))
                 }
             }
         )
@@ -305,6 +318,15 @@ private fun DownloadRow(
     onRetry: (() -> Unit)?,
     onCancel: (() -> Unit)?
 ) {
+    val downloadMetaLabels = DownloadMetaLabels(
+        queued = stringResource(R.string.download_status_queued),
+        downloading = stringResource(R.string.download_status_downloading),
+        complete = stringResource(R.string.download_status_complete),
+        failed = stringResource(R.string.download_status_failed),
+        canceled = stringResource(R.string.download_status_canceled),
+        unknownSize = stringResource(R.string.download_unknown_size),
+        unknown = stringResource(R.string.download_unknown)
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -341,7 +363,7 @@ private fun DownloadRow(
                 }
             }
             Text(
-                text = downloadMeta(entry),
+                text = downloadMeta(entry, downloadMetaLabels),
                 color = Color(0xFF6F737B),
                 fontSize = 12.sp,
                 maxLines = 1,
@@ -350,16 +372,16 @@ private fun DownloadRow(
         }
         if ((entry.status == DownloadStatus.Failed || entry.status == DownloadStatus.Canceled) && onRetry != null) {
             TextButton(onClick = onRetry) {
-                Text("重试")
+                Text(stringResource(R.string.common_action_retry))
             }
         }
         if ((entry.status == DownloadStatus.Running || entry.status == DownloadStatus.Queued) && onCancel != null) {
             TextButton(onClick = onCancel) {
-                Text("取消")
+                Text(stringResource(R.string.common_action_cancel))
             }
         }
         IconButton(onClick = onRemove) {
-            Icon(Icons.Outlined.Delete, contentDescription = "Remove download")
+            Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.library_downloads_remove_content_description))
         }
     }
 }
@@ -497,26 +519,26 @@ private fun formatVisitTime(timestamp: Long): String {
     return formatter.format(Date(timestamp))
 }
 
-private fun downloadMeta(entry: BrowserDownloadEntry): String {
+private fun downloadMeta(entry: BrowserDownloadEntry, labels: DownloadMetaLabels): String {
     val status = when (entry.status) {
-        DownloadStatus.Queued -> "Queued"
-        DownloadStatus.Running -> "Downloading"
-        DownloadStatus.Completed -> "Complete"
-        DownloadStatus.Failed -> "Failed"
-        DownloadStatus.Canceled -> "Canceled"
+        DownloadStatus.Queued -> labels.queued
+        DownloadStatus.Running -> labels.downloading
+        DownloadStatus.Completed -> labels.complete
+        DownloadStatus.Failed -> labels.failed
+        DownloadStatus.Canceled -> labels.canceled
     }
     val size = when {
-        entry.totalBytes > 0L -> "${formatBytes(entry.bytesDownloaded)} / ${formatBytes(entry.totalBytes)}"
-        entry.bytesDownloaded > 0L -> formatBytes(entry.bytesDownloaded)
-        else -> "Unknown size"
+        entry.totalBytes > 0L -> "${formatBytes(entry.bytesDownloaded, labels.unknown)} / ${formatBytes(entry.totalBytes, labels.unknown)}"
+        entry.bytesDownloaded > 0L -> formatBytes(entry.bytesDownloaded, labels.unknown)
+        else -> labels.unknownSize
     }
     val time = formatVisitTime(entry.completedAt ?: entry.createdAt)
     val error = entry.error?.takeIf { it.isNotBlank() }
     return listOfNotNull(status, size, time, error).joinToString(" · ")
 }
 
-private fun formatBytes(bytes: Long): String {
-    if (bytes < 0L) return "Unknown"
+private fun formatBytes(bytes: Long, unknownLabel: String): String {
+    if (bytes < 0L) return unknownLabel
     val units = listOf("B", "KB", "MB", "GB")
     var value = bytes.toDouble()
     var unitIndex = 0

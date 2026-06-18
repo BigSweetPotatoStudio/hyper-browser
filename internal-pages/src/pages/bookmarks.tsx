@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
 import { readBootstrapData } from "../bootstrap";
+import { t } from "../i18n";
 import type { BookmarkItem } from "../hyper-browser";
 
 function BookmarksPage() {
@@ -41,26 +42,26 @@ function BookmarksPage() {
   return (
     <div className="page">
       <header className="chrome-header">
-        <a className="back" href="hyper://home" aria-label="Back">‹</a>
-        <h1 className="chrome-title">书签</h1>
+        <a className="back" href="hyper://home" aria-label={t("common.back")}>‹</a>
+        <h1 className="chrome-title">{t("bookmarks.title")}</h1>
       </header>
       <main className="content">
         {failed ? (
-          <div className="empty">书签暂时不可用。</div>
+          <div className="empty">{t("bookmarks.failed")}</div>
         ) : bookmarks === null ? (
-          <div className="empty">正在加载书签...</div>
+          <div className="empty">{t("bookmarks.loading")}</div>
         ) : items.length === 0 ? (
-          <div className="empty">还没有书签。打开网页后可以从菜单添加。</div>
+          <div className="empty">{t("bookmarks.empty")}</div>
         ) : (
           <>
             <SearchBox
-              label="搜索书签"
-              placeholder="搜索标题或网址"
+              label={t("bookmarks.searchLabel")}
+              placeholder={t("bookmarks.searchPlaceholder")}
               value={query}
               onChange={setQuery}
             />
             {visibleItems.length === 0 ? (
-              <div className="empty">没有匹配的书签。</div>
+              <div className="empty">{t("bookmarks.noMatches")}</div>
             ) : (
               <div className="list">
                 {visibleItems.map((bookmark) => (
@@ -101,7 +102,7 @@ function SearchBox(props: {
         onChange={(event) => props.onChange(event.currentTarget.value)}
       />
       {props.value && (
-        <button className="page-search-clear" type="button" aria-label="清除搜索" onClick={() => props.onChange("")}>
+        <button className="page-search-clear" type="button" aria-label={t("common.clear")} onClick={() => props.onChange("")}>
           ×
         </button>
       )}
@@ -147,15 +148,15 @@ function BookmarkRow(props: {
           <span className="item-url">{bookmark.url}</span>
         </span>
       </button>
-      <button className="icon-button" type="button" aria-label="Edit bookmark" onClick={props.onEdit}>✎</button>
-      <button className="icon-button" type="button" aria-label="Remove bookmark" onClick={props.onRemove}>×</button>
+      <button className="icon-button" type="button" aria-label={t("bookmarks.editLabel")} onClick={props.onEdit}>✎</button>
+      <button className="icon-button" type="button" aria-label={t("bookmarks.removeLabel")} onClick={props.onRemove}>×</button>
       {props.editing && (
         <form className="editor" onSubmit={submit}>
-          <input value={title} placeholder="标题" onChange={(event) => setTitle(event.currentTarget.value)} />
-          <input value={url} placeholder="URL" inputMode="url" onChange={(event) => setUrl(event.currentTarget.value)} />
+          <input value={title} placeholder={t("bookmarks.titlePlaceholder")} onChange={(event) => setTitle(event.currentTarget.value)} />
+          <input value={url} placeholder={t("common.url")} inputMode="url" onChange={(event) => setUrl(event.currentTarget.value)} />
           <div className="editor-actions">
-            <button className="cancel" type="button" onClick={props.onCancel}>取消</button>
-            <button className="save" type="submit">保存</button>
+            <button className="cancel" type="button" onClick={props.onCancel}>{t("common.cancel")}</button>
+            <button className="save" type="submit">{t("common.save")}</button>
           </div>
         </form>
       )}

@@ -19,8 +19,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.gecko.GeckoContextMenuTarget
 
 @Composable
@@ -32,17 +34,22 @@ internal fun PageContextMenuDialog(
     onCopyImage: (String) -> Unit,
     onOpenLink: (String) -> Unit,
     onCopyLink: (String) -> Unit,
-    openImageLabel: String = "在新标签页打开图片",
-    openLinkLabel: String = "在新标签页打开链接"
+    openImageLabel: String? = null,
+    openLinkLabel: String? = null
 ) {
     val imageUrl = target.imageUrl
     val linkUrl = target.linkUrl?.takeUnless { it == imageUrl }
     val previewUrl = imageUrl ?: target.linkUrl
+    val fallbackTitleImageLink = stringResource(R.string.browser_context_title_image_link)
+    val fallbackTitleImage = stringResource(R.string.browser_context_title_image)
+    val fallbackTitleLink = stringResource(R.string.browser_context_title_link)
+    val resolvedOpenImageLabel = openImageLabel ?: stringResource(R.string.browser_context_open_image_new_tab)
+    val resolvedOpenLinkLabel = openLinkLabel ?: stringResource(R.string.browser_context_open_link_new_tab)
     AlertDialog(
         onDismissRequest = onDismissRequest,
         title = {
             Text(
-                text = target.displayTitle(),
+                text = target.displayTitle(fallbackTitleImageLink, fallbackTitleImage, fallbackTitleLink),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
@@ -63,18 +70,18 @@ internal fun PageContextMenuDialog(
                     if (canDownloadContextUrl(url)) {
                         ContextMenuActionRow(
                             icon = Icons.Outlined.Download,
-                            label = "下载图片",
+                            label = stringResource(R.string.browser_context_download_image),
                             onClick = { onDownloadImage(url) }
                         )
                     }
                     ContextMenuActionRow(
                         icon = Icons.AutoMirrored.Outlined.OpenInNew,
-                        label = openImageLabel,
+                        label = resolvedOpenImageLabel,
                         onClick = { onOpenImage(url) }
                     )
                     ContextMenuActionRow(
                         icon = Icons.Outlined.ContentCopy,
-                        label = "复制图片地址",
+                        label = stringResource(R.string.browser_context_copy_image_url),
                         onClick = { onCopyImage(url) }
                     )
                 }
@@ -84,12 +91,12 @@ internal fun PageContextMenuDialog(
                 linkUrl?.let { url ->
                     ContextMenuActionRow(
                         icon = Icons.AutoMirrored.Outlined.OpenInNew,
-                        label = openLinkLabel,
+                        label = resolvedOpenLinkLabel,
                         onClick = { onOpenLink(url) }
                     )
                     ContextMenuActionRow(
                         icon = Icons.Outlined.ContentCopy,
-                        label = "复制链接",
+                        label = stringResource(R.string.browser_context_copy_link),
                         onClick = { onCopyLink(url) }
                     )
                 }
@@ -122,12 +129,16 @@ private fun ContextMenuActionRow(
     }
 }
 
-private fun GeckoContextMenuTarget.displayTitle(): String =
+private fun GeckoContextMenuTarget.displayTitle(
+    imageLinkLabel: String,
+    imageLabel: String,
+    linkLabel: String
+): String =
     label?.takeIf { it.isNotBlank() }
         ?: when {
-            imageUrl != null && linkUrl != null && imageUrl != linkUrl -> "图片链接"
-            imageUrl != null -> "图片"
-            else -> "链接"
+            imageUrl != null && linkUrl != null && imageUrl != linkUrl -> imageLinkLabel
+            imageUrl != null -> imageLabel
+            else -> linkLabel
         }
 
 private fun canDownloadContextUrl(url: String): Boolean =

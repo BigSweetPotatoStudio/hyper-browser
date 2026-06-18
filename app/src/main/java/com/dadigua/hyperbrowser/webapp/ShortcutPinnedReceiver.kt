@@ -4,12 +4,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
+import com.dadigua.hyperbrowser.R
 
 class ShortcutPinnedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val name = intent.getStringExtra(EXTRA_WEB_APP_NAME).orEmpty()
         val label = if (name.isBlank()) "WebApp" else name
-        Toast.makeText(context, "Shortcut created: $label", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, context.getString(R.string.shortcut_created, label), Toast.LENGTH_SHORT).show()
     }
 
     companion object {

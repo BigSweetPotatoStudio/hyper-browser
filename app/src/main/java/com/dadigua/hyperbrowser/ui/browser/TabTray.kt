@@ -38,11 +38,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.browser.FaviconRepository
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
 
@@ -216,6 +218,8 @@ private fun ChromeTabCard(
     val displayTitle = pageState.title.ifBlank { tab.restoredTitle.orEmpty() }
     val displayUrl = pageState.url.ifBlank { tab.input }
     val showRestorableLabel = shouldShowRestorableLabel(tab.hasController, tab.hasEngineState)
+    val newTabTitle = stringResource(R.string.tabs_new_tab)
+    val openNewTabTitle = stringResource(R.string.tabs_open_new_tab)
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(28.dp),
@@ -239,7 +243,7 @@ private fun ChromeTabCard(
                     size = 30.dp
                 )
                 Text(
-                    displayTitle.ifBlank { "打开新的标签页" },
+                    displayTitle.ifBlank { openNewTabTitle },
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 8.dp)
@@ -280,7 +284,7 @@ private fun ChromeTabCard(
                         horizontalAlignment = Alignment.Start,
                     ) {
                         Text(
-                            displayTitle.ifBlank { "New tab" },
+                            displayTitle.ifBlank { newTabTitle },
                             fontWeight = FontWeight.Bold,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
@@ -319,6 +323,7 @@ private fun ChromeTabListRow(
     val displayTitle = pageState.title.ifBlank { tab.restoredTitle.orEmpty() }
     val displayUrl = pageState.url.ifBlank { tab.input }
     val showRestorableLabel = shouldShowRestorableLabel(tab.hasController, tab.hasEngineState)
+    val newTabTitle = stringResource(R.string.tabs_new_tab)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -340,7 +345,7 @@ private fun ChromeTabListRow(
         )
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                displayTitle.ifBlank { "New tab" },
+                displayTitle.ifBlank { newTabTitle },
                 color = if (selected) Color.White else Color(0xFF202124),
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
@@ -375,7 +380,7 @@ private fun RestorableLabel(
     modifier: Modifier = Modifier
 ) {
     Text(
-        text = "可恢复",
+        text = stringResource(R.string.tabs_restorable),
         modifier = modifier
             .clip(RoundedCornerShape(999.dp))
             .background(if (selected) Color.White.copy(alpha = 0.92f) else Color(0xFFE8F0FE))

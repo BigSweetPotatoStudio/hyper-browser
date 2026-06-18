@@ -34,11 +34,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.browser.BrowserDownloadEntry
 import com.dadigua.hyperbrowser.browser.DownloadStatus
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
@@ -77,14 +79,14 @@ internal fun BrowserMenuPanel(
             onReload = onReload
         )
         MenuGroupBox {
-            BrowserMenuRow(label = "New tab", leadingIconVector = Icons.Outlined.Add, onClick = onNewTab)
+            BrowserMenuRow(label = stringResource(R.string.menu_new_tab), leadingIconVector = Icons.Outlined.Add, onClick = onNewTab)
             BrowserMenuRow(
-                label = if (bookmarked) "Remove bookmark" else "Bookmark this page",
+                label = if (bookmarked) stringResource(R.string.menu_remove_bookmark) else stringResource(R.string.menu_bookmark_page),
                 leadingIconVector = if (bookmarked) Icons.Outlined.BookmarkRemove else Icons.Outlined.BookmarkAdd,
                 onClick = onToggleBookmark
             )
             BrowserMenuRow(
-                label = if (webAppInstalled) "Uninstall WebApp" else "Install as WebApp",
+                label = if (webAppInstalled) stringResource(R.string.menu_uninstall_webapp) else stringResource(R.string.menu_install_webapp),
                 leadingIconVector = if (webAppInstalled) Icons.Outlined.Delete else Icons.AutoMirrored.Outlined.AddToHomeScreen,
                 onClick = onInstall
             )
@@ -99,9 +101,9 @@ internal fun BrowserMenuPanel(
             if (extensionsExpanded) {
                 if (enabledExtensions.isEmpty()) {
                     BrowserMenuRow(
-                        label = "Discover more extensions",
+                        label = stringResource(R.string.menu_discover_more_extensions),
                         leadingIconVector = Icons.Outlined.Add,
-                        description = "Search Android add-ons",
+                        description = stringResource(R.string.menu_search_android_addons),
                         indent = 28.dp,
                         onClick = onShowExtensions
                     )
@@ -114,16 +116,16 @@ internal fun BrowserMenuPanel(
                             leadingIconVector = Icons.Outlined.Extension,
                             description = action?.badgeText?.takeIf { it.isNotBlank() }
                                 ?: extension.version,
-                            trailing = if (action?.enabled == false) "Disabled" else "Settings",
+                            trailing = if (action?.enabled == false) stringResource(R.string.extensions_status_disabled) else stringResource(R.string.menu_extension_settings),
                             indent = 28.dp,
                             onClick = { onExtensionClick(extension) },
                             onTrailingClick = onShowExtensions
                         )
                     }
                     BrowserMenuRow(
-                        label = "Manage extensions",
+                        label = stringResource(R.string.menu_manage_extensions),
                         leadingIconVector = Icons.Outlined.Tune,
-                        description = "$installedExtensionCount installed",
+                        description = stringResource(R.string.menu_installed_count, installedExtensionCount),
                         indent = 28.dp,
                         onClick = onShowExtensions
                     )
@@ -133,16 +135,16 @@ internal fun BrowserMenuPanel(
         MenuGroupBox {
             val activeDownloads = downloads.count { it.status == DownloadStatus.Running || it.status == DownloadStatus.Queued }
             BrowserMenuRow(
-                label = "Downloads",
+                label = stringResource(R.string.menu_downloads),
                 leadingIconVector = Icons.Outlined.Download,
                 description = if (activeDownloads > 0) {
-                    "$activeDownloads downloading"
+                    stringResource(R.string.menu_downloading_count, activeDownloads)
                 } else {
-                    "${downloads.size} files"
+                    stringResource(R.string.menu_files_count, downloads.size)
                 },
                 onClick = onShowDownloads
             )
-            BrowserMenuRow(label = "Settings", leadingIconVector = Icons.Outlined.Settings, onClick = onShowSettings)
+            BrowserMenuRow(label = stringResource(R.string.menu_settings), leadingIconVector = Icons.Outlined.Settings, onClick = onShowSettings)
         }
     }
 }
@@ -170,9 +172,9 @@ private fun MenuNavRow(
             .padding(horizontal = 6.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        MenuNavButton(label = "Back", icon = "‹", onClick = onBack, modifier = Modifier.weight(1f))
-        MenuNavButton(label = "Forward", icon = "›", onClick = onForward, modifier = Modifier.weight(1f))
-        MenuNavButton(label = "Reload", icon = "↻", onClick = onReload, modifier = Modifier.weight(1f))
+        MenuNavButton(label = stringResource(R.string.menu_back), icon = "‹", onClick = onBack, modifier = Modifier.weight(1f))
+        MenuNavButton(label = stringResource(R.string.menu_forward), icon = "›", onClick = onForward, modifier = Modifier.weight(1f))
+        MenuNavButton(label = stringResource(R.string.menu_reload), icon = "↻", onClick = onReload, modifier = Modifier.weight(1f))
     }
 }
 
@@ -203,12 +205,12 @@ private fun ExtensionsMenuRow(
     onClick: () -> Unit
 ) {
     BrowserMenuRow(
-        label = "Extensions",
+        label = stringResource(R.string.extensions_title),
         leadingIconVector = Icons.Outlined.Extension,
         description = when {
-            enabledCount > 0 -> "$enabledCount enabled"
-            installedCount > 0 -> "$installedCount installed, none enabled"
-            else -> "No extensions enabled"
+            enabledCount > 0 -> stringResource(R.string.menu_extensions_enabled, enabledCount)
+            installedCount > 0 -> stringResource(R.string.menu_extensions_installed_none_enabled, installedCount)
+            else -> stringResource(R.string.menu_no_extensions_enabled)
         },
         trailing = if (expanded) "⌃" else "$enabledCount  ˅",
         onClick = onClick

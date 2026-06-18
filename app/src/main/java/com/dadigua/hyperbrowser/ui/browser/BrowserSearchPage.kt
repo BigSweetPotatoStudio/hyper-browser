@@ -48,6 +48,7 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.browser.BrowserBookmark
 import com.dadigua.hyperbrowser.browser.BrowserHistoryEntry
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
@@ -87,14 +89,18 @@ internal fun SearchPage(
     val context = LocalContext.current
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
-    val suggestions = remember(queryText, history, bookmarks) {
+    val bookmarkSource = stringResource(R.string.browser_search_source_bookmark)
+    val historySource = stringResource(R.string.browser_search_source_history)
+    val searchPlaceholder = stringResource(R.string.browser_placeholder_search_or_url)
+    val goLabel = stringResource(R.string.common_action_go)
+    val suggestions = remember(queryText, history, bookmarks, bookmarkSource, historySource) {
         val needle = queryText.trim().lowercase()
         if (needle.isBlank()) {
             emptyList()
         } else {
-            (bookmarks.map { SearchSuggestion(it.title, it.url, "书签") } +
+            (bookmarks.map { SearchSuggestion(it.title, it.url, bookmarkSource) } +
                 history.filterNot { GeckoSessionController.isInternalUrl(it.url) }
-                    .map { SearchSuggestion(it.title, it.url, "历史") })
+                    .map { SearchSuggestion(it.title, it.url, historySource) })
                 .distinctBy { it.url }
                 .filter {
                     it.title.lowercase().contains(needle) ||
@@ -153,7 +159,7 @@ internal fun SearchPage(
                         .padding(horizontal = 6.dp),
                     decorationBox = { inner ->
                         if (queryText.isBlank()) {
-                            Text("搜索或输入网址", color = Color(0xFF6F737B), style = MaterialTheme.typography.titleMedium)
+                            Text(searchPlaceholder, color = Color(0xFF6F737B), style = MaterialTheme.typography.titleMedium)
                         }
                         inner()
                     }
@@ -171,7 +177,7 @@ internal fun SearchPage(
                 }
             }
             TextButton(onClick = { submit() }) {
-                Text("Go", fontWeight = FontWeight.Bold)
+                Text(goLabel, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -212,6 +218,9 @@ private fun CurrentPagePanel(
     onCopy: () -> Unit,
     onEdit: () -> Unit
 ) {
+    val shareLabel = stringResource(R.string.common_action_share)
+    val copyLabel = stringResource(R.string.common_action_copy)
+    val editLabel = stringResource(R.string.common_action_edit)
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
@@ -251,15 +260,15 @@ private fun CurrentPagePanel(
                 )
             }
             CompactActionButton(
-                icon = { Icon(Icons.Outlined.Share, contentDescription = "分享") },
+                icon = { Icon(Icons.Outlined.Share, contentDescription = shareLabel) },
                 onClick = onShare
             )
             CompactActionButton(
-                icon = { Icon(Icons.Outlined.ContentCopy, contentDescription = "复制") },
+                icon = { Icon(Icons.Outlined.ContentCopy, contentDescription = copyLabel) },
                 onClick = onCopy
             )
             CompactActionButton(
-                icon = { Icon(Icons.Outlined.Edit, contentDescription = "编辑") },
+                icon = { Icon(Icons.Outlined.Edit, contentDescription = editLabel) },
                 onClick = onEdit
             )
         }
@@ -306,7 +315,7 @@ private fun SearchSuggestionPanel(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = if (suggestion.source == "书签") "★" else "◷",
+                        text = if (suggestion.source == stringResource(R.string.browser_search_source_bookmark)) "★" else "◷",
                         color = Color(0xFF5F6368),
                         fontSize = 18.sp,
                         modifier = Modifier.width(24.dp)

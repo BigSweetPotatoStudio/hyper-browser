@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -69,6 +70,7 @@ import com.dadigua.hyperbrowser.gecko.HyperCommand
 import com.dadigua.hyperbrowser.gecko.HyperRoute
 import com.dadigua.hyperbrowser.ui.FullscreenSystemBarsEffect
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
+import com.dadigua.hyperbrowser.ui.withAppLocale
 import com.dadigua.hyperbrowser.ui.webapp.WebAppActivity
 import com.dadigua.hyperbrowser.update.AppUpdateManager
 import com.dadigua.hyperbrowser.update.AvailableUpdate
@@ -92,6 +94,11 @@ import java.util.UUID
 class BrowserActivity : ComponentActivity() {
     private val externalIntents = MutableSharedFlow<ExternalBrowserIntent>(extraBufferCapacity = 1)
 
+    override fun attachBaseContext(newBase: Context) {
+        val localePreference = BrowserProfileStore.loadBrowserSettings(newBase).localePreference
+        super.attachBaseContext(newBase.withAppLocale(localePreference))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val initialIntent = intent.toExternalBrowserIntent()
@@ -101,10 +108,14 @@ class BrowserActivity : ComponentActivity() {
             GeckoSessionController.HOME_URL
         }
         setContent {
+            val app = application as HyperBrowserApp
+            val profileStore = remember { BrowserProfileStore(app) }
             HyperBrowserTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     BrowserScreen(
-                        app = application as HyperBrowserApp,
+                        activity = this@BrowserActivity,
+                        app = app,
+                        profileStore = profileStore,
                         initialUrl = initialUrl,
                         initialDownloadUrl = initialIntent?.url?.takeIf { initialIntent.download },
                         initialShowDownloads = initialIntent?.showDownloads == true,
@@ -173,7 +184,9 @@ private const val TAB_THUMBNAIL_PAGE_STOP_REFRESH_DELAY_MS = 700L
 
 @Composable
 private fun BrowserScreen(
+    activity: BrowserActivity,
     app: HyperBrowserApp,
+    profileStore: BrowserProfileStore,
     initialUrl: String,
     initialDownloadUrl: String?,
     initialShowDownloads: Boolean,
@@ -186,7 +199,8 @@ private fun BrowserScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val clipboard = LocalClipboard.current
     val focusManager = LocalFocusManager.current
-    val profileStore = remember { BrowserProfileStore(app) }
+    val imageCopiedText = stringResource(R.string.browser_toast_image_url_copied)
+    val linkCopiedText = stringResource(R.string.browser_toast_link_copied)
     val faviconStore = remember { FaviconRepository(app) }
     val backupManager = remember { BrowserBackupManager(profileStore, app.webApps, faviconStore) }
     val downloadStore = remember { DownloadStore(app) }
@@ -212,19 +226,19 @@ private fun BrowserScreen(
     fun enqueueUrlDownload(url: String) {
         requestDownloadNotificationsIfNeeded()
         scope.launch {
-            message = "Downloading..."
+            message = context.getString(R.string.download_toast_downloading)
             runCatching { downloadHandler.enqueueUrlDownload(url) }
-                .onSuccess { message = "Download queued: ${it.name}" }
-                .onFailure { message = it.message ?: "Download failed." }
+                .onSuccess { message = context.getString(R.string.download_toast_queued, it.name) }
+                .onFailure { message = it.message ?: context.getString(R.string.download_toast_failed) }
         }
     }
     fun saveGeckoDownload(request: GeckoDownloadRequest) {
         requestDownloadNotificationsIfNeeded()
         scope.launch {
-            message = "Saving ${request.fileName}..."
+            message = context.getString(R.string.download_toast_saving, request.fileName)
             runCatching { downloadHandler.saveResponse(request, downloadHandler.canPostNotifications()) }
-                .onSuccess { message = "Download queued: ${it.name}" }
-                .onFailure { message = it.message ?: "Download failed." }
+                .onSuccess { message = context.getString(R.string.download_toast_queued, it.name) }
+                .onFailure { message = it.message ?: context.getString(R.string.download_toast_failed) }
         }
     }
 
@@ -242,18 +256,18 @@ private fun BrowserScreen(
 
     fun retryDownload(entry: BrowserDownloadEntry) {
         scope.launch {
-            message = "Retrying ${entry.name}..."
+            message = context.getString(R.string.download_retrying, entry.name)
             runCatching { downloadHandler.retry(entry) }
-                .onSuccess { message = "Download queued: ${it.name}" }
-                .onFailure { message = it.message ?: "Unable to retry download." }
+                .onSuccess { message = context.getString(R.string.download_toast_queued, it.name) }
+                .onFailure { message = it.message ?: context.getString(R.string.download_retry_failed) }
         }
     }
 
     fun cancelDownload(entry: BrowserDownloadEntry) {
         scope.launch {
             runCatching { downloadHandler.cancel(entry) }
-                .onSuccess { message = "Download canceled." }
-                .onFailure { message = it.message ?: "Unable to cancel download." }
+                .onSuccess { message = context.getString(R.string.download_canceled) }
+                .onFailure { message = it.message ?: context.getString(R.string.download_cancel_failed) }
         }
     }
 
@@ -262,12 +276,12 @@ private fun BrowserScreen(
             runCatching { downloadHandler.clearFinishedRecords() }
                 .onSuccess { count ->
                     message = if (count > 0) {
-                        "Cleared $count download records."
+                        context.getString(R.string.library_downloads_cleared_count, count)
                     } else {
-                        "No finished downloads to clear."
+                        context.getString(R.string.library_downloads_none_to_clear)
                     }
                 }
-                .onFailure { message = it.message ?: "Unable to clear download records." }
+                .onFailure { message = it.message ?: context.getString(R.string.library_downloads_clear_failed) }
         }
     }
 
@@ -282,11 +296,11 @@ private fun BrowserScreen(
                 versionCode = update.versionCode,
                 versionName = update.versionName,
                 totalBytes = update.asset.sizeBytes,
-                message = "请先允许 Hyper Browser 安装未知应用。"
+                message = context.getString(R.string.browser_install_unknown_apps_required)
             )
             message = updateDownloadState.message
-            runCatching { context.startActivity(updateManager.installPermissionIntent()) }
-                .onFailure { message = it.message ?: "无法打开安装权限设置。" }
+            runCatching { activity.startActivity(updateManager.installPermissionIntent()) }
+                .onFailure { message = it.message ?: context.getString(R.string.browser_open_install_permission_failed) }
             return updateDownloadState
         }
 
@@ -296,12 +310,12 @@ private fun BrowserScreen(
             versionCode = update.versionCode,
             versionName = update.versionName,
             totalBytes = update.asset.sizeBytes,
-            message = "正在准备更新..."
+            message = context.getString(R.string.update_preparing)
         )
         requestDownloadNotificationsIfNeeded()
-        message = "已开始下载 ${update.versionName}。"
+        message = context.getString(R.string.update_started_version, update.versionName)
 
-        (context as BrowserActivity).lifecycleScope.launch {
+        activity.lifecycleScope.launch {
             runCatching {
                 updateManager.startOrResumeDownload(update)
             }
@@ -312,15 +326,15 @@ private fun BrowserScreen(
                         runCatching { updateManager.createInstallIntentIfReady(update) }
                             .onSuccess { intent ->
                                 if (intent != null) {
-                                    runCatching { context.startActivity(intent) }
-                                        .onFailure { message = it.message ?: "无法打开安装器。" }
+                                    runCatching { activity.startActivity(intent) }
+                                        .onFailure { message = it.message ?: context.getString(R.string.browser_open_installer_failed) }
                                 }
                             }
-                            .onFailure { message = it.message ?: "无法打开安装器。" }
+                            .onFailure { message = it.message ?: context.getString(R.string.browser_open_installer_failed) }
                     }
                 }
                 .onFailure { throwable ->
-                    val error = throwable.message ?: "更新下载失败。"
+                    val error = throwable.message ?: context.getString(R.string.update_download_failed)
                     updateDownloadState = UpdateDownloadState(
                         status = UpdateDownloadState.STATUS_ERROR,
                         versionCode = update.versionCode,
@@ -361,7 +375,7 @@ private fun BrowserScreen(
             val launchIntent = intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             if (launchIntent.resolveActivity(context.packageManager) == null) continue
             runCatching {
-                context.startActivity(launchIntent)
+                activity.startActivity(launchIntent)
             }.onSuccess {
                 return true
             }
@@ -376,22 +390,22 @@ private fun BrowserScreen(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri == null) {
-            message = "已取消备份。"
+            message = context.getString(R.string.backup_export_canceled)
             return@rememberLauncherForActivityResult
         }
         scope.launch {
-            message = "正在导出备份..."
+            message = context.getString(R.string.backup_exporting)
             runCatching {
                 val backupJson = withContext(Dispatchers.IO) { backupManager.exportJson() }
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openOutputStream(uri)
                         ?.bufferedWriter(Charsets.UTF_8)
                         ?.use { writer -> writer.write(backupJson) }
-                        ?: error("无法写入备份文件。")
+                        ?: error(context.getString(R.string.backup_write_failed))
                 }
             }
-                .onSuccess { message = "备份已导出。" }
-                .onFailure { message = it.message ?: "备份导出失败。" }
+                .onSuccess { message = context.getString(R.string.backup_export_success) }
+                .onFailure { message = it.message ?: context.getString(R.string.backup_export_failed) }
         }
     }
 
@@ -399,24 +413,24 @@ private fun BrowserScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri == null) {
-            message = "已取消导入。"
+            message = context.getString(R.string.backup_import_canceled)
             return@rememberLauncherForActivityResult
         }
         scope.launch {
-            message = "正在导入备份..."
+            message = context.getString(R.string.backup_importing)
             runCatching {
                 val backupJson = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)
                         ?.bufferedReader(Charsets.UTF_8)
                         ?.use { reader -> reader.readText() }
-                        ?: error("无法读取备份文件。")
+                        ?: error(context.getString(R.string.backup_read_failed))
                 }
                 withContext(Dispatchers.IO) { backupManager.importJson(backupJson) }
             }
                 .onSuccess { result ->
-                    message = "已导入 ${result.bookmarks} 个书签和 ${result.webApps} 个 WebApp。"
+                    message = context.getString(R.string.backup_import_result, result.bookmarks, result.webApps)
                 }
-                .onFailure { message = it.message ?: "备份导入失败。" }
+                .onFailure { message = it.message ?: context.getString(R.string.backup_import_failed) }
         }
     }
 
@@ -457,6 +471,15 @@ private fun BrowserScreen(
                 profileStore.updateOpenNewTabsInCurrentTab(payload.optString("enabled") == "true")
                 okData(profileStore.observeSettings().value.toJson())
             }
+            "settings.locale.update" -> {
+                val previousLocalePreference = profileStore.observeSettings().value.localePreference
+                profileStore.updateLocalePreference(payload.optString("localePreference"))
+                val nextSettings = profileStore.observeSettings().value
+                if (nextSettings.localePreference != previousLocalePreference) {
+                    activity.window.decorView.post { activity.recreate() }
+                }
+                okData(nextSettings.toJson())
+            }
             "settings.privacy.update" -> {
                 profileStore.updatePrivacySettings(
                     dohEnabled = payload.optString("dohEnabled") == "true",
@@ -478,13 +501,13 @@ private fun BrowserScreen(
             )
             "backup.export" -> {
                 scope.launch { exportBackupLauncher.launch(defaultBackupFileName()) }
-                okData(JSONObject().put("message", "请选择 JSON 备份保存位置。"))
+                okData(JSONObject().put("message", context.getString(R.string.backup_choose_save_location)))
             }
             "backup.import" -> {
                 scope.launch {
                     importBackupLauncher.launch(arrayOf("application/json", "text/json", "application/octet-stream", "*/*"))
                 }
-                okData(JSONObject().put("message", "请选择 Hyper Browser JSON 备份。"))
+                okData(JSONObject().put("message", context.getString(R.string.backup_choose_file)))
             }
             "update.check" -> {
                 val result = runBlocking {
@@ -510,7 +533,7 @@ private fun BrowserScreen(
                 val versionCode = payload.optString("versionCode").toLongOrNull() ?: 0L
                 val update = checkedUpdate
                 if (update == null || update.versionCode != versionCode) {
-                    JSONObject().put("ok", false).put("error", "请先检查更新。")
+                    JSONObject().put("ok", false).put("error", context.getString(R.string.update_check_first))
                 } else {
                     okData(beginUpdateInstall(update).toJson())
                 }
@@ -642,7 +665,7 @@ private fun BrowserScreen(
             sendIntent.putExtra(Intent.EXTRA_TITLE, it)
         }
         runCatching {
-            context.startActivity(
+            activity.startActivity(
                 Intent.createChooser(sendIntent, context.getString(R.string.prompt_share_title))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
@@ -822,7 +845,7 @@ private fun BrowserScreen(
         tabs.add(createBrowserTab(url))
         pageContextMenu = null
         activePanel = BrowserPanel.None
-        message = "已在后台标签页打开"
+        message = context.getString(R.string.browser_opened_background_tab)
     }
 
     fun isActiveUpdateDownload(state: UpdateDownloadState): Boolean =
@@ -1159,28 +1182,40 @@ private fun BrowserScreen(
             }
             is HyperCommand.Apps.Open -> {
                 if (command.id.isNotBlank()) {
-                    context.startActivity(WebAppActivity.intent(context, command.id, true))
+                    activity.startActivity(WebAppActivity.intent(activity, command.id, true))
                 }
             }
             is HyperCommand.Apps.Pin -> {
                 scope.launch {
                     runCatching { app.webApps.pinToHome(command.id) }
-                        .onSuccess { message = shortcutRequestMessage(it) }
-                        .onFailure { message = it.message ?: "Shortcut failed." }
+                        .onSuccess { message = shortcutRequestMessage(context, it) }
+                        .onFailure { message = it.message ?: context.getString(R.string.shortcut_request_failed) }
                 }
             }
             is HyperCommand.Apps.Edit -> {
                 scope.launch {
                     runCatching { app.webApps.update(command.id, command.name, command.startUrl) }
-                        .onSuccess { message = if (it != null) "Updated ${it.name}." else "WebApp not found." }
-                        .onFailure { message = it.message ?: "Update failed." }
+                        .onSuccess {
+                            message = if (it != null) {
+                                context.getString(R.string.webapp_updated, it.name)
+                            } else {
+                                context.getString(R.string.webapp_not_found)
+                            }
+                        }
+                        .onFailure { message = it.message ?: context.getString(R.string.webapp_update_failed) }
                 }
             }
             is HyperCommand.Apps.Delete -> {
                 scope.launch {
                     runCatching { app.webApps.delete(command.id) }
-                        .onSuccess { message = if (it) "WebApp deleted." else "WebApp not found." }
-                        .onFailure { message = it.message ?: "Delete failed." }
+                        .onSuccess {
+                            message = if (it) {
+                                context.getString(R.string.webapp_deleted)
+                            } else {
+                                context.getString(R.string.webapp_not_found)
+                            }
+                        }
+                        .onFailure { message = it.message ?: context.getString(R.string.webapp_delete_failed) }
                 }
             }
             HyperCommand.Panel.Extensions -> showPanel(BrowserPanel.Extensions)
@@ -1276,24 +1311,24 @@ private fun BrowserScreen(
                                 if (state.status == UpdateDownloadState.STATUS_READY) {
                                     val installIntent = updateManager.createInstallIntentForReadyDownload()
                                     if (installIntent == null) {
-                                        message = "安装包不可用。"
+                                        message = context.getString(R.string.update_asset_unavailable)
                                     } else {
-                                        runCatching { context.startActivity(installIntent) }
-                                            .onFailure { message = it.message ?: "无法打开安装器。" }
+                                        runCatching { activity.startActivity(installIntent) }
+                                            .onFailure { message = it.message ?: context.getString(R.string.browser_open_installer_failed) }
                                     }
                                 } else if (state.status == UpdateDownloadState.STATUS_ERROR) {
-                                    message = state.message.ifBlank { "更新下载失败。" }
+                                    message = state.message.ifBlank { context.getString(R.string.update_download_failed) }
                                 } else {
-                                    message = state.message.ifBlank { "更新正在下载。" }
+                                    message = state.message.ifBlank { context.getString(R.string.update_downloading) }
                                 }
                             }
                         } else {
                             val openIntent = downloadHandler.openIntent(entry)
                             if (openIntent == null) {
-                                message = "File is not ready."
+                                message = context.getString(R.string.download_file_not_ready)
                             } else {
-                                runCatching { context.startActivity(openIntent) }
-                                    .onFailure { message = it.message ?: "No app can open this file." }
+                                runCatching { activity.startActivity(openIntent) }
+                                    .onFailure { message = it.message ?: context.getString(R.string.download_file_open_failed) }
                             }
                         }
                     },
@@ -1332,7 +1367,7 @@ private fun BrowserScreen(
                     onBack = ::closePanel,
                     onSearch = {
                         scope.launch {
-                            extensionMessage = "Searching AMO..."
+                            extensionMessage = context.getString(R.string.extensions_searching_amo)
                             val syncedInstalled = runCatching { app.extensions.refreshInstalledFromRuntime() }
                                 .getOrDefault(installedExtensions)
                             runCatching { app.extensions.searchAndroidAddons(extensionQuery) }
@@ -1343,13 +1378,13 @@ private fun BrowserScreen(
                                     }
                                     val installableCount = results.size - installedMatches
                                     extensionMessage = when {
-                                        results.isEmpty() -> "No Android add-ons found."
-                                        installableCount == 0 -> "All AMO matches are already installed."
-                                        installedMatches > 0 -> "$installableCount add-ons found · $installedMatches already installed"
+                                        results.isEmpty() -> context.getString(R.string.extensions_no_android_addons)
+                                        installableCount == 0 -> context.getString(R.string.extensions_all_matches_installed)
+                                        installedMatches > 0 -> context.getString(R.string.extensions_found_with_installed, installableCount, installedMatches)
                                         else -> null
                                     }
                                 }
-                                .onFailure { extensionMessage = it.message ?: "AMO search failed." }
+                                .onFailure { extensionMessage = it.message ?: context.getString(R.string.extensions_amo_search_failed) }
                         }
                     },
                     onInstall = { addon ->
@@ -1362,22 +1397,22 @@ private fun BrowserScreen(
                             }
                                 .onSuccess {
                                     runCatching { app.extensions.refreshInstalledFromRuntime() }
-                                    extensionMessage = "Installed ${addon.name}."
+                                    extensionMessage = context.getString(R.string.extensions_installed_name, addon.name)
                                 }
-                                .onFailure { extensionMessage = it.message ?: "Extension install failed." }
+                                .onFailure { extensionMessage = it.message ?: context.getString(R.string.extensions_install_failed) }
                             installingAddonGuid = null
                         }
                     },
                     onToggleEnabled = { extension ->
                         scope.launch {
                             runCatching { app.extensions.setEnabled(extension.guid, !extension.enabled) }
-                                .onFailure { extensionMessage = it.message ?: "Unable to update extension." }
+                                .onFailure { extensionMessage = it.message ?: context.getString(R.string.extensions_update_failed) }
                         }
                     },
                     onUninstall = { extension ->
                         scope.launch {
                             runCatching { app.extensions.uninstall(extension.guid) }
-                                .onFailure { extensionMessage = it.message ?: "Unable to uninstall extension." }
+                                .onFailure { extensionMessage = it.message ?: context.getString(R.string.extensions_uninstall_failed) }
                         }
                     }
                 )
@@ -1456,20 +1491,26 @@ private fun BrowserScreen(
                         onExtensionClick = { extension ->
                             scope.launch {
                                 runCatching { app.extensions.clickMenuAction(extension.guid) }
-                                    .onFailure { message = it.message ?: "Extension popup unavailable." }
+                                    .onFailure { message = it.message ?: context.getString(R.string.extensions_popup_unavailable) }
                             }
                         },
                         onInstall = install@{
                             installedWebApp?.let { webApp ->
                                 scope.launch {
                                     runCatching { app.webApps.delete(webApp.id) }
-                                        .onSuccess { message = if (it) "Uninstalled ${webApp.name}." else "WebApp not found." }
-                                        .onFailure { message = it.message ?: "Uninstall failed." }
+                                        .onSuccess {
+                                            message = if (it) {
+                                                context.getString(R.string.webapp_uninstalled, webApp.name)
+                                            } else {
+                                                context.getString(R.string.webapp_not_found)
+                                            }
+                                        }
+                                        .onFailure { message = it.message ?: context.getString(R.string.webapp_uninstall_failed) }
                                 }
                                 return@install
                             }
                             if (GeckoSessionController.isInternalUrl(pageState.url)) {
-                                message = "Open a web page before installing it as a WebApp."
+                                message = context.getString(R.string.webapp_open_page_before_install)
                                 return@install
                             }
                             scope.launch {
@@ -1477,9 +1518,13 @@ private fun BrowserScreen(
                                 val url = pageState.url.ifBlank { tab.input }
                                 runCatching { app.webApps.installFromPage(title, url, iconPath = currentIconPath) }
                                     .onSuccess {
-                                        message = "Installed ${it.webApp.name}. ${shortcutRequestMessage(it.shortcutRequest)}"
+                                        message = context.getString(
+                                            R.string.webapp_installed_with_shortcut,
+                                            it.webApp.name,
+                                            shortcutRequestMessage(context, it.shortcutRequest)
+                                        )
                                     }
-                                    .onFailure { message = it.message ?: "Install failed." }
+                                    .onFailure { message = it.message ?: context.getString(R.string.webapp_install_failed) }
                             }
                         }
                     )
@@ -1531,9 +1576,9 @@ private fun BrowserScreen(
                     enqueueUrlDownload(url)
                 },
                 onOpenImage = ::openLinkInBackgroundTab,
-                onCopyImage = { url -> copyContextUrl("image", url, "图片地址已复制") },
+                onCopyImage = { url -> copyContextUrl("image", url, imageCopiedText) },
                 onOpenLink = ::openLinkInBackgroundTab,
-                onCopyLink = { url -> copyContextUrl("link", url, "链接已复制") }
+                onCopyLink = { url -> copyContextUrl("link", url, linkCopiedText) }
             )
         }
         authPrompt?.let { request ->
@@ -1558,12 +1603,12 @@ private fun BrowserScreen(
     }
 }
 
-private fun shortcutRequestMessage(result: PinnedShortcutRequestResult): String =
+private fun shortcutRequestMessage(context: Context, result: PinnedShortcutRequestResult): String =
     when (result) {
-        PinnedShortcutRequestResult.Requested -> "Tap Create shortcut in the system prompt."
-        PinnedShortcutRequestResult.Unsupported -> "Home screen shortcuts are not supported by this launcher."
-        PinnedShortcutRequestResult.Failed -> "Shortcut request failed."
-        PinnedShortcutRequestResult.WebAppNotFound -> "WebApp not found."
+        PinnedShortcutRequestResult.Requested -> context.getString(R.string.shortcut_request_create)
+        PinnedShortcutRequestResult.Unsupported -> context.getString(R.string.shortcut_request_unsupported)
+        PinnedShortcutRequestResult.Failed -> context.getString(R.string.shortcut_request_failed)
+        PinnedShortcutRequestResult.WebAppNotFound -> context.getString(R.string.webapp_not_found)
     }
 
 private fun addressSecurityLevel(
