@@ -107,6 +107,7 @@ internal fun HistoryPage(
     onRemove: (String) -> Unit,
     onClear: () -> Unit
 ) {
+    var pendingClearHistory by remember { mutableStateOf(false) }
     BrowserLibraryPage(
         title = stringResource(R.string.library_history_title),
         emptyTitle = stringResource(R.string.library_history_empty_title),
@@ -119,8 +120,33 @@ internal fun HistoryPage(
         itemUrl = { it.url },
         itemMeta = { formatVisitTime(it.visitedAt) },
         leading = "◷",
-        action = if (history.isEmpty()) null else stringResource(R.string.common_action_clear) to onClear
+        action = if (history.isEmpty()) null else stringResource(R.string.common_action_clear) to { pendingClearHistory = true }
     )
+
+    if (pendingClearHistory) {
+        AlertDialog(
+            onDismissRequest = { pendingClearHistory = false },
+            title = { Text(stringResource(R.string.library_history_clear_title)) },
+            text = {
+                Text(stringResource(R.string.library_history_clear_message))
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onClear()
+                        pendingClearHistory = false
+                    }
+                ) {
+                    Text(stringResource(R.string.library_history_clear_action))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingClearHistory = false }) {
+                    Text(stringResource(R.string.common_action_cancel))
+                }
+            }
+        )
+    }
 }
 
 @Composable
