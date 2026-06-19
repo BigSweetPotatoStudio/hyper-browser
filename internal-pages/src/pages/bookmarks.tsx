@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useState } from "react";
+import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
@@ -131,10 +131,20 @@ function BookmarkRow(props: {
   const { bookmark } = props;
   const [title, setTitle] = useState(bookmark.title || "");
   const [url, setUrl] = useState(bookmark.url);
+  const urlInputRef = useRef<HTMLInputElement>(null);
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    props.onSave(bookmark.url, title, url);
+    const cleanUrl = url.trim();
+    if (!cleanUrl) {
+      setUrl("");
+      window.requestAnimationFrame(() => {
+        urlInputRef.current?.focus();
+        urlInputRef.current?.reportValidity();
+      });
+      return;
+    }
+    props.onSave(bookmark.url, title, cleanUrl);
   }
 
   return (
@@ -153,7 +163,14 @@ function BookmarkRow(props: {
       {props.editing && (
         <form className="editor" onSubmit={submit}>
           <input value={title} placeholder={t("bookmarks.titlePlaceholder")} onChange={(event) => setTitle(event.currentTarget.value)} />
-          <input value={url} placeholder={t("common.url")} inputMode="url" onChange={(event) => setUrl(event.currentTarget.value)} />
+          <input
+            ref={urlInputRef}
+            value={url}
+            placeholder={t("common.url")}
+            inputMode="url"
+            required
+            onChange={(event) => setUrl(event.currentTarget.value)}
+          />
           <div className="editor-actions">
             <button className="cancel" type="button" onClick={props.onCancel}>{t("common.cancel")}</button>
             <button className="save" type="submit">{t("common.save")}</button>
