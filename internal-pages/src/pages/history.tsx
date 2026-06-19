@@ -10,6 +10,7 @@ function HistoryPage() {
   const [history, setHistory] = useState<HistoryItem[] | null>(() => readBootstrapData<HistoryItem>());
   const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState("");
+  const [confirmingClear, setConfirmingClear] = useState(false);
 
   useEffect(() => {
     if (history !== null) return;
@@ -25,6 +26,7 @@ function HistoryPage() {
 
   function clear() {
     setHistory([]);
+    setConfirmingClear(false);
     window.hyperBrowser.clearHistory();
   }
 
@@ -36,7 +38,7 @@ function HistoryPage() {
       <header className="chrome-header">
         <a className="back" href="hyper://home" aria-label={t("common.back")}>‹</a>
         <h1 className="chrome-title">{t("history.title")}</h1>
-        {items.length > 0 && <button className="clear" type="button" onClick={clear}>{t("history.clear")}</button>}
+        {items.length > 0 && <button className="clear" type="button" onClick={() => setConfirmingClear(true)}>{t("history.clear")}</button>}
       </header>
       <main className="content">
         {failed ? (
@@ -83,6 +85,24 @@ function HistoryPage() {
           </>
         )}
       </main>
+      {confirmingClear && (
+        <div className="confirm-scrim" onClick={() => setConfirmingClear(false)}>
+          <section
+            className="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="clear-history-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="clear-history-title">{t("history.clearConfirmTitle")}</h2>
+            <p>{t("history.clearConfirmMessage")}</p>
+            <div className="confirm-actions">
+              <button type="button" onClick={() => setConfirmingClear(false)}>{t("common.cancel")}</button>
+              <button className="danger" type="button" onClick={clear}>{t("history.clearConfirmAction")}</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
