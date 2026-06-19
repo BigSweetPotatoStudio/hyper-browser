@@ -29,6 +29,19 @@ function HomePage() {
   return (
     <main className="home-main">
       <h1 className="home-title">Hyper Browser</h1>
+      <form className="search-form" autoComplete="off" onSubmit={submit}>
+        <span className="search-mark" aria-hidden="true">⌕</span>
+        <input
+          className="search-input"
+          name="q"
+          type="search"
+          inputMode="search"
+          aria-label={t("search.placeholder")}
+          placeholder={t("search.placeholder")}
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+        />
+      </form>
       <nav className="shortcut-grid" aria-label={t("home.shortcutsLabel")}>
         <a className="shortcut" href="hyper://apps">{t("home.apps")}</a>
         <a className="shortcut" href="hyper://bookmarks">{t("home.bookmarks")}</a>
