@@ -32,9 +32,10 @@ type WebAppItem = {
 };
 
 type SearchSuggestionItem = {
+  id?: string;
   title?: string;
   url: string;
-  source: "bookmark" | "history";
+  source: "bookmark" | "history" | "app";
 };
 
 type BrowserSettings = {

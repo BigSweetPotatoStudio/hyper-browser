@@ -76,8 +76,8 @@ function SearchPage() {
         ) : (
           <div className="suggestion-list">
             {matches.map((item) => (
-              <button className="suggestion-row" type="button" key={`${item.source}:${item.url}`} onClick={() => window.hyperBrowser.open(item.url)}>
-                <span className="suggestion-icon">{item.source === "bookmark" ? "★" : "◷"}</span>
+              <button className="suggestion-row" type="button" key={`${item.source}:${item.id || item.url}`} onClick={() => openSuggestion(item)}>
+                <span className="suggestion-icon">{suggestionIcon(item)}</span>
                 <span className="suggestion-text">
                   <span className="suggestion-title">{item.title || item.url}</span>
                   <span className="suggestion-url">{item.url}</span>
@@ -89,6 +89,19 @@ function SearchPage() {
       </section>
     </main>
   );
+}
+
+function openSuggestion(item: SearchSuggestionItem) {
+  if (item.source === "app" && item.id) {
+    window.hyperBrowser.openApp(item.id);
+  } else {
+    window.hyperBrowser.open(item.url);
+  }
+}
+
+function suggestionIcon(item: SearchSuggestionItem): string {
+  if (item.source === "app") return "▣";
+  return item.source === "bookmark" ? "★" : "◷";
 }
 
 createRoot(document.getElementById("root")!).render(

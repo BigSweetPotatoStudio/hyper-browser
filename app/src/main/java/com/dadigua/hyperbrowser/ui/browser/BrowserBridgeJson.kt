@@ -125,7 +125,8 @@ internal fun List<WebAppDefinition>.toWebAppsJsonString(app: HyperBrowserApp): S
 
 internal fun searchSuggestionsJsonString(
     bookmarks: List<BrowserBookmark>,
-    history: List<BrowserHistoryEntry>
+    history: List<BrowserHistoryEntry>,
+    webApps: List<WebAppDefinition>
 ): String {
     val seen = mutableSetOf<String>()
     val array = JSONArray()
@@ -136,6 +137,17 @@ internal fun searchSuggestionsJsonString(
                     .put("title", bookmark.title)
                     .put("url", bookmark.url)
                     .put("source", "bookmark")
+            )
+        }
+    }
+    webApps.forEach { webApp ->
+        if (webApp.id.isNotBlank() && webApp.startUrl.isNotBlank()) {
+            array.put(
+                JSONObject()
+                    .put("id", webApp.id)
+                    .put("title", webApp.name)
+                    .put("url", webApp.startUrl)
+                    .put("source", "app")
             )
         }
     }
