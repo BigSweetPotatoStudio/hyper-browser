@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -26,6 +27,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,6 +65,7 @@ internal fun ExtensionsPage(
     val installedGuids = installed.map { it.guid }.toSet()
     val installedAmoListings = results.associateBy { it.guid }
     val installableResults = results.filterNot { it.guid in installedGuids }
+    var pendingUninstall by remember { mutableStateOf<InstalledExtensionState?>(null) }
 
     LazyColumn(
         modifier = Modifier
@@ -152,7 +158,7 @@ internal fun ExtensionsPage(
                     extension = extension,
                     amoListing = installedAmoListings[extension.guid],
                     onToggle = { onToggleEnabled(extension) },
-                    onUninstall = { onUninstall(extension) }
+                    onUninstall = { pendingUninstall = extension }
                 )
             }
         }
@@ -183,6 +189,31 @@ internal fun ExtensionsPage(
             )
         }
         item { Spacer(modifier = Modifier.height(36.dp)) }
+    }
+
+    pendingUninstall?.let { extension ->
+        AlertDialog(
+            onDismissRequest = { pendingUninstall = null },
+            title = { Text(stringResource(R.string.extensions_uninstall_confirm_title)) },
+            text = {
+                Text(stringResource(R.string.extensions_uninstall_confirm_message, extension.name))
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onUninstall(extension)
+                        pendingUninstall = null
+                    }
+                ) {
+                    Text(stringResource(R.string.extensions_uninstall))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingUninstall = null }) {
+                    Text(stringResource(R.string.common_action_cancel))
+                }
+            }
+        )
     }
 }
 

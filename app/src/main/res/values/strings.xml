@@ -145,6 +145,8 @@
     <string name="extensions_amo_update_available">AMO update available: %1$s</string>
     <string name="extensions_amo_latest">AMO latest: %1$s</string>
     <string name="extensions_uninstall">Uninstall</string>
+    <string name="extensions_uninstall_confirm_title">Uninstall extension?</string>
+    <string name="extensions_uninstall_confirm_message">Remove %1$s from Hyper Browser? You can install it again from AMO.</string>
     <string name="extensions_version_users">Version %1$s · %2$d users</string>
     <string name="extensions_no_permissions">No declared permissions</string>
     <string name="extensions_installed">Installed</string>
