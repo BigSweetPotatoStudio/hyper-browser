@@ -9,6 +9,7 @@ import type { BookmarkItem } from "../hyper-browser";
 function BookmarksPage() {
   const [bookmarks, setBookmarks] = useState<BookmarkItem[] | null>(() => readBootstrapData<BookmarkItem>());
   const [editingUrl, setEditingUrl] = useState<string | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<BookmarkItem | null>(null);
   const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -22,6 +23,7 @@ function BookmarksPage() {
   function remove(url: string) {
     setBookmarks((items) => (items || []).filter((item) => item.url !== url));
     setEditingUrl((current) => current === url ? null : current);
+    setPendingRemove(null);
     window.hyperBrowser.removeBookmark(url);
   }
 
@@ -72,7 +74,7 @@ function BookmarksPage() {
                     onEdit={() => setEditingUrl(bookmark.url)}
                     onCancel={() => setEditingUrl(null)}
                     onOpen={() => window.hyperBrowser.openBookmark(bookmark.url)}
-                    onRemove={() => remove(bookmark.url)}
+                    onRemove={() => setPendingRemove(bookmark)}
                     onSave={save}
                   />
                 ))}
@@ -81,6 +83,24 @@ function BookmarksPage() {
           </>
         )}
       </main>
+      {pendingRemove && (
+        <div className="confirm-scrim" onClick={() => setPendingRemove(null)}>
+          <section
+            className="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="remove-bookmark-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="remove-bookmark-title">{t("bookmarks.removeLabel")}</h2>
+            <p>{pendingRemove.title || pendingRemove.url}</p>
+            <div className="confirm-actions">
+              <button type="button" onClick={() => setPendingRemove(null)}>{t("common.cancel")}</button>
+              <button className="danger" type="button" onClick={() => remove(pendingRemove.url)}>{t("common.delete")}</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
