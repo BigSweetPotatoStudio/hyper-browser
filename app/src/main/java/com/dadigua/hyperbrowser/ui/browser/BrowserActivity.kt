@@ -441,7 +441,8 @@ private fun BrowserScreen(
             "data.search" -> okItems(
                 searchSuggestionsJsonString(
                     bookmarks = profileStore.observeBookmarks().value,
-                    history = profileStore.observeHistory().value
+                    history = profileStore.observeHistory().value,
+                    webApps = app.webApps.observeAll().value
                 )
             )
             "data.bookmarks" -> okItems(profileStore.observeBookmarks().value.toBookmarksJsonString(faviconStore))
