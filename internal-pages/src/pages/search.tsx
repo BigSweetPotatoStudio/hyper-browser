@@ -37,10 +37,14 @@ function SearchPage() {
       .slice(0, 12);
   }, [query, suggestions]);
 
-  function submit(event: FormEvent) {
-    event.preventDefault();
+  function openQuery() {
     const value = query.trim();
     if (value) window.hyperBrowser.open(value);
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    openQuery();
   }
 
   return (
@@ -72,7 +76,10 @@ function SearchPage() {
         ) : query.trim() === "" ? (
           <div className="empty">{t("search.emptyQuery")}</div>
         ) : matches.length === 0 ? (
-          <div className="empty">{t("search.noMatches")}</div>
+          <div className="empty">
+            {t("search.noMatches")}{" "}
+            <button className="go-button" type="button" onClick={openQuery}>{t("search.go")}</button>
+          </div>
         ) : (
           <div className="suggestion-list">
             {matches.map((item) => (
