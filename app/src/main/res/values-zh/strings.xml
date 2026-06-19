@@ -142,6 +142,8 @@
     <string name="extensions_amo_update_available">AMO 有可用更新：%1$s</string>
     <string name="extensions_amo_latest">AMO 最新版本：%1$s</string>
     <string name="extensions_uninstall">卸载</string>
+    <string name="extensions_uninstall_confirm_title">卸载扩展？</string>
+    <string name="extensions_uninstall_confirm_message">要从 Hyper Browser 中移除 %1$s 吗？之后可以从 AMO 重新安装。</string>
     <string name="extensions_version_users">版本 %1$s · %2$d 位用户</string>
     <string name="extensions_no_permissions">未声明权限</string>
     <string name="extensions_installed">已安装</string>
