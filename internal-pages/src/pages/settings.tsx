@@ -61,6 +61,16 @@ function SettingsPage() {
   const showUpdateSettings = useMemo(() => {
     return matchesI18nText("settings.updateTerms", query);
   }, [query]);
+  const hasSettingsQuery = query.trim() !== "";
+  const searchEngineVisibleExpanded = searchEngineExpanded || hasSettingsQuery;
+  const toolbarVisibleExpanded = toolbarExpanded || hasSettingsQuery;
+  const languageVisibleExpanded = languageExpanded || hasSettingsQuery;
+  const tabBehaviorVisibleExpanded = tabBehaviorExpanded || hasSettingsQuery;
+  const httpDnsVisibleExpanded = httpDnsExpanded || hasSettingsQuery;
+  const privacyVisibleExpanded = privacyExpanded || hasSettingsQuery;
+  const backupVisibleExpanded = backupExpanded || hasSettingsQuery;
+  const backgroundRuntimeVisibleExpanded = backgroundRuntimeExpanded || hasSettingsQuery;
+  const updateSettingsVisibleExpanded = updateSettingsExpanded || hasSettingsQuery;
 
   useEffect(() => {
     window.hyperBrowser.requestSettingsData()
@@ -437,13 +447,13 @@ function SettingsPage() {
             <button
               className="settings-row settings-row-button"
               type="button"
-              aria-expanded={searchEngineExpanded}
+              aria-expanded={searchEngineVisibleExpanded}
               onClick={() => setSearchEngineExpanded((expanded) => !expanded)}
             >
               <span className="settings-row-title">{t("settings.searchEngine")}</span>
               <span className="settings-row-value">{settings?.searchEngineName || "Google"}</span>
             </button>
-            {searchEngineExpanded && (
+            {searchEngineVisibleExpanded && (
               <div className="settings-options">
                 <button
                   className={settings?.searchEngineId === "google" ? "settings-option selected" : "settings-option"}
@@ -495,13 +505,13 @@ function SettingsPage() {
             <button
               className="settings-row settings-row-button"
               type="button"
-              aria-expanded={toolbarExpanded}
+              aria-expanded={toolbarVisibleExpanded}
               onClick={() => setToolbarExpanded((expanded) => !expanded)}
             >
               <span className="settings-row-title">{t("settings.toolbar")}</span>
               <span className="settings-row-value">{toolbarPositionLabel(settings?.toolbarPosition)}</span>
             </button>
-            {toolbarExpanded && (
+            {toolbarVisibleExpanded && (
               <div className="settings-options">
                 <button
                   className={settings?.toolbarPosition !== "bottom" ? "settings-option selected" : "settings-option"}
@@ -528,13 +538,13 @@ function SettingsPage() {
             <button
               className="settings-row settings-row-button"
               type="button"
-              aria-expanded={languageExpanded}
+              aria-expanded={languageVisibleExpanded}
               onClick={() => setLanguageExpanded((expanded) => !expanded)}
             >
               <span className="settings-row-title">{t("settings.language")}</span>
               <span className="settings-row-value">{languagePreferenceLabel()}</span>
             </button>
-            {languageExpanded && (
+            {languageVisibleExpanded && (
               <div className="settings-options">
                 <button
                   className={languagePreference === "zh" ? "settings-option selected" : "settings-option"}
@@ -566,13 +576,13 @@ function SettingsPage() {
             <button
               className="settings-row settings-row-button"
               type="button"
-              aria-expanded={tabBehaviorExpanded}
+              aria-expanded={tabBehaviorVisibleExpanded}
               onClick={() => setTabBehaviorExpanded((expanded) => !expanded)}
             >
               <span className="settings-row-title">{t("settings.newTab")}</span>
               <span className="settings-row-value">{tabBehaviorLabel()}</span>
             </button>
-            {tabBehaviorExpanded && (
+            {tabBehaviorVisibleExpanded && (
               <>
                 <div className="settings-options">
                   <button
@@ -603,13 +613,13 @@ function SettingsPage() {
             <button
               className="settings-row settings-row-button"
               type="button"
-              aria-expanded={httpDnsExpanded}
+              aria-expanded={httpDnsVisibleExpanded}
               onClick={() => setHttpDnsExpanded((expanded) => !expanded)}
             >
               <span className="settings-row-title">HTTP / DNS</span>
               <span className="settings-row-value">{httpDnsStatusLabel()}</span>
             </button>
-            {httpDnsExpanded && (
+            {httpDnsVisibleExpanded && (
               <>
                 <label className="settings-toggle-row">
                   <span className="settings-toggle-copy">
@@ -683,13 +693,13 @@ function SettingsPage() {
             <button
               className="settings-row settings-row-button"
               type="button"
-              aria-expanded={privacyExpanded}
+              aria-expanded={privacyVisibleExpanded}
               onClick={() => setPrivacyExpanded((expanded) => !expanded)}
             >
               <span className="settings-row-title">{t("settings.privacy")}</span>
               <span className="settings-row-value">{privacyStatusLabel()}</span>
             </button>
-            {privacyExpanded && (
+            {privacyVisibleExpanded && (
               <>
                 <div className="settings-options">
                   <button
@@ -728,13 +738,13 @@ function SettingsPage() {
             <button
               className="settings-row settings-row-button"
               type="button"
-              aria-expanded={backupExpanded}
+              aria-expanded={backupVisibleExpanded}
               onClick={() => setBackupExpanded((expanded) => !expanded)}
             >
               <span className="settings-row-title">{t("settings.backup")}</span>
               <span className="settings-row-value">{t("settings.backupValue")}</span>
             </button>
-            {backupExpanded && (
+            {backupVisibleExpanded && (
               <>
                 <div className="settings-actions">
                   <button className="settings-action primary" type="button" onClick={exportBackup}>
@@ -755,13 +765,13 @@ function SettingsPage() {
             <button
               className="settings-row settings-row-button"
               type="button"
-              aria-expanded={backgroundRuntimeExpanded}
+              aria-expanded={backgroundRuntimeVisibleExpanded}
               onClick={() => setBackgroundRuntimeExpanded((expanded) => !expanded)}
             >
               <span className="settings-row-title">{t("settings.backgroundRuntime")}</span>
               <span className="settings-row-value">{batteryOptimizationLabel()}</span>
             </button>
-            {backgroundRuntimeExpanded && (
+            {backgroundRuntimeVisibleExpanded && (
               <>
                 <label className="settings-toggle-row">
                   <span className="settings-toggle-copy">
@@ -794,7 +804,7 @@ function SettingsPage() {
             <button
               className="settings-row settings-row-button"
               type="button"
-              aria-expanded={updateSettingsExpanded}
+              aria-expanded={updateSettingsVisibleExpanded}
               onClick={() => setUpdateSettingsExpanded((expanded) => !expanded)}
             >
               <span className="settings-row-title">{t("settings.update")}</span>
@@ -802,7 +812,7 @@ function SettingsPage() {
                 {updateResult ? `${updateResult.currentVersionName} · ${updateStatusLabel(updateResult)}` : t("settings.githubRelease")}
               </span>
             </button>
-            {updateSettingsExpanded && (
+            {updateSettingsVisibleExpanded && (
               <>
                 {updateResult?.update && (
                   <div className="settings-options">
