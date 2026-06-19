@@ -10,6 +10,7 @@ function SettingsPage() {
   const [languagePreference, setLanguagePreference] = useState<LocalePreference>(() => getLocalePreference());
   const [settings, setSettings] = useState<BrowserSettings | null>(null);
   const [customDraft, setCustomDraft] = useState("");
+  const [customDirty, setCustomDirty] = useState(false);
   const [dohDraft, setDohDraft] = useState("");
   const [dohDirty, setDohDirty] = useState(false);
   const [customError, setCustomError] = useState("");
@@ -84,6 +85,7 @@ function SettingsPage() {
           setLanguagePreference(next.localePreference);
           setLocalePreference(next.localePreference);
           setCustomDraft(next.customSearchUrl);
+          setCustomDirty(false);
           setDohDraft(next.dohProviderUrl);
           setDohDirty(false);
         };
@@ -125,6 +127,7 @@ function SettingsPage() {
       .then((value) => {
         setSettings(value);
         setCustomDraft(value.customSearchUrl);
+        setCustomDirty(false);
       });
   }
 
@@ -139,9 +142,11 @@ function SettingsPage() {
   }
 
   function commitCustomSearchUrl() {
+    if (!settings) return;
     const nextCustomUrl = customDraft.trim();
     if (!nextCustomUrl) {
       setCustomError("");
+      setCustomDirty(false);
       return;
     }
     if (!nextCustomUrl.includes("%s")) {
@@ -153,6 +158,7 @@ function SettingsPage() {
       .then((value) => {
         setSettings(value);
         setCustomDraft(value.customSearchUrl);
+        setCustomDirty(false);
       })
       .catch((error) => setCustomError(error instanceof Error ? error.message : t("settings.updateFailed")));
   }
@@ -480,18 +486,41 @@ function SettingsPage() {
                     <span>{t("settings.custom")}</span>
                     <span>{t("settings.customKeywordHelp")}</span>
                   </button>
-                  <input
-                    ref={customInputRef}
-                    type="text"
-                    inputMode="url"
-                    placeholder="https://example.com/search?q=%s"
-                    value={customDraft}
-                    onChange={(event) => {
-                      setCustomDraft(event.currentTarget.value);
-                      setCustomError("");
-                    }}
-                    onBlur={commitCustomSearchUrl}
-                  />
+                  <div className="settings-field-row">
+                    <span className="settings-field-title">
+                      <span>{t("common.url")}</span>
+                      {customDirty && <span>{t("settings.unsaved")}</span>}
+                    </span>
+                    <span className="settings-input-action-row">
+                      <input
+                        ref={customInputRef}
+                        type="text"
+                        inputMode="url"
+                        placeholder="https://example.com/search?q=%s"
+                        value={customDraft}
+                        disabled={!settings}
+                        onChange={(event) => {
+                          setCustomDraft(event.currentTarget.value);
+                          setCustomDirty(true);
+                          setCustomError("");
+                        }}
+                        onBlur={commitCustomSearchUrl}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          }
+                        }}
+                      />
+                      <button
+                        className="settings-field-action"
+                        type="button"
+                        disabled={!settings || !customDraft.trim()}
+                        onClick={commitCustomSearchUrl}
+                      >
+                        {t("common.save")}
+                      </button>
+                    </span>
+                  </div>
                   {customError && <p className="settings-inline-error">{customError}</p>}
                 </div>
               </div>
