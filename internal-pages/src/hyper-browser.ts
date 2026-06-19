@@ -93,6 +93,43 @@ type BackupActionResult = {
   message?: string;
 };
 
+type HyperBridgeMessageType =
+  | "data.home"
+  | "data.search"
+  | "data.bookmarks"
+  | "data.history"
+  | "data.apps"
+  | "data.settings"
+  | "search.submit"
+  | "settings.searchEngine.update"
+  | "settings.toolbarPosition.update"
+  | "settings.backgroundVideoEnhancement.update"
+  | "settings.openNewTabsInCurrentTab.update"
+  | "settings.locale.update"
+  | "settings.privacy.update"
+  | "settings.batteryOptimizationState"
+  | "settings.openBatteryOptimization"
+  | "backup.export"
+  | "backup.import"
+  | "update.check"
+  | "update.skip"
+  | "update.clearSkip"
+  | "update.downloadState"
+  | "update.install"
+  | "bookmarks.open"
+  | "bookmarks.remove"
+  | "bookmarks.edit"
+  | "history.open"
+  | "history.remove"
+  | "history.clear"
+  | "apps.open"
+  | "apps.pin"
+  | "apps.edit"
+  | "apps.delete"
+  | "panel.extensions";
+
+type BridgePayload = Record<string, string>;
+
 declare global {
   const browser: {
     runtime?: {
@@ -160,7 +197,7 @@ function parseResponse(response: unknown): BridgeResponse {
   return response as BridgeResponse;
 }
 
-function send(type: string, payload?: Record<string, string>): Promise<BridgeResponse> {
+function send(type: HyperBridgeMessageType, payload?: BridgePayload): Promise<BridgeResponse> {
   const sendMessage = browser?.runtime?.sendMessage;
   if (!canUseBridge() || !sendMessage) return Promise.reject(new Error("Hyper bridge unavailable."));
   return sendMessage({ nativeApp, type, payload: payload || {} })
@@ -173,11 +210,11 @@ function send(type: string, payload?: Record<string, string>): Promise<BridgeRes
     });
 }
 
-function command(type: string, params?: Record<string, string>) {
+function command(type: HyperBridgeMessageType, params?: BridgePayload) {
   send(type, params).catch((error) => console.error(error));
 }
 
-function requestData<T>(type: string): Promise<T[]> {
+function requestData<T>(type: HyperBridgeMessageType): Promise<T[]> {
   return send(type).then((response) => {
     if (!response.itemsJson) return [];
     const items = JSON.parse(response.itemsJson) as unknown;
@@ -185,7 +222,7 @@ function requestData<T>(type: string): Promise<T[]> {
   });
 }
 
-function requestObject<T>(type: string): Promise<T> {
+function requestObject<T>(type: HyperBridgeMessageType): Promise<T> {
   return send(type).then((response) => response.data as T);
 }
 

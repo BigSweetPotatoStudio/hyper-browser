@@ -12,6 +12,48 @@ object HyperBridge {
     private const val EXTENSION_LOCATION = "resource://android/assets/"
     private const val EXTENSION_ID = "hyper-browser-internal@dadigua.com"
     private const val NATIVE_APP = "hyperBrowser"
+    private val INTERNAL_PAGE_MESSAGE_TYPES = setOf(
+        "data.home",
+        "data.search",
+        "data.bookmarks",
+        "data.history",
+        "data.apps",
+        "data.settings",
+        "search.submit",
+        "settings.searchEngine.update",
+        "settings.toolbarPosition.update",
+        "settings.backgroundVideoEnhancement.update",
+        "settings.openNewTabsInCurrentTab.update",
+        "settings.locale.update",
+        "settings.privacy.update",
+        "settings.batteryOptimizationState",
+        "settings.openBatteryOptimization",
+        "backup.export",
+        "backup.import",
+        "update.check",
+        "update.skip",
+        "update.clearSkip",
+        "update.downloadState",
+        "update.install",
+        "bookmarks.open",
+        "bookmarks.remove",
+        "bookmarks.edit",
+        "history.open",
+        "history.remove",
+        "history.clear",
+        "apps.open",
+        "apps.pin",
+        "apps.edit",
+        "apps.delete",
+        "panel.extensions"
+    )
+    private val CONTENT_SCRIPT_MESSAGE_TYPES = setOf(
+        "pullRefresh.touch",
+        "media.keepAlive.start",
+        "media.keepAlive.pause",
+        "media.keepAlive.stop",
+        "settings.backgroundVideoEnhancement.enabled"
+    )
 
     @Volatile
     private var extension: WebExtension? = null
@@ -118,7 +160,16 @@ object HyperBridge {
         }
         val request = message as? JSONObject
             ?: return GeckoResult.fromValue(error("Invalid bridge payload.").toString())
-        val type = request.optString("type")
+        val type = request.optString("type").trim()
+        if (!isKnownMessageType(type)) {
+            Log.w(TAG, "Rejected unknown bridge message type=$type sender=${sender.url}")
+            return GeckoResult.fromValue(error("Unknown bridge message.").toString())
+        }
+        val payload = normalizedPayload(request, sender.url)
+            ?: return GeckoResult.fromValue(error("Invalid bridge payload.").toString())
+        val normalizedRequest = JSONObject()
+            .put("type", type)
+            .put("payload", payload)
         if (!isTrustedSender(sender, request)) {
             Log.w(TAG, "Rejected bridge message type=$type sender=${sender.url}")
             return GeckoResult.fromValue(error("Rejected bridge message.").toString())
@@ -134,7 +185,7 @@ object HyperBridge {
             Log.w(TAG, "No bridge handler type=$type sender=${sender.url}")
             return GeckoResult.fromValue(error("No bridge handler for session.").toString())
         }
-        return GeckoResult.fromValue(handler(request).toString())
+        return GeckoResult.fromValue(handler(normalizedRequest).toString())
     }
 
     private fun attachSessionDelegate(session: GeckoSession, installed: WebExtension? = extension) {
@@ -155,19 +206,46 @@ object HyperBridge {
         }
     }
 
+    private fun isKnownMessageType(type: String): Boolean =
+        type in INTERNAL_PAGE_MESSAGE_TYPES || type in CONTENT_SCRIPT_MESSAGE_TYPES
+
     private fun isTrustedSender(sender: WebExtension.MessageSender, request: JSONObject): Boolean {
-        if (isInternalPageUrl(sender.url)) return true
-        val type = request.optString("type")
-        return (type == "pullRefresh.touch" ||
-            type == "media.keepAlive.start" ||
-            type == "media.keepAlive.pause" ||
-            type == "media.keepAlive.stop" ||
-            type == "settings.backgroundVideoEnhancement.enabled") &&
-            (sender.url.startsWith("https://") || sender.url.startsWith("http://"))
+        val type = request.optString("type").trim()
+        if (type in INTERNAL_PAGE_MESSAGE_TYPES) return isInternalPageUrl(sender.url)
+        if (type in CONTENT_SCRIPT_MESSAGE_TYPES) {
+            return sender.url.startsWith("https://") || sender.url.startsWith("http://")
+        }
+        return false
     }
 
     private fun canUseFallbackHandler(sender: WebExtension.MessageSender, type: String): Boolean =
-        isInternalPageUrl(sender.url) || type == "pullRefresh.touch"
+        isInternalPageUrl(sender.url) && type in INTERNAL_PAGE_MESSAGE_TYPES
+
+    private fun normalizedPayload(request: JSONObject, senderUrl: String): JSONObject? {
+        val rawPayload = if (request.has("payload") && !request.isNull("payload")) {
+            request.opt("payload")
+        } else {
+            JSONObject()
+        }
+        val payload = rawPayload as? JSONObject ?: return null
+        val normalized = JSONObject()
+        val keys = payload.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val value = payload.opt(key)
+            if (value != null &&
+                value != JSONObject.NULL &&
+                value !is String &&
+                value !is Number &&
+                value !is Boolean
+            ) {
+                return null
+            }
+            normalized.put(key, value)
+        }
+        normalized.put("sourceUrl", senderUrl)
+        return normalized
+    }
 
     private fun error(message: String): JSONObject =
         JSONObject().put("ok", false).put("error", message)

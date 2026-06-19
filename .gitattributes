@@ -1,0 +1,25 @@
+* text=auto
+
+.gitattributes text eol=lf
+gradlew.bat text eol=crlf
+*.ps1 text eol=crlf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.keystore binary
+
+internal-pages/**/*.css text eol=lf
+internal-pages/**/*.html text eol=lf
+internal-pages/**/*.js text eol=lf
+internal-pages/**/*.json text eol=lf
+internal-pages/**/*.ts text eol=lf
+internal-pages/**/*.tsx text eol=lf
+internal-pages/**/*.yaml text eol=lf
+
+app/src/main/assets/**/*.css text eol=lf
+app/src/main/assets/**/*.html text eol=lf
+app/src/main/assets/**/*.js text eol=lf
+app/src/main/assets/**/*.json text eol=lf
