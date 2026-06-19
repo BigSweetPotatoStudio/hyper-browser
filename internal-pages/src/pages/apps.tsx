@@ -252,11 +252,19 @@ function EditAppDialog(props: {
 }) {
   const [name, setName] = useState(props.app.name || "");
   const [startUrl, setStartUrl] = useState(props.app.startUrl);
+  const startUrlInputRef = useRef<HTMLInputElement>(null);
 
   function submit(event: FormEvent) {
     event.preventDefault();
     const cleanUrl = startUrl.trim();
-    if (!cleanUrl) return;
+    if (!cleanUrl) {
+      setStartUrl("");
+      window.requestAnimationFrame(() => {
+        startUrlInputRef.current?.focus();
+        startUrlInputRef.current?.reportValidity();
+      });
+      return;
+    }
     props.onSave(name.trim() || hostLabel(cleanUrl), cleanUrl);
   }
 
@@ -270,7 +278,13 @@ function EditAppDialog(props: {
         </label>
         <label>
           <span>{t("common.url")}</span>
-          <input value={startUrl} inputMode="url" onChange={(event) => setStartUrl(event.currentTarget.value)} />
+          <input
+            ref={startUrlInputRef}
+            value={startUrl}
+            inputMode="url"
+            required
+            onChange={(event) => setStartUrl(event.currentTarget.value)}
+          />
         </label>
         <div className="app-edit-actions">
           <button type="button" onClick={props.onClose}>{t("common.cancel")}</button>
