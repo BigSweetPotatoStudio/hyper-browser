@@ -11,6 +11,7 @@ function AppsPage() {
   const [failed, setFailed] = useState(false);
   const [menuApp, setMenuApp] = useState<WebAppItem | null>(null);
   const [editingApp, setEditingApp] = useState<WebAppItem | null>(null);
+  const [deletingApp, setDeletingApp] = useState<WebAppItem | null>(null);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
@@ -69,9 +70,19 @@ function AppsPage() {
             setMenuApp(null);
           }}
           onDelete={() => {
-            window.hyperBrowser.deleteApp(menuApp.id);
-            setApps((current) => (current || []).filter((app) => app.id !== menuApp.id));
+            setDeletingApp(menuApp);
             setMenuApp(null);
+          }}
+        />
+      )}
+      {deletingApp && (
+        <DeleteAppConfirmDialog
+          app={deletingApp}
+          onClose={() => setDeletingApp(null)}
+          onConfirm={() => {
+            window.hyperBrowser.deleteApp(deletingApp.id);
+            setApps((current) => (current || []).filter((app) => app.id !== deletingApp.id));
+            setDeletingApp(null);
           }}
         />
       )}
@@ -90,6 +101,32 @@ function AppsPage() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+function DeleteAppConfirmDialog(props: {
+  app: WebAppItem;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const label = props.app.name || hostLabel(props.app.startUrl);
+  return (
+    <div className="confirm-scrim" onClick={props.onClose}>
+      <section
+        className="confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-app-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 id="delete-app-title">{t("common.delete")} {label}?</h2>
+        <p>{props.app.startUrl}</p>
+        <div className="confirm-actions">
+          <button type="button" onClick={props.onClose}>{t("common.cancel")}</button>
+          <button className="danger" type="button" onClick={props.onConfirm}>{t("common.delete")}</button>
+        </div>
+      </section>
     </div>
   );
 }
