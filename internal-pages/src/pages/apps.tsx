@@ -11,6 +11,7 @@ function AppsPage() {
   const [failed, setFailed] = useState(false);
   const [menuApp, setMenuApp] = useState<WebAppItem | null>(null);
   const [editingApp, setEditingApp] = useState<WebAppItem | null>(null);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     if (apps !== null) return;
@@ -20,6 +21,7 @@ function AppsPage() {
   }, [apps]);
 
   const items = apps || [];
+  const visibleItems = filterApps(items, query);
 
   return (
     <div className="apps-page">
@@ -35,11 +37,23 @@ function AppsPage() {
         ) : items.length === 0 ? (
           <div className="apps-empty">{t("apps.empty")}</div>
         ) : (
-          <div className="apps-grid" aria-label={t("apps.installedLabel")}>
-            {items.map((app) => (
-              <AppTile app={app} key={app.id} onMenu={setMenuApp} />
-            ))}
-          </div>
+          <>
+            <SearchBox
+              label={t("apps.searchLabel")}
+              placeholder={t("apps.searchPlaceholder")}
+              value={query}
+              onChange={setQuery}
+            />
+            {visibleItems.length === 0 ? (
+              <div className="apps-empty">{t("apps.noMatches")}</div>
+            ) : (
+              <div className="apps-grid" aria-label={t("apps.installedLabel")}>
+                {visibleItems.map((app) => (
+                  <AppTile app={app} key={app.id} onMenu={setMenuApp} />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </main>
       {menuApp && (
@@ -78,6 +92,44 @@ function AppsPage() {
       )}
     </div>
   );
+}
+
+function SearchBox(props: {
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="page-search">
+      <span className="page-search-icon">⌕</span>
+      <input
+        type="search"
+        aria-label={props.label}
+        value={props.value}
+        placeholder={props.placeholder}
+        onChange={(event) => props.onChange(event.currentTarget.value)}
+      />
+      {props.value && (
+        <button className="page-search-clear" type="button" aria-label={t("common.clear")} onClick={() => props.onChange("")}>
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
+function filterApps(items: WebAppItem[], query: string): WebAppItem[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return items;
+  return items.filter((app) => {
+    const fields = [
+      app.name,
+      app.startUrl,
+      hostLabel(app.startUrl),
+    ];
+    return fields.some((field) => field.toLocaleLowerCase().includes(normalizedQuery));
+  });
 }
 
 function AppTile({ app, onMenu }: { app: WebAppItem; onMenu: (app: WebAppItem) => void }) {
