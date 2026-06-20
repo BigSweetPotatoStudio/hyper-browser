@@ -1483,6 +1483,16 @@ private fun BrowserScreen(
                             val url = pageState.url.ifBlank { tab.input }
                             profileStore.toggleBookmark(url, pageState.title, currentIconPath)
                         },
+                        onShowBookmarks = {
+                            tab.input = GeckoSessionController.BOOKMARKS_URL
+                            controller.loadBookmarks()
+                            message = null
+                        },
+                        onShowHistory = {
+                            tab.input = GeckoSessionController.HISTORY_URL
+                            controller.loadHistory()
+                            message = null
+                        },
                         onShowSettings = {
                             tab.input = GeckoSessionController.SETTINGS_URL
                             controller.loadSettings()
