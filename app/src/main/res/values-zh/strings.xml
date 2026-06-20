@@ -55,6 +55,7 @@
     <string name="common_action_share">分享</string>
     <string name="browser_placeholder_search_or_url">搜索或输入网址</string>
     <string name="browser_search_source_bookmark">书签</string>
+    <string name="browser_search_source_webapp">WebApp</string>
     <string name="browser_search_source_history">历史</string>
     <string name="browser_context_title_image_link">图片链接</string>
     <string name="browser_context_title_image">图片</string>

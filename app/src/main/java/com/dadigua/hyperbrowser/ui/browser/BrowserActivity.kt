@@ -1266,10 +1266,16 @@ private fun BrowserScreen(
                     currentUrl = browserAddressText(pageState.url, tab.input),
                     history = history,
                     bookmarks = bookmarks,
+                    webApps = webApps,
                     onCancel = ::closePanel,
                     onGo = { value ->
                         tab.input = value
                         controller.load(value, settings.searchUrlTemplate)
+                        closePanel()
+                        message = null
+                    },
+                    onOpenWebApp = { webAppId ->
+                        activity.startActivity(WebAppActivity.intent(activity, webAppId, true))
                         closePanel()
                         message = null
                     }

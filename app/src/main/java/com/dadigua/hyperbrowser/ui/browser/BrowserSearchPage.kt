@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.browser.BrowserBookmark
 import com.dadigua.hyperbrowser.browser.BrowserHistoryEntry
+import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import kotlinx.coroutines.launch
 
@@ -66,11 +67,74 @@ private val SearchActionBarHeight = 48.dp
 private val SearchActionButtonSize = 40.dp
 private val SearchActionIconSize = 24.sp
 
-private data class SearchSuggestion(
+internal enum class BrowserSearchSuggestionKind {
+    Bookmark,
+    WebApp,
+    History
+}
+
+internal data class BrowserSearchSuggestion(
     val title: String,
     val url: String,
-    val source: String
+    val source: String,
+    val kind: BrowserSearchSuggestionKind,
+    val appId: String? = null
 )
+
+internal fun buildBrowserSearchSuggestions(
+    queryText: String,
+    history: List<BrowserHistoryEntry>,
+    bookmarks: List<BrowserBookmark>,
+    webApps: List<WebAppDefinition>,
+    bookmarkSource: String,
+    webAppSource: String,
+    historySource: String,
+    limit: Int = 8
+): List<BrowserSearchSuggestion> {
+    val needle = queryText.trim().lowercase()
+    if (needle.isBlank()) return emptyList()
+
+    val seenPageUrls = mutableSetOf<String>()
+    val suggestions = mutableListOf<BrowserSearchSuggestion>()
+    bookmarks.forEach { bookmark ->
+        if (seenPageUrls.add(bookmark.url)) {
+            suggestions += BrowserSearchSuggestion(
+                title = bookmark.title,
+                url = bookmark.url,
+                source = bookmarkSource,
+                kind = BrowserSearchSuggestionKind.Bookmark
+            )
+        }
+    }
+    webApps.forEach { webApp ->
+        if (webApp.id.isNotBlank() && webApp.startUrl.isNotBlank()) {
+            suggestions += BrowserSearchSuggestion(
+                title = webApp.name,
+                url = webApp.startUrl,
+                source = webAppSource,
+                kind = BrowserSearchSuggestionKind.WebApp,
+                appId = webApp.id
+            )
+        }
+    }
+    history.filterNot { GeckoSessionController.isInternalUrl(it.url) }.forEach { entry ->
+        if (seenPageUrls.add(entry.url)) {
+            suggestions += BrowserSearchSuggestion(
+                title = entry.title,
+                url = entry.url,
+                source = historySource,
+                kind = BrowserSearchSuggestionKind.History
+            )
+        }
+    }
+
+    return suggestions
+        .filter {
+            it.title.lowercase().contains(needle) ||
+                it.url.lowercase().contains(needle)
+        }
+        .take(limit)
+}
 
 @Composable
 internal fun SearchPage(
@@ -79,8 +143,10 @@ internal fun SearchPage(
     currentUrl: String,
     history: List<BrowserHistoryEntry>,
     bookmarks: List<BrowserBookmark>,
+    webApps: List<WebAppDefinition>,
     onCancel: () -> Unit,
-    onGo: (String) -> Unit
+    onGo: (String) -> Unit,
+    onOpenWebApp: (String) -> Unit
 ) {
     var query by remember { mutableStateOf(TextFieldValue(initialInput)) }
     val queryText = query.text
@@ -90,24 +156,20 @@ internal fun SearchPage(
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     val bookmarkSource = stringResource(R.string.browser_search_source_bookmark)
+    val webAppSource = stringResource(R.string.browser_search_source_webapp)
     val historySource = stringResource(R.string.browser_search_source_history)
     val searchPlaceholder = stringResource(R.string.browser_placeholder_search_or_url)
     val goLabel = stringResource(R.string.common_action_go)
-    val suggestions = remember(queryText, history, bookmarks, bookmarkSource, historySource) {
-        val needle = queryText.trim().lowercase()
-        if (needle.isBlank()) {
-            emptyList()
-        } else {
-            (bookmarks.map { SearchSuggestion(it.title, it.url, bookmarkSource) } +
-                history.filterNot { GeckoSessionController.isInternalUrl(it.url) }
-                    .map { SearchSuggestion(it.title, it.url, historySource) })
-                .distinctBy { it.url }
-                .filter {
-                    it.title.lowercase().contains(needle) ||
-                        it.url.lowercase().contains(needle)
-                }
-                .take(8)
-        }
+    val suggestions = remember(queryText, history, bookmarks, webApps, bookmarkSource, webAppSource, historySource) {
+        buildBrowserSearchSuggestions(
+            queryText = queryText,
+            history = history,
+            bookmarks = bookmarks,
+            webApps = webApps,
+            bookmarkSource = bookmarkSource,
+            webAppSource = webAppSource,
+            historySource = historySource
+        )
     }
 
     fun submit(value: String = queryText) {
@@ -115,6 +177,15 @@ internal fun SearchPage(
         if (trimmed.isBlank()) return
         keyboardController?.hide()
         onGo(trimmed)
+    }
+
+    fun openSuggestion(suggestion: BrowserSearchSuggestion) {
+        keyboardController?.hide()
+        if (suggestion.kind == BrowserSearchSuggestionKind.WebApp && !suggestion.appId.isNullOrBlank()) {
+            onOpenWebApp(suggestion.appId)
+        } else {
+            onGo(suggestion.url)
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -204,7 +275,7 @@ internal fun SearchPage(
         } else if (suggestions.isNotEmpty()) {
             SearchSuggestionPanel(
                 suggestions = suggestions,
-                onOpen = { submit(it) }
+                onOpen = ::openSuggestion
             )
         }
     }
@@ -295,8 +366,8 @@ private fun CompactActionButton(
 
 @Composable
 private fun SearchSuggestionPanel(
-    suggestions: List<SearchSuggestion>,
-    onOpen: (String) -> Unit
+    suggestions: List<BrowserSearchSuggestion>,
+    onOpen: (BrowserSearchSuggestion) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -309,13 +380,17 @@ private fun SearchSuggestionPanel(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onOpen(suggestion.url) }
+                        .clickable { onOpen(suggestion) }
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = if (suggestion.source == stringResource(R.string.browser_search_source_bookmark)) "★" else "◷",
+                        text = when (suggestion.kind) {
+                            BrowserSearchSuggestionKind.Bookmark -> "★"
+                            BrowserSearchSuggestionKind.WebApp -> "▣"
+                            BrowserSearchSuggestionKind.History -> "◷"
+                        },
                         color = Color(0xFF5F6368),
                         fontSize = 18.sp,
                         modifier = Modifier.width(24.dp)
