@@ -13,10 +13,19 @@ function HomePage() {
 
   useEffect(() => {
     if (recent !== null) return;
-    window.hyperBrowser.requestHomeData()
-      .then(setRecent)
-      .catch(() => setFailed(true));
+    loadRecent();
   }, [recent]);
+
+  function loadRecent() {
+    setFailed(false);
+    setRecent(null);
+    window.hyperBrowser.requestHomeData()
+      .then((items) => {
+        setRecent(items);
+        setFailed(false);
+      })
+      .catch(() => setFailed(true));
+  }
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -52,7 +61,10 @@ function HomePage() {
       </nav>
       <p className="section-title">{t("home.recent")}</p>
       {failed ? (
-        <div className="empty">{t("home.recentFailed")}</div>
+        <div className="empty">
+          {t("home.recentFailed")}{" "}
+          <button className="go-button" type="button" onClick={loadRecent}>{t("common.retry")}</button>
+        </div>
       ) : recent === null ? (
         <div className="empty">{t("home.recentLoading")}</div>
       ) : items.length === 0 ? (
