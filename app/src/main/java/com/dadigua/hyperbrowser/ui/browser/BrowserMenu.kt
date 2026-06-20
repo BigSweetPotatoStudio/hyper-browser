@@ -18,11 +18,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.AddToHomeScreen
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Bookmarks
 import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.BookmarkRemove
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Icon
@@ -61,6 +63,8 @@ internal fun BrowserMenuPanel(
     onForward: () -> Unit,
     onReload: () -> Unit,
     onToggleBookmark: () -> Unit,
+    onShowBookmarks: () -> Unit,
+    onShowHistory: () -> Unit,
     onShowSettings: () -> Unit,
     onShowDownloads: () -> Unit,
     onShowExtensions: () -> Unit,
@@ -133,6 +137,16 @@ internal fun BrowserMenuPanel(
             }
         }
         MenuGroupBox {
+            BrowserMenuRow(
+                label = stringResource(R.string.library_bookmarks_title),
+                leadingIconVector = Icons.Outlined.Bookmarks,
+                onClick = onShowBookmarks
+            )
+            BrowserMenuRow(
+                label = stringResource(R.string.library_history_title),
+                leadingIconVector = Icons.Outlined.History,
+                onClick = onShowHistory
+            )
             val activeDownloads = downloads.count { it.status == DownloadStatus.Running || it.status == DownloadStatus.Queued }
             BrowserMenuRow(
                 label = stringResource(R.string.menu_downloads),
