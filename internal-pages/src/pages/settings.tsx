@@ -441,15 +441,21 @@ function SettingsPage() {
         <button className="settings-help" type="button" aria-label={t("settings.help")}>?</button>
       </header>
 
-      <label className="settings-search">
+      <div className="settings-search" role="search">
         <span className="settings-search-icon" aria-hidden="true">⌕</span>
         <input
           type="search"
+          aria-label={t("settings.searchPlaceholder")}
           placeholder={t("settings.searchPlaceholder")}
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
         />
-      </label>
+        {query && (
+          <button className="page-search-clear" type="button" aria-label={t("common.clear")} onClick={() => setQuery("")}>
+            ×
+          </button>
+        )}
+      </div>
 
       <section className="settings-section">
         <h2>{t("settings.basic")}</h2>
