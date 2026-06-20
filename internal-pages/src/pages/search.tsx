@@ -9,14 +9,25 @@ import type { SearchSuggestionItem } from "../hyper-browser";
 function SearchPage() {
   const [query, setQuery] = useState(() => readHashParam("q") || "");
   const [suggestions, setSuggestions] = useState<SearchSuggestionItem[]>([]);
+  const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    window.hyperBrowser.requestSearchData()
-      .then(setSuggestions)
-      .catch(() => setFailed(true));
+    loadSuggestions();
   }, []);
+
+  function loadSuggestions() {
+    setLoading(true);
+    setFailed(false);
+    window.hyperBrowser.requestSearchData()
+      .then((items) => {
+        setSuggestions(items);
+        setFailed(false);
+      })
+      .catch(() => setFailed(true))
+      .finally(() => setLoading(false));
+  }
 
   useEffect(() => {
     window.setTimeout(() => {
@@ -71,8 +82,13 @@ function SearchPage() {
 
       <section className="suggestion-section">
         <h2>{t("search.heading")}</h2>
-        {failed ? (
-          <div className="empty">{t("search.failed")}</div>
+        {loading ? (
+          <div className="empty">{t("search.loading")}</div>
+        ) : failed ? (
+          <div className="empty">
+            {t("search.failed")}{" "}
+            <button className="go-button" type="button" onClick={loadSuggestions}>{t("common.retry")}</button>
+          </div>
         ) : query.trim() === "" ? (
           <div className="empty">{t("search.emptyQuery")}</div>
         ) : matches.length === 0 ? (
