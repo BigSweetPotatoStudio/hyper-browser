@@ -14,10 +14,19 @@ function HistoryPage() {
 
   useEffect(() => {
     if (history !== null) return;
-    window.hyperBrowser.requestHistoryData()
-      .then(setHistory)
-      .catch(() => setFailed(true));
+    loadHistory();
   }, [history]);
+
+  function loadHistory() {
+    setFailed(false);
+    setHistory(null);
+    window.hyperBrowser.requestHistoryData()
+      .then((items) => {
+        setHistory(items);
+        setFailed(false);
+      })
+      .catch(() => setFailed(true));
+  }
 
   function remove(url: string) {
     setHistory((items) => (items || []).filter((item) => item.url !== url));
@@ -42,7 +51,10 @@ function HistoryPage() {
       </header>
       <main className="content">
         {failed ? (
-          <div className="empty">{t("history.failed")}</div>
+          <div className="empty">
+            {t("history.failed")}{" "}
+            <button className="go-button" type="button" onClick={loadHistory}>{t("history.retry")}</button>
+          </div>
         ) : history === null ? (
           <div className="empty">{t("history.loading")}</div>
         ) : items.length === 0 ? (
