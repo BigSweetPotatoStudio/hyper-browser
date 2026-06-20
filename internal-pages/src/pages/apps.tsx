@@ -16,10 +16,19 @@ function AppsPage() {
 
   useEffect(() => {
     if (apps !== null) return;
-    window.hyperBrowser.requestAppsData()
-      .then(setApps)
-      .catch(() => setFailed(true));
+    loadApps();
   }, [apps]);
+
+  function loadApps() {
+    setFailed(false);
+    setApps(null);
+    window.hyperBrowser.requestAppsData()
+      .then((items) => {
+        setApps(items);
+        setFailed(false);
+      })
+      .catch(() => setFailed(true));
+  }
 
   const items = apps || [];
   const visibleItems = filterApps(items, query);
@@ -32,7 +41,10 @@ function AppsPage() {
       </header>
       <main className="apps-content">
         {failed ? (
-          <div className="apps-empty">{t("apps.failed")}</div>
+          <div className="apps-empty">
+            {t("apps.failed")}{" "}
+            <button className="go-button" type="button" onClick={loadApps}>{t("apps.retry")}</button>
+          </div>
         ) : apps === null ? (
           <div className="apps-empty">{t("apps.loading")}</div>
         ) : items.length === 0 ? (
