@@ -440,6 +440,7 @@ function SettingsPage() {
         <span className="settings-search-icon" aria-hidden="true">⌕</span>
         <input
           type="search"
+          aria-label={t("settings.searchPlaceholder")}
           placeholder={t("settings.searchPlaceholder")}
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
