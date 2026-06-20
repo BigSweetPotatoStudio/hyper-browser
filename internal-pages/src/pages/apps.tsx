@@ -197,44 +197,56 @@ function AppTile({ app, onMenu }: { app: WebAppItem; onMenu: (app: WebAppItem) =
   }
 
   return (
-    <button
-      className="app-tile"
-      type="button"
-      onClick={() => {
-        clearLongPress();
-        if (longPressed.current) {
-          longPressed.current = false;
-          return;
-        }
-        window.hyperBrowser.openApp(app.id);
-      }}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        clearLongPress();
-        onMenu(app);
-      }}
-      onPointerDown={() => {
-        clearLongPress();
-        longPressed.current = false;
-        longPressTimer.current = window.setTimeout(() => {
-          longPressed.current = true;
+    <div className="app-tile" title={label}>
+      <button
+        className="app-launch"
+        type="button"
+        onClick={() => {
+          clearLongPress();
+          if (longPressed.current) {
+            longPressed.current = false;
+            return;
+          }
+          window.hyperBrowser.openApp(app.id);
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          clearLongPress();
           onMenu(app);
-        }, 560);
-      }}
-      onPointerMove={clearLongPress}
-      onPointerCancel={clearLongPress}
-      onPointerUp={clearLongPress}
-      onPointerLeave={clearLongPress}
-      title={label}
-    >
-      <span
-        className={hasIcon ? "app-icon app-icon-image" : "app-icon"}
-        style={{ background: hasIcon ? "transparent" : color.background, color: color.foreground }}
+        }}
+        onPointerDown={() => {
+          clearLongPress();
+          longPressed.current = false;
+          longPressTimer.current = window.setTimeout(() => {
+            longPressed.current = true;
+            onMenu(app);
+          }, 560);
+        }}
+        onPointerMove={clearLongPress}
+        onPointerCancel={clearLongPress}
+        onPointerUp={clearLongPress}
+        onPointerLeave={clearLongPress}
       >
-        {hasIcon ? <img src={app.iconDataUrl!} alt="" /> : icon}
-      </span>
-      <span className="app-label">{label}</span>
-    </button>
+        <span
+          className={hasIcon ? "app-icon app-icon-image" : "app-icon"}
+          style={{ background: hasIcon ? "transparent" : color.background, color: color.foreground }}
+        >
+          {hasIcon ? <img src={app.iconDataUrl!} alt="" /> : icon}
+        </span>
+        <span className="app-label">{label}</span>
+      </button>
+      <button
+        className="app-tile-menu"
+        type="button"
+        aria-label={t("apps.actionsLabel", { name: label })}
+        onClick={() => {
+          clearLongPress();
+          onMenu(app);
+        }}
+      >
+        ⋮
+      </button>
+    </div>
   );
 }
 
