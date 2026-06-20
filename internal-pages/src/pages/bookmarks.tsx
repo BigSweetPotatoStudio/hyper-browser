@@ -15,10 +15,19 @@ function BookmarksPage() {
 
   useEffect(() => {
     if (bookmarks !== null) return;
-    window.hyperBrowser.requestBookmarksData()
-      .then(setBookmarks)
-      .catch(() => setFailed(true));
+    loadBookmarks();
   }, [bookmarks]);
+
+  function loadBookmarks() {
+    setFailed(false);
+    setBookmarks(null);
+    window.hyperBrowser.requestBookmarksData()
+      .then((items) => {
+        setBookmarks(items);
+        setFailed(false);
+      })
+      .catch(() => setFailed(true));
+  }
 
   function remove(url: string) {
     setBookmarks((items) => (items || []).filter((item) => item.url !== url));
@@ -49,7 +58,10 @@ function BookmarksPage() {
       </header>
       <main className="content">
         {failed ? (
-          <div className="empty">{t("bookmarks.failed")}</div>
+          <div className="empty">
+            {t("bookmarks.failed")}{" "}
+            <button className="go-button" type="button" onClick={loadBookmarks}>{t("bookmarks.retry")}</button>
+          </div>
         ) : bookmarks === null ? (
           <div className="empty">{t("bookmarks.loading")}</div>
         ) : items.length === 0 ? (
