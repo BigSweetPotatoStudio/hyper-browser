@@ -74,6 +74,18 @@ function SettingsPage() {
   const updateSettingsVisibleExpanded = updateSettingsExpanded || hasSettingsQuery;
 
   useEffect(() => {
+    loadSettings();
+    window.hyperBrowser.requestBatteryOptimizationState()
+      .then((value) => setBatteryOptimization(value))
+      .catch(() => setBatteryMessage(t("settings.batteryStateUnavailable")));
+    if (!didAutoCheckUpdateRef.current) {
+      didAutoCheckUpdateRef.current = true;
+      checkUpdate(false);
+    }
+  }, []);
+
+  function loadSettings() {
+    setLoadError("");
     window.hyperBrowser.requestSettingsData()
       .then((value) => {
         const storedPreference = getLocalePreference();
@@ -98,14 +110,7 @@ function SettingsPage() {
         }
       })
       .catch(() => setLoadError(t("settings.unavailable")));
-    window.hyperBrowser.requestBatteryOptimizationState()
-      .then((value) => setBatteryOptimization(value))
-      .catch(() => setBatteryMessage(t("settings.batteryStateUnavailable")));
-    if (!didAutoCheckUpdateRef.current) {
-      didAutoCheckUpdateRef.current = true;
-      checkUpdate(false);
-    }
-  }, []);
+  }
 
   useEffect(() => {
     if (!updateDownload || !isActiveDownloadState(updateDownload.status)) return;
@@ -905,7 +910,14 @@ function SettingsPage() {
             )}
           </div>
         )}
-        {loadError && <p className="settings-message">{loadError}</p>}
+        {loadError && (
+          <>
+            <p className="settings-message">{loadError}</p>
+            <div className="settings-actions">
+              <button className="settings-action" type="button" onClick={loadSettings}>{t("settings.retryLoad")}</button>
+            </div>
+          </>
+        )}
       </section>
     </main>
   );
