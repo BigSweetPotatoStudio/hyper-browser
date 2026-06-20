@@ -19,9 +19,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -47,7 +50,10 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -65,7 +71,7 @@ private val LibraryActionBarHeight = 48.dp
 private val LibraryActionButtonSize = 40.dp
 private val LibraryActionIconSize = 24.sp
 
-private data class DownloadMetaLabels(
+internal data class DownloadMetaLabels(
     val queued: String,
     val downloading: String,
     val complete: String,
@@ -166,6 +172,19 @@ internal fun DownloadsPage(
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     val orderedDownloads = remember(downloads) { downloads.sortedByDescending { it.createdAt } }
+    var query by remember { mutableStateOf("") }
+    val downloadMetaLabels = DownloadMetaLabels(
+        queued = stringResource(R.string.download_status_queued),
+        downloading = stringResource(R.string.download_status_downloading),
+        complete = stringResource(R.string.download_status_complete),
+        failed = stringResource(R.string.download_status_failed),
+        canceled = stringResource(R.string.download_status_canceled),
+        unknownSize = stringResource(R.string.download_unknown_size),
+        unknown = stringResource(R.string.download_unknown)
+    )
+    val visibleDownloads = remember(orderedDownloads, query, downloadMetaLabels) {
+        orderedDownloads.filter { downloadMatchesQuery(it, query, downloadMetaLabels) }
+    }
     val clearableCount = orderedDownloads.count {
         canClear(it) &&
             (it.status == DownloadStatus.Completed ||
@@ -227,46 +246,72 @@ internal fun DownloadsPage(
                 }
             }
         } else {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(orderedDownloads, key = { it.id }) { entry ->
-                    DownloadRow(
-                        entry = entry,
-                        onOpen = {
-                            if (canRetry(entry) && entry.status == DownloadStatus.Failed) {
-                                onRetry(entry)
-                            } else {
-                                onOpen(entry)
-                            }
-                        },
-                        onCopyUrl = {
-                            scope.launch {
-                                clipboard.setClipEntry(
-                                    ClipEntry(ClipData.newPlainText("download_url", entry.sourceUrl))
-                                )
-                            }
-                            Toast.makeText(context, context.getString(R.string.library_downloads_url_copied), Toast.LENGTH_SHORT).show()
-                        },
-                        onRemove = {
-                            pendingDelete = entry
-                            deleteFile = true
-                        },
-                        onRetry = if (canRetry(entry)) {
-                            { onRetry(entry) }
-                        } else {
-                            null
-                        },
-                        onCancel = if (
-                            canCancel(entry) &&
-                            (entry.status == DownloadStatus.Queued || entry.status == DownloadStatus.Running)
-                        ) {
-                            { onCancel(entry) }
-                        } else {
-                            null
+            Column(modifier = Modifier.fillMaxSize()) {
+                DownloadSearchField(
+                    query = query,
+                    onQueryChange = { query = it }
+                )
+                if (visibleDownloads.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            stringResource(R.string.library_downloads_no_matches),
+                            modifier = Modifier.padding(28.dp),
+                            color = Color(0xFF5F6368)
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
+                        items(visibleDownloads, key = { it.id }) { entry ->
+                            DownloadRow(
+                                entry = entry,
+                                downloadMetaLabels = downloadMetaLabels,
+                                onOpen = {
+                                    if (canRetry(entry) && entry.status == DownloadStatus.Failed) {
+                                        onRetry(entry)
+                                    } else {
+                                        onOpen(entry)
+                                    }
+                                },
+                                onCopyUrl = {
+                                    scope.launch {
+                                        clipboard.setClipEntry(
+                                            ClipEntry(ClipData.newPlainText("download_url", entry.sourceUrl))
+                                        )
+                                    }
+                                    Toast.makeText(context, context.getString(R.string.library_downloads_url_copied), Toast.LENGTH_SHORT).show()
+                                },
+                                onRemove = {
+                                    pendingDelete = entry
+                                    deleteFile = true
+                                },
+                                onRetry = if (canRetry(entry)) {
+                                    { onRetry(entry) }
+                                } else {
+                                    null
+                                },
+                                onCancel = if (
+                                    canCancel(entry) &&
+                                    (entry.status == DownloadStatus.Queued || entry.status == DownloadStatus.Running)
+                                ) {
+                                    { onCancel(entry) }
+                                } else {
+                                    null
+                                }
+                            )
+                            HorizontalDivider(color = Color(0xFFE8EAED))
                         }
-                    )
-                    HorizontalDivider(color = Color(0xFFE8EAED))
+                        item { Spacer(modifier = Modifier.height(36.dp)) }
+                    }
                 }
-                item { Spacer(modifier = Modifier.height(36.dp)) }
             }
         }
     }
@@ -338,21 +383,13 @@ internal fun DownloadsPage(
 @Composable
 private fun DownloadRow(
     entry: BrowserDownloadEntry,
+    downloadMetaLabels: DownloadMetaLabels,
     onOpen: () -> Unit,
     onCopyUrl: () -> Unit,
     onRemove: () -> Unit,
     onRetry: (() -> Unit)?,
     onCancel: (() -> Unit)?
 ) {
-    val downloadMetaLabels = DownloadMetaLabels(
-        queued = stringResource(R.string.download_status_queued),
-        downloading = stringResource(R.string.download_status_downloading),
-        complete = stringResource(R.string.download_status_complete),
-        failed = stringResource(R.string.download_status_failed),
-        canceled = stringResource(R.string.download_status_canceled),
-        unknownSize = stringResource(R.string.download_unknown_size),
-        unknown = stringResource(R.string.download_unknown)
-    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -408,6 +445,65 @@ private fun DownloadRow(
         }
         IconButton(onClick = onRemove) {
             Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.library_downloads_remove_content_description))
+        }
+    }
+}
+
+@Composable
+private fun DownloadSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit
+) {
+    val searchLabel = stringResource(R.string.library_downloads_search_label)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp, vertical = 12.dp)
+            .height(48.dp)
+            .clip(CircleShape)
+            .background(Color(0xFFE7E9F1))
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Search,
+            contentDescription = null,
+            tint = Color(0xFF5F6368),
+            modifier = Modifier.size(20.dp)
+        )
+        BasicTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            textStyle = MaterialTheme.typography.titleMedium.copy(color = Color(0xFF202124)),
+            modifier = Modifier
+                .weight(1f)
+                .semantics { contentDescription = searchLabel },
+            decorationBox = { inner ->
+                if (query.isBlank()) {
+                    Text(
+                        stringResource(R.string.library_downloads_search_placeholder),
+                        color = Color(0xFF6F737B),
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                inner()
+            }
+        )
+        if (query.isNotBlank()) {
+            Text(
+                "×",
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable { onQueryChange("") }
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                fontSize = 24.sp,
+                color = Color(0xFF5F6368)
+            )
         }
     }
 }
@@ -561,6 +657,20 @@ private fun downloadMeta(entry: BrowserDownloadEntry, labels: DownloadMetaLabels
     val time = formatVisitTime(entry.completedAt ?: entry.createdAt)
     val error = entry.error?.takeIf { it.isNotBlank() }
     return listOfNotNull(status, size, time, error).joinToString(" · ")
+}
+
+internal fun downloadMatchesQuery(
+    entry: BrowserDownloadEntry,
+    query: String,
+    labels: DownloadMetaLabels
+): Boolean {
+    val normalizedQuery = query.trim().lowercase(Locale.ROOT)
+    if (normalizedQuery.isBlank()) return true
+    return listOf(
+        entry.name,
+        entry.sourceUrl,
+        downloadMeta(entry, labels)
+    ).any { field -> field.lowercase(Locale.ROOT).contains(normalizedQuery) }
 }
 
 private fun formatBytes(bytes: Long, unknownLabel: String): String {
