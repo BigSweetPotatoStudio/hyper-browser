@@ -7,6 +7,7 @@ import { t } from "../i18n";
 import type { WebAppItem } from "../hyper-browser";
 
 const appsChangedEvent = "hyperbrowser:apps-changed";
+const editRefreshWindowMs = 5 * 60 * 1000;
 
 function AppsPage() {
   const [apps, setApps] = useState<WebAppItem[] | null>(() => readBootstrapData<WebAppItem>());
@@ -14,10 +15,11 @@ function AppsPage() {
   const [menuApp, setMenuApp] = useState<WebAppItem | null>(null);
   const [deletingApp, setDeletingApp] = useState<WebAppItem | null>(null);
   const [query, setQuery] = useState("");
+  const pendingEditRefreshUntil = useRef(0);
 
-  const loadApps = useCallback(() => {
+  const loadApps = useCallback((showLoading = true) => {
     setFailed(false);
-    setApps(null);
+    if (showLoading) setApps(null);
     window.hyperBrowser.requestAppsData()
       .then((items) => {
         setApps(items);
@@ -28,13 +30,34 @@ function AppsPage() {
 
   useEffect(() => {
     if (apps !== null) return;
-    loadApps();
+    loadApps(true);
   }, [apps, loadApps]);
 
   useEffect(() => {
-    const handleAppsChanged = () => loadApps();
+    const refreshSilently = () => loadApps(false);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== "hidden") refreshSilently();
+    };
+    const handleAppsChanged = () => refreshSilently();
     window.addEventListener(appsChangedEvent, handleAppsChanged);
-    return () => window.removeEventListener(appsChangedEvent, handleAppsChanged);
+    window.addEventListener("focus", refreshSilently);
+    window.addEventListener("pageshow", refreshSilently);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener(appsChangedEvent, handleAppsChanged);
+      window.removeEventListener("focus", refreshSilently);
+      window.removeEventListener("pageshow", refreshSilently);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [loadApps]);
+
+  useEffect(() => {
+    const refreshTimer = window.setInterval(() => {
+      if (pendingEditRefreshUntil.current <= Date.now()) return;
+      if (document.visibilityState === "hidden") return;
+      loadApps(false);
+    }, 1500);
+    return () => window.clearInterval(refreshTimer);
   }, [loadApps]);
 
   const items = apps || [];
@@ -85,7 +108,9 @@ function AppsPage() {
             setMenuApp(null);
           }}
           onEdit={() => {
+            pendingEditRefreshUntil.current = Date.now() + editRefreshWindowMs;
             window.hyperBrowser.editApp(menuApp.id);
+            window.setTimeout(() => loadApps(false), 800);
             setMenuApp(null);
           }}
           onDelete={() => {
