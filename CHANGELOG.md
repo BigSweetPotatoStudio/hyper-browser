@@ -6,6 +6,14 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+## 0.1.7-beta.3 - 2026-06-21
+
+- Added WebApp search results and direct WebApp launching from search.
+- Added download record search and Library shortcuts for bookmarks, history, downloads, and WebApps.
+- Added confirmation flows for deleting WebApps and bookmarks, clearing history, and uninstalling extensions.
+- Improved bookmark and WebApp editing with URL validation and explicit custom search save behavior.
+- Improved built-in browser pages with retry and clear actions, clearer search suggestion scope, and safer bridge handling.
+
 ## 0.1.7-beta.2 - 2026-06-18
 
 - Added HTTP authentication and Gecko prompt handling for protected sites and browser permission flows.
