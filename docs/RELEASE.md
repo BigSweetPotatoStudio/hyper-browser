@@ -111,7 +111,6 @@ Expected local release outputs:
 
 ```text
 app/build/outputs/apk/release/app-arm64-v8a-release-unsigned.apk
-app/build/outputs/apk/release/app-armeabi-v7a-release-unsigned.apk
 app/build/outputs/apk/release/app-x86_64-release-unsigned.apk
 ```
 
@@ -129,7 +128,6 @@ The `Android Release APK` workflow runs on `v*` tags. For a tag release it publi
 
 ```text
 HyperBrowser-arm64-v8a-release.apk
-HyperBrowser-armeabi-v7a-release.apk
 HyperBrowser-x86_64-release.apk
 ```
 

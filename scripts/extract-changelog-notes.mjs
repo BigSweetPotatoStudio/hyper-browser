@@ -73,7 +73,6 @@ ${markdownNotes}
 ### APK Selection
 
 - \`HyperBrowser-arm64-v8a-release.apk\`: most modern Android phones.
-- \`HyperBrowser-armeabi-v7a-release.apk\`: older 32-bit Android devices.
 - \`HyperBrowser-x86_64-release.apk\`: some emulators and x86 Android devices.
 
 ### Note

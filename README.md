@@ -11,7 +11,6 @@ Hyper Browser 是一个 Android 原生浏览器和 WebApp 容器项目，使用 
 公开发布包通过 GitHub Releases 分发，APK 按 CPU 架构拆分：
 
 - `arm64-v8a`：大多数现代 Android 手机。
-- `armeabi-v7a`：较老的 32 位 Android 设备。
 - `x86_64`：部分模拟器和 x86 Android 设备。
 
 如果不确定设备架构，优先尝试 `arm64-v8a`。安装 APK 时需要允许当前安装来源安装未知应用。

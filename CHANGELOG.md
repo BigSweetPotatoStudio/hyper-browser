@@ -6,6 +6,8 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+- Removed future `armeabi-v7a` release APK builds; upcoming releases target `arm64-v8a` phones and `x86_64` environments.
+
 ## 0.1.7 - 2026-06-22
 
 - Added WebApp search results and direct WebApp launching from search.
