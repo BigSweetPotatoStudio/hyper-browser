@@ -1,10 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
 import { readBootstrapData } from "../bootstrap";
 import { t } from "../i18n";
 import type { WebAppItem } from "../hyper-browser";
+
+const appsChangedEvent = "hyperbrowser:apps-changed";
 
 function AppsPage() {
   const [apps, setApps] = useState<WebAppItem[] | null>(() => readBootstrapData<WebAppItem>());
@@ -13,12 +15,7 @@ function AppsPage() {
   const [deletingApp, setDeletingApp] = useState<WebAppItem | null>(null);
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    if (apps !== null) return;
-    loadApps();
-  }, [apps]);
-
-  function loadApps() {
+  const loadApps = useCallback(() => {
     setFailed(false);
     setApps(null);
     window.hyperBrowser.requestAppsData()
@@ -27,7 +24,18 @@ function AppsPage() {
         setFailed(false);
       })
       .catch(() => setFailed(true));
-  }
+  }, []);
+
+  useEffect(() => {
+    if (apps !== null) return;
+    loadApps();
+  }, [apps, loadApps]);
+
+  useEffect(() => {
+    const handleAppsChanged = () => loadApps();
+    window.addEventListener(appsChangedEvent, handleAppsChanged);
+    return () => window.removeEventListener(appsChangedEvent, handleAppsChanged);
+  }, [loadApps]);
 
   const items = apps || [];
   const visibleItems = filterApps(items, query);

@@ -1062,6 +1062,13 @@ class GeckoSessionController(
         loadInternalPage(APPS_URL, appContext.getString(R.string.internal_title_apps), "apps.html", appsJson)
     }
 
+    fun notifyAppsChanged() {
+        if (!isAppsUrl(_state.value.url)) return
+        runCatching {
+            session.loadUri("javascript:window.dispatchEvent(new Event('hyperbrowser:apps-changed'));void 0")
+        }
+    }
+
     fun loadBookmarks(bookmarksJson: String? = null) {
         lastLoadTarget = BOOKMARKS_URL
         loadInternalPage(BOOKMARKS_URL, appContext.getString(R.string.internal_title_bookmarks), "bookmarks.html", bookmarksJson)

@@ -879,8 +879,7 @@ private fun BrowserScreen(
 
     fun refreshAppsPageIfVisible() {
         if (GeckoSessionController.isAppsUrl(pageState.url)) {
-            tab.input = GeckoSessionController.APPS_URL
-            controller.loadApps()
+            controller.notifyAppsChanged()
         }
     }
 
