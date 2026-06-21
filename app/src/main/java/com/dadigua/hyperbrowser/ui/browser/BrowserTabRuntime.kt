@@ -22,6 +22,7 @@ import com.dadigua.hyperbrowser.gecko.GeckoSharePromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoSessionCloseResult
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.HyperRoute
+import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.json.JSONObject
 import java.util.UUID
@@ -160,7 +161,7 @@ internal class BrowserTabRuntime private constructor(
             loadImmediately: Boolean = true,
             restoredSessionState: GeckoSession.SessionState? = null,
             onHyperRoute: (HyperRoute) -> Unit = {},
-            onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
+            onHyperBridgeMessage: (JSONObject) -> GeckoResult<Any> = { GeckoResult.fromValue(JSONObject().put("ok", false).toString()) },
             onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
             onAuthPrompt: (GeckoAuthPromptRequest) -> Unit = { it.dismiss() },
             onPrompt: (GeckoPromptRequest) -> Unit = { it.dismiss() },
@@ -251,7 +252,7 @@ internal class BrowserTabRuntime private constructor(
             app: HyperBrowserApp,
             request: ExtensionNewTabRequest,
             onHyperRoute: (HyperRoute) -> Unit = {},
-            onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
+            onHyperBridgeMessage: (JSONObject) -> GeckoResult<Any> = { GeckoResult.fromValue(JSONObject().put("ok", false).toString()) },
             onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
             onAuthPrompt: (GeckoAuthPromptRequest) -> Unit = { it.dismiss() },
             onPrompt: (GeckoPromptRequest) -> Unit = { it.dismiss() },
@@ -341,7 +342,7 @@ internal class BrowserTabRuntime private constructor(
             session: GeckoSession,
             openerTabId: String? = null,
             onHyperRoute: (HyperRoute) -> Unit = {},
-            onHyperBridgeMessage: (JSONObject) -> JSONObject = { JSONObject().put("ok", false) },
+            onHyperBridgeMessage: (JSONObject) -> GeckoResult<Any> = { GeckoResult.fromValue(JSONObject().put("ok", false).toString()) },
             onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
             onAuthPrompt: (GeckoAuthPromptRequest) -> Unit = { it.dismiss() },
             onPrompt: (GeckoPromptRequest) -> Unit = { it.dismiss() },

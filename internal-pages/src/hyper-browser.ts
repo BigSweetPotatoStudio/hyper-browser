@@ -179,7 +179,7 @@ type HyperBrowserApi = {
   clearHistory(): void;
   openApp(id: string): void;
   pinApp(id: string): void;
-  editApp(id: string): void;
+  editApp(id: string): Promise<WebAppItem[]>;
   deleteApp(id: string): void;
 };
 
@@ -215,12 +215,18 @@ function command(type: HyperBridgeMessageType, params?: BridgePayload) {
   send(type, params).catch((error) => console.error(error));
 }
 
+function itemsFromResponse<T>(response: BridgeResponse): T[] {
+  if (!response.itemsJson) return [];
+  const items = JSON.parse(response.itemsJson) as unknown;
+  return Array.isArray(items) ? items as T[] : [];
+}
+
+function requestItems<T>(type: HyperBridgeMessageType, payload?: BridgePayload): Promise<T[]> {
+  return send(type, payload).then(itemsFromResponse<T>);
+}
+
 function requestData<T>(type: HyperBridgeMessageType): Promise<T[]> {
-  return send(type).then((response) => {
-    if (!response.itemsJson) return [];
-    const items = JSON.parse(response.itemsJson) as unknown;
-    return Array.isArray(items) ? items as T[] : [];
-  });
+  return requestItems<T>(type);
 }
 
 function requestObject<T>(type: HyperBridgeMessageType): Promise<T> {
@@ -346,7 +352,7 @@ window.hyperBrowser = {
     command("apps.pin", { id });
   },
   editApp(id) {
-    command("apps.edit", { id });
+    return requestItems<WebAppItem>("apps.edit", { id });
   },
   deleteApp(id) {
     command("apps.delete", { id });

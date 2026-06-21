@@ -59,9 +59,9 @@ object HyperBridge {
     private var extension: WebExtension? = null
     private var installing = false
     private val pendingReady = mutableListOf<(WebExtension) -> Unit>()
-    private val handlers = mutableMapOf<GeckoSession, (JSONObject) -> JSONObject>()
-    private val fallbackEligibleHandlers = linkedMapOf<GeckoSession, (JSONObject) -> JSONObject>()
-    private var fallbackHandler: ((JSONObject) -> JSONObject)? = null
+    private val handlers = mutableMapOf<GeckoSession, (JSONObject) -> GeckoResult<Any>>()
+    private val fallbackEligibleHandlers = linkedMapOf<GeckoSession, (JSONObject) -> GeckoResult<Any>>()
+    private var fallbackHandler: ((JSONObject) -> GeckoResult<Any>)? = null
     private var fallbackSession: GeckoSession? = null
     private val messageDelegate = object : WebExtension.MessageDelegate {
         override fun onMessage(
@@ -114,7 +114,7 @@ object HyperBridge {
             })
     }
 
-    fun register(session: GeckoSession, handler: (JSONObject) -> JSONObject, useAsFallback: Boolean = true) {
+    fun register(session: GeckoSession, handler: (JSONObject) -> GeckoResult<Any>, useAsFallback: Boolean = true) {
         handlers[session] = handler
         if (useAsFallback) {
             fallbackEligibleHandlers.remove(session)
@@ -185,7 +185,7 @@ object HyperBridge {
             Log.w(TAG, "No bridge handler type=$type sender=${sender.url}")
             return GeckoResult.fromValue(error("No bridge handler for session.").toString())
         }
-        return GeckoResult.fromValue(handler(normalizedRequest).toString())
+        return handler(normalizedRequest)
     }
 
     private fun attachSessionDelegate(session: GeckoSession, installed: WebExtension? = extension) {

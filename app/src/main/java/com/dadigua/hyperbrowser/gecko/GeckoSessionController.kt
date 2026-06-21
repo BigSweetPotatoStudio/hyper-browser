@@ -344,7 +344,7 @@ class GeckoSessionController(
     loadInitialUrl: Boolean = true,
     restoredSessionState: GeckoSession.SessionState? = null,
     private val onHyperRoute: (HyperRoute) -> Unit = {},
-    private val onHyperBridgeMessage: ((org.json.JSONObject) -> org.json.JSONObject)? = null,
+    private val onHyperBridgeMessage: ((org.json.JSONObject) -> GeckoResult<Any>)? = null,
     private val onPageContextMenu: (GeckoContextMenuTarget) -> Unit = {},
     private val onAuthPrompt: (GeckoAuthPromptRequest) -> Unit = { it.dismiss() },
     private val onPrompt: (GeckoPromptRequest) -> Unit = { it.dismiss() },
@@ -1062,13 +1062,6 @@ class GeckoSessionController(
         loadInternalPage(APPS_URL, appContext.getString(R.string.internal_title_apps), "apps.html", appsJson)
     }
 
-    fun notifyAppsChanged() {
-        if (!isAppsUrl(_state.value.url)) return
-        runCatching {
-            session.loadUri("javascript:window.dispatchEvent(new Event('hyperbrowser:apps-changed'));void 0")
-        }
-    }
-
     fun loadBookmarks(bookmarksJson: String? = null) {
         lastLoadTarget = BOOKMARKS_URL
         loadInternalPage(BOOKMARKS_URL, appContext.getString(R.string.internal_title_bookmarks), "bookmarks.html", bookmarksJson)
@@ -1204,18 +1197,18 @@ class GeckoSessionController(
         )
     }
 
-    private fun handleBridgeMessage(ownerSession: GeckoSession, message: org.json.JSONObject): org.json.JSONObject {
+    private fun handleBridgeMessage(ownerSession: GeckoSession, message: org.json.JSONObject): GeckoResult<Any> {
         val payload = message.optJSONObject("payload") ?: org.json.JSONObject()
         when (message.optString("type")) {
             "pullRefresh.touch" -> {
                 contentTouchCanScrollUp = payload.optBoolean("canScrollUp", false)
                 lastContentTouchStateAt = SystemClock.uptimeMillis()
-                return org.json.JSONObject().put("ok", true)
+                return bridgeResult(org.json.JSONObject().put("ok", true))
             }
             "media.keepAlive.start" -> {
                 if (!isMediaKeepAliveForSession(ownerSession, payload)) {
                     logIgnoredKeepAlive("start", ownerSession, payload)
-                    return org.json.JSONObject().put("ok", true).put("ignored", true)
+                    return bridgeResult(org.json.JSONObject().put("ok", true).put("ignored", true))
                 }
                 BrowserMediaNotificationController.get(appContext).startPageKeepAlive(
                     owner = ownerSession,
@@ -1224,12 +1217,12 @@ class GeckoSessionController(
                     url = payload.optString("url"),
                     mediaKind = payload.optString("mediaKind")
                 )
-                return org.json.JSONObject().put("ok", true)
+                return bridgeResult(org.json.JSONObject().put("ok", true))
             }
             "media.keepAlive.pause" -> {
                 if (!isMediaKeepAliveForSession(ownerSession, payload)) {
                     logIgnoredKeepAlive("pause", ownerSession, payload)
-                    return org.json.JSONObject().put("ok", true).put("ignored", true)
+                    return bridgeResult(org.json.JSONObject().put("ok", true).put("ignored", true))
                 }
                 BrowserMediaNotificationController.get(appContext).pausePageKeepAlive(
                     owner = ownerSession,
@@ -1238,28 +1231,33 @@ class GeckoSessionController(
                     url = payload.optString("url"),
                     mediaKind = payload.optString("mediaKind")
                 )
-                return org.json.JSONObject().put("ok", true)
+                return bridgeResult(org.json.JSONObject().put("ok", true))
             }
             "media.keepAlive.stop" -> {
                 if (!isMediaKeepAliveForSession(ownerSession, payload)) {
                     logIgnoredKeepAlive("stop", ownerSession, payload)
-                    return org.json.JSONObject().put("ok", true).put("ignored", true)
+                    return bridgeResult(org.json.JSONObject().put("ok", true).put("ignored", true))
                 }
                 BrowserMediaNotificationController.get(appContext).stopPageKeepAlive(ownerSession)
-                return org.json.JSONObject().put("ok", true)
+                return bridgeResult(org.json.JSONObject().put("ok", true))
             }
             "settings.backgroundVideoEnhancement.enabled" -> {
                 val enabled = BrowserProfileStore
                     .loadBrowserSettings(appContext)
                     .backgroundVideoEnhancementEnabled
-                return org.json.JSONObject()
-                    .put("ok", true)
-                    .put("data", org.json.JSONObject().put("enabled", enabled))
+                return bridgeResult(
+                    org.json.JSONObject()
+                        .put("ok", true)
+                        .put("data", org.json.JSONObject().put("enabled", enabled))
+                )
             }
         }
         return onHyperBridgeMessage?.invoke(message)
-            ?: org.json.JSONObject().put("ok", false).put("error", "No bridge handler for session.")
+            ?: bridgeResult(org.json.JSONObject().put("ok", false).put("error", "No bridge handler for session."))
     }
+
+    private fun bridgeResult(response: org.json.JSONObject): GeckoResult<Any> =
+        GeckoResult.fromValue(response.toString())
 
     private fun currentMediaOwnerInfo(ownerSession: GeckoSession = session): BrowserMediaOwnerInfo {
         val pageState = _state.value
@@ -1618,7 +1616,7 @@ sealed interface HyperCommand {
     sealed interface Apps : HyperCommand {
         data class Open(val id: String) : Apps
         data class Pin(val id: String) : Apps
-        data class Edit(val id: String) : Apps
+        data class Edit(val id: String, val result: GeckoResult<Any>? = null) : Apps
         data class Delete(val id: String) : Apps
     }
 

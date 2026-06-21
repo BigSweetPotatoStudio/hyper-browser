@@ -90,6 +90,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import java.util.UUID
 
@@ -436,9 +437,22 @@ private fun BrowserScreen(
         }
     }
 
-    fun handleHyperBridgeMessage(message: JSONObject): JSONObject {
+    fun bridgeResult(response: JSONObject): GeckoResult<Any> =
+        GeckoResult.fromValue(response.toString())
+
+    fun bridgeError(error: String): GeckoResult<Any> =
+        bridgeResult(JSONObject().put("ok", false).put("error", error))
+
+    fun completeBridgeResult(result: GeckoResult<Any>?, response: JSONObject) {
+        result?.complete(response.toString())
+    }
+
+    fun webAppsItemsResponse(): JSONObject =
+        okItems(app.webApps.observeAll().value.toWebAppsJsonString(app))
+
+    fun handleHyperBridgeMessage(message: JSONObject): GeckoResult<Any> {
         val payload = message.optJSONObject("payload") ?: JSONObject()
-        return when (message.optString("type")) {
+        val response = when (message.optString("type")) {
             "data.home" -> okItems(profileStore.observeHistory().value.toHistoryJsonString(faviconStore))
             "data.search" -> okItems(
                 searchSuggestionsJsonString(
@@ -578,8 +592,11 @@ private fun BrowserScreen(
                 ok()
             }
             "apps.edit" -> {
-                pendingHyperCommand = HyperCommand.Apps.Edit(payload.optString("id"))
-                ok()
+                val id = payload.optString("id")
+                if (id.isBlank()) return bridgeError(context.getString(R.string.webapp_not_found))
+                val result = GeckoResult<Any>()
+                pendingHyperCommand = HyperCommand.Apps.Edit(id, result)
+                return result
             }
             "apps.delete" -> {
                 pendingHyperCommand = HyperCommand.Apps.Delete(payload.optString("id"))
@@ -591,6 +608,7 @@ private fun BrowserScreen(
             }
             else -> JSONObject().put("ok", false).put("error", "Unknown bridge message.")
         }
+        return bridgeResult(response)
     }
     var pageContextMenu by remember { mutableStateOf<GeckoContextMenuTarget?>(null) }
     var authPrompt by remember { mutableStateOf<GeckoAuthPromptRequest?>(null) }
@@ -823,6 +841,7 @@ private fun BrowserScreen(
     var installingAddonGuid by remember { mutableStateOf<String?>(null) }
     var currentIconPath by remember { mutableStateOf<String?>(null) }
     var webAppDetailsDialog by remember { mutableStateOf<WebAppDetailsDialogState?>(null) }
+    var pendingWebAppEditResult by remember { mutableStateOf<GeckoResult<Any>?>(null) }
     val webAppIconImageLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri ->
@@ -844,6 +863,8 @@ private fun BrowserScreen(
     }
 
     fun showInstallWebAppDetailsDialog(name: String, startUrl: String, siteIconPath: String?) {
+        completeBridgeResult(pendingWebAppEditResult, webAppsItemsResponse())
+        pendingWebAppEditResult = null
         val usableSiteIconPath = faviconStore.existingIconPath(siteIconPath)
         webAppDetailsDialog = WebAppDetailsDialogState(
             mode = WebAppDetailsDialogMode.Install,
@@ -854,7 +875,11 @@ private fun BrowserScreen(
         )
     }
 
-    fun showEditWebAppDetailsDialog(webApp: WebAppDefinition) {
+    fun showEditWebAppDetailsDialog(webApp: WebAppDefinition, editResult: GeckoResult<Any>? = null) {
+        if (pendingWebAppEditResult != null && pendingWebAppEditResult !== editResult) {
+            completeBridgeResult(pendingWebAppEditResult, webAppsItemsResponse())
+        }
+        pendingWebAppEditResult = editResult
         val currentCustomIconPath = faviconStore.existingIconPath(webApp.iconPath)
             ?.takeIf { faviconStore.isCustomIconPath(it) }
         val siteIconPath = if (currentCustomIconPath == null) {
@@ -877,10 +902,10 @@ private fun BrowserScreen(
         )
     }
 
-    fun refreshAppsPageIfVisible() {
-        if (GeckoSessionController.isAppsUrl(pageState.url)) {
-            controller.notifyAppsChanged()
-        }
+    fun dismissWebAppDetailsDialog() {
+        webAppDetailsDialog = null
+        completeBridgeResult(pendingWebAppEditResult, webAppsItemsResponse())
+        pendingWebAppEditResult = null
     }
 
     fun normalizeWebAppUrl(input: String): String? {
@@ -953,6 +978,11 @@ private fun BrowserScreen(
                     val webAppId = dialog.webAppId
                     if (webAppId.isNullOrBlank()) {
                         message = context.getString(R.string.webapp_not_found)
+                        completeBridgeResult(
+                            pendingWebAppEditResult,
+                            JSONObject().put("ok", false).put("error", context.getString(R.string.webapp_not_found))
+                        )
+                        pendingWebAppEditResult = null
                         return@launch
                     }
                     runCatching {
@@ -970,10 +1000,19 @@ private fun BrowserScreen(
                         } ?: updatedDetails
                     }
                         .onSuccess { updated ->
-                            refreshAppsPageIfVisible()
+                            completeBridgeResult(pendingWebAppEditResult, webAppsItemsResponse())
+                            pendingWebAppEditResult = null
                             message = context.getString(R.string.webapp_updated, updated.name)
                         }
-                        .onFailure { message = it.message ?: context.getString(R.string.webapp_update_failed) }
+                        .onFailure {
+                            val error = it.message ?: context.getString(R.string.webapp_update_failed)
+                            completeBridgeResult(
+                                pendingWebAppEditResult,
+                                JSONObject().put("ok", false).put("error", error)
+                            )
+                            pendingWebAppEditResult = null
+                            message = error
+                        }
                 }
             }
         }
@@ -1215,7 +1254,7 @@ private fun BrowserScreen(
     BackHandler {
         when {
             pageFullScreen -> controller.exitFullScreen()
-            webAppDetailsDialog != null -> webAppDetailsDialog = null
+            webAppDetailsDialog != null -> dismissWebAppDetailsDialog()
             extensionPopup != null -> app.extensions.closePopup()
             activePanel != BrowserPanel.None -> closePanel()
             pageState.canGoBack -> controller.goBack()
@@ -1348,8 +1387,12 @@ private fun BrowserScreen(
                 val webApp = webApps.firstOrNull { it.id == command.id } ?: app.webApps.get(command.id)
                 if (webApp == null) {
                     message = context.getString(R.string.webapp_not_found)
+                    completeBridgeResult(
+                        command.result,
+                        JSONObject().put("ok", false).put("error", context.getString(R.string.webapp_not_found))
+                    )
                 } else {
-                    showEditWebAppDetailsDialog(webApp)
+                    showEditWebAppDetailsDialog(webApp, command.result)
                 }
             }
             is HyperCommand.Apps.Delete -> {
@@ -1754,7 +1797,7 @@ private fun BrowserScreen(
                 onSelect = { selection -> webAppDetailsDialog = dialog.copy(selectedIcon = selection) },
                 onChooseImage = { webAppIconImageLauncher.launch("image/*") },
                 onConfirm = { confirmWebAppDetailsDialog(dialog) },
-                onDismiss = { webAppDetailsDialog = null }
+                onDismiss = { dismissWebAppDetailsDialog() }
             )
         }
         if (!pageFullScreen) {

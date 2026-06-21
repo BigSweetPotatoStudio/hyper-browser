@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
@@ -6,18 +6,14 @@ import { readBootstrapData } from "../bootstrap";
 import { t } from "../i18n";
 import type { WebAppItem } from "../hyper-browser";
 
-const appsChangedEvent = "hyperbrowser:apps-changed";
-const editRefreshWindowMs = 5 * 60 * 1000;
-
 function AppsPage() {
   const [apps, setApps] = useState<WebAppItem[] | null>(() => readBootstrapData<WebAppItem>());
   const [failed, setFailed] = useState(false);
   const [menuApp, setMenuApp] = useState<WebAppItem | null>(null);
   const [deletingApp, setDeletingApp] = useState<WebAppItem | null>(null);
   const [query, setQuery] = useState("");
-  const pendingEditRefreshUntil = useRef(0);
 
-  const loadApps = useCallback((showLoading = true) => {
+  function loadApps(showLoading = true) {
     setFailed(false);
     if (showLoading) setApps(null);
     window.hyperBrowser.requestAppsData()
@@ -26,39 +22,12 @@ function AppsPage() {
         setFailed(false);
       })
       .catch(() => setFailed(true));
-  }, []);
+  }
 
   useEffect(() => {
     if (apps !== null) return;
     loadApps(true);
-  }, [apps, loadApps]);
-
-  useEffect(() => {
-    const refreshSilently = () => loadApps(false);
-    const refreshWhenVisible = () => {
-      if (document.visibilityState !== "hidden") refreshSilently();
-    };
-    const handleAppsChanged = () => refreshSilently();
-    window.addEventListener(appsChangedEvent, handleAppsChanged);
-    window.addEventListener("focus", refreshSilently);
-    window.addEventListener("pageshow", refreshSilently);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    return () => {
-      window.removeEventListener(appsChangedEvent, handleAppsChanged);
-      window.removeEventListener("focus", refreshSilently);
-      window.removeEventListener("pageshow", refreshSilently);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
-  }, [loadApps]);
-
-  useEffect(() => {
-    const refreshTimer = window.setInterval(() => {
-      if (pendingEditRefreshUntil.current <= Date.now()) return;
-      if (document.visibilityState === "hidden") return;
-      loadApps(false);
-    }, 1500);
-    return () => window.clearInterval(refreshTimer);
-  }, [loadApps]);
+  }, [apps]);
 
   const items = apps || [];
   const visibleItems = filterApps(items, query);
@@ -73,7 +42,7 @@ function AppsPage() {
         {failed ? (
           <div className="apps-empty">
             {t("apps.failed")}{" "}
-            <button className="go-button" type="button" onClick={loadApps}>{t("apps.retry")}</button>
+            <button className="go-button" type="button" onClick={() => loadApps(true)}>{t("apps.retry")}</button>
           </div>
         ) : apps === null ? (
           <div className="apps-empty">{t("apps.loading")}</div>
@@ -108,9 +77,13 @@ function AppsPage() {
             setMenuApp(null);
           }}
           onEdit={() => {
-            pendingEditRefreshUntil.current = Date.now() + editRefreshWindowMs;
-            window.hyperBrowser.editApp(menuApp.id);
-            window.setTimeout(() => loadApps(false), 800);
+            const appId = menuApp.id;
+            window.hyperBrowser.editApp(appId)
+              .then((items) => {
+                setApps(items);
+                setFailed(false);
+              })
+              .catch(() => loadApps(false));
             setMenuApp(null);
           }}
           onDelete={() => {
