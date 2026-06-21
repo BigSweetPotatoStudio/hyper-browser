@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -33,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -42,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.webapp.WebAppIconPreset
 import com.dadigua.hyperbrowser.webapp.WebAppIconPresets
+import java.text.BreakIterator
 
 internal enum class WebAppDetailsDialogMode {
     Install,
@@ -54,10 +57,11 @@ internal data class WebAppDetailsDialogState(
     val name: String,
     val startUrl: String,
     val siteIconPath: String?,
-    val selectedIcon: WebAppIconSelection = WebAppIconSelection.Site
+    val selectedIcon: WebAppIconSelection = WebAppIconSelection.None
 )
 
 internal sealed class WebAppIconSelection {
+    data object None : WebAppIconSelection()
     data object Site : WebAppIconSelection()
     data class Preset(val id: String) : WebAppIconSelection()
     data class Image(val iconPath: String) : WebAppIconSelection()
@@ -166,6 +170,19 @@ internal fun WebAppDetailsDialog(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     WebAppIconOption(
+                        selected = state.selectedIcon == WebAppIconSelection.None,
+                        label = stringResource(R.string.webapp_icon_none),
+                        onClick = { onSelect(WebAppIconSelection.None) }
+                    ) {
+                        WebAppIconPreview(
+                            selection = WebAppIconSelection.None,
+                            siteIconPath = state.siteIconPath,
+                            name = state.name,
+                            startUrl = state.startUrl,
+                            modifier = Modifier.size(48.dp)
+                        )
+                    }
+                    WebAppIconOption(
                         selected = state.selectedIcon == WebAppIconSelection.Site,
                         label = stringResource(R.string.webapp_icon_site),
                         onClick = { onSelect(WebAppIconSelection.Site) }
@@ -218,6 +235,7 @@ internal fun WebAppDetailsDialog(
 @Composable
 private fun selectedIconLabel(selection: WebAppIconSelection): String =
     when (selection) {
+        WebAppIconSelection.None -> stringResource(R.string.webapp_icon_none)
         WebAppIconSelection.Site -> stringResource(R.string.webapp_icon_site)
         is WebAppIconSelection.Image -> stringResource(R.string.webapp_icon_selected_image)
         is WebAppIconSelection.Preset -> WebAppIconPresets.find(selection.id)
@@ -263,6 +281,7 @@ private fun WebAppIconPreview(
     modifier: Modifier = Modifier
 ) {
     when (selection) {
+        WebAppIconSelection.None -> FallbackIcon(name, startUrl, modifier)
         WebAppIconSelection.Site -> FileIconOrFallback(siteIconPath, name, startUrl, modifier)
         is WebAppIconSelection.Image -> FileIconOrFallback(selection.iconPath, name, startUrl, modifier)
         is WebAppIconSelection.Preset -> {
@@ -308,11 +327,11 @@ private fun PresetIcon(preset: WebAppIconPreset, modifier: Modifier = Modifier) 
             .background(Color(preset.backgroundColor)),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            preset.symbol,
-            color = Color(preset.foregroundColor),
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Black
+        Icon(
+            painter = painterResource(preset.drawableRes),
+            contentDescription = null,
+            tint = Color(preset.foregroundColor),
+            modifier = Modifier.size(28.dp)
         )
     }
 }
@@ -321,7 +340,7 @@ private fun PresetIcon(preset: WebAppIconPreset, modifier: Modifier = Modifier) 
 private fun FallbackIcon(name: String, startUrl: String, modifier: Modifier = Modifier) {
     val label = remember(name, startUrl) {
         val source = name.ifBlank { hostLabel(startUrl) }.ifBlank { "W" }
-        source.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "W"
+        firstDisplaySymbol(source).ifBlank { "W" }
     }
     val color = remember(startUrl) { fallbackIconColor(startUrl) }
     Box(
@@ -341,6 +360,22 @@ private fun FallbackIcon(name: String, startUrl: String, modifier: Modifier = Mo
 
 private fun hostLabel(url: String): String =
     runCatching { java.net.URI(url).host.orEmpty().removePrefix("www.") }.getOrDefault("")
+
+private fun firstDisplaySymbol(value: String): String {
+    val trimmed = value.trimStart()
+    if (trimmed.isBlank()) return ""
+    val iterator = BreakIterator.getCharacterInstance()
+    iterator.setText(trimmed)
+    var start = iterator.first()
+    var end = iterator.next()
+    while (end != BreakIterator.DONE) {
+        val symbol = trimmed.substring(start, end).trim()
+        if (symbol.isNotEmpty()) return symbol.uppercase()
+        start = end
+        end = iterator.next()
+    }
+    return ""
+}
 
 private fun fallbackIconColor(value: String): Color {
     val colors = listOf(

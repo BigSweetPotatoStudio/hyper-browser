@@ -79,6 +79,7 @@ import com.dadigua.hyperbrowser.update.UpdateDownloadState
 import com.dadigua.hyperbrowser.update.UpdateSettingsStore
 import com.dadigua.hyperbrowser.webapp.PinnedShortcutRequestResult
 import com.dadigua.hyperbrowser.webapp.WebAppIconPresets
+import com.dadigua.hyperbrowser.webapp.WebAppRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -855,19 +856,22 @@ private fun BrowserScreen(
     fun showEditWebAppDetailsDialog(webApp: WebAppDefinition) {
         val currentCustomIconPath = faviconStore.existingIconPath(webApp.iconPath)
             ?.takeIf { faviconStore.isCustomIconPath(it) }
+        val selectedIcon = when {
+            WebAppRepository.isNoIconPath(webApp.iconPath) -> WebAppIconSelection.None
+            currentCustomIconPath != null -> WebAppIconSelection.Image(currentCustomIconPath)
+            else -> WebAppIconSelection.Site
+        }
         webAppDetailsDialog = WebAppDetailsDialogState(
             mode = WebAppDetailsDialogMode.Edit,
             webAppId = webApp.id,
             name = webApp.name,
             startUrl = webApp.startUrl,
-            siteIconPath = if (currentCustomIconPath == null) {
+            siteIconPath = if (currentCustomIconPath == null && !WebAppRepository.isNoIconPath(webApp.iconPath)) {
                 webApp.iconPath
             } else {
                 faviconStore.cachedIconPath(webApp.startUrl)
             },
-            selectedIcon = currentCustomIconPath
-                ?.let { WebAppIconSelection.Image(it) }
-                ?: WebAppIconSelection.Site
+            selectedIcon = selectedIcon
         )
     }
 
@@ -906,6 +910,7 @@ private fun BrowserScreen(
 
     suspend fun selectedIconPath(dialog: WebAppDetailsDialogState, key: String): String? =
         when (val selection = dialog.selectedIcon) {
+            WebAppIconSelection.None -> WebAppRepository.NO_ICON_PATH
             WebAppIconSelection.Site -> dialog.siteIconPath
             is WebAppIconSelection.Image -> selection.iconPath
             is WebAppIconSelection.Preset -> WebAppIconPresets.find(selection.id)

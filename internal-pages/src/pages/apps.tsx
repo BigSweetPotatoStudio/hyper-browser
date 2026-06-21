@@ -254,9 +254,18 @@ function AppActionSheet(props: {
 }
 
 function appInitial(name: string): string {
-  const trimmed = name.trim();
+  const trimmed = name.trimStart();
   if (!trimmed) return "A";
-  return Array.from(trimmed)[0].toUpperCase();
+  const segmenterType = (Intl as typeof Intl & {
+    Segmenter?: new (
+      locale?: string,
+      options?: { granularity?: "grapheme" },
+    ) => { segment: (value: string) => Iterable<{ segment: string }> };
+  }).Segmenter;
+  const first = segmenterType
+    ? Array.from(new segmenterType(undefined, { granularity: "grapheme" }).segment(trimmed))[0]?.segment
+    : Array.from(trimmed)[0];
+  return first ? first.toLocaleUpperCase() : "A";
 }
 
 function hostLabel(url: string): string {

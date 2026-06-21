@@ -8,9 +8,9 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.Typeface
 import android.net.Uri
 import android.util.Base64
+import androidx.core.content.ContextCompat
 import com.dadigua.hyperbrowser.webapp.WebAppIconPreset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -172,15 +172,14 @@ class FaviconRepository(private val context: Context) {
         val bounds = RectF(0f, 0f, size.toFloat(), size.toFloat())
         canvas.drawRoundRect(bounds, size * 0.22f, size * 0.22f, backgroundPaint)
 
-        val symbolPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = preset.foregroundColor
-            textAlign = Paint.Align.CENTER
-            textSize = size * 0.52f
-            typeface = Typeface.DEFAULT_BOLD
-        }
-        val metrics = symbolPaint.fontMetrics
-        val baseline = size / 2f - (metrics.ascent + metrics.descent) / 2f
-        canvas.drawText(preset.symbol, size / 2f, baseline, symbolPaint)
+        ContextCompat.getDrawable(context, preset.drawableRes)
+            ?.mutate()
+            ?.apply {
+                val inset = (size * 0.24f).toInt()
+                setTint(preset.foregroundColor)
+                setBounds(inset, inset, size - inset, size - inset)
+                draw(canvas)
+            }
         return output
     }
 

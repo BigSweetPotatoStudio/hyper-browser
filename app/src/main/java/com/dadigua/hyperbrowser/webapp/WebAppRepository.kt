@@ -52,9 +52,13 @@ class WebAppRepository(
             val id = existing?.id
                 ?: item.id.takeIf { it.isNotBlank() && usedIds.add(it) }
                 ?: UUID.randomUUID().toString().also { usedIds.add(it) }
-            val iconPath = faviconStore.existingIconPath(item.iconPath)
-                ?: faviconStore.cachedIconPath(startUrl)
-                ?: existing?.iconPath
+            val iconPath = if (isNoIconPath(item.iconPath)) {
+                NO_ICON_PATH
+            } else {
+                faviconStore.existingIconPath(item.iconPath)
+                    ?: faviconStore.cachedIconPath(startUrl)
+                    ?: existing?.iconPath
+            }
             val webApp = WebAppDefinition(
                 id = id,
                 name = item.name.trim().ifBlank { existing?.name ?: Uri.parse(startUrl).host ?: "WebApp" },
@@ -136,7 +140,11 @@ class WebAppRepository(
 
     suspend fun updateIcon(id: String, iconPath: String): WebAppDefinition? {
         val current = state.value.firstOrNull { it.id == id } ?: return null
-        val validIconPath = faviconStore.existingIconPath(iconPath) ?: return null
+        val validIconPath = if (isNoIconPath(iconPath)) {
+            NO_ICON_PATH
+        } else {
+            faviconStore.existingIconPath(iconPath) ?: return null
+        }
         val updated = current.copy(iconPath = validIconPath)
         upsert(updated)
         updateShortcut(updated)
@@ -176,7 +184,7 @@ class WebAppRepository(
     suspend fun refreshMissingIcons() {
         val shortcutUpdates = mutableListOf<WebAppDefinition>()
         val updated = state.value.map { webApp ->
-            if (faviconStore.existingIconPath(webApp.iconPath) != null) {
+            if (isNoIconPath(webApp.iconPath) || faviconStore.existingIconPath(webApp.iconPath) != null) {
                 webApp
             } else {
                 val iconPath = resolveWebAppIconPath(webApp.startUrl, webApp.iconPath)
@@ -198,6 +206,7 @@ class WebAppRepository(
         val updated = state.value.map { webApp ->
             if (
                 sameOrigin(webApp.startUrl, url) &&
+                !isNoIconPath(webApp.iconPath) &&
                 !faviconStore.isCustomIconPath(webApp.iconPath) &&
                 webApp.iconPath != validIconPath
             ) {
@@ -269,10 +278,15 @@ class WebAppRepository(
             ?: Icon.createWithResource(context, R.mipmap.ic_launcher)
 
     private fun iconPathFor(webApp: WebAppDefinition): String? =
-        faviconStore.existingIconPath(webApp.iconPath)
-            ?: faviconStore.cachedIconPath(webApp.startUrl)
+        if (isNoIconPath(webApp.iconPath)) {
+            null
+        } else {
+            faviconStore.existingIconPath(webApp.iconPath)
+                ?: faviconStore.cachedIconPath(webApp.startUrl)
+        }
 
     private suspend fun resolveWebAppIconPath(startUrl: String, currentIconPath: String?): String? {
+        if (isNoIconPath(currentIconPath)) return NO_ICON_PATH
         val existing = faviconStore.existingIconPath(currentIconPath)
         if (faviconStore.isCustomIconPath(existing)) return existing
         val cached = faviconStore.cachedIconPath(startUrl)
@@ -300,6 +314,9 @@ class WebAppRepository(
     private fun shortcutId(id: String): String = "webapp-$id"
 
     private fun webAppIconBitmap(webApp: WebAppDefinition, size: Int): Bitmap? {
+        if (isNoIconPath(webApp.iconPath)) {
+            return BrowserIconComposer.defaultWebAppIcon(webApp.name, webApp.startUrl, size)
+        }
         return BrowserIconComposer.badgedSiteIcon(
             context,
             iconPathFor(webApp),
@@ -361,6 +378,12 @@ class WebAppRepository(
                 }
             }.sortedByDescending { it.lastOpenedAt }
         }.getOrDefault(emptyList())
+    }
+
+    companion object {
+        const val NO_ICON_PATH = "hyperbrowser://webapp-icon/none"
+
+        fun isNoIconPath(iconPath: String?): Boolean = iconPath == NO_ICON_PATH
     }
 }
 
