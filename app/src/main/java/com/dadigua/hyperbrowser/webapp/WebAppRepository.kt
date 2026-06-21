@@ -317,10 +317,11 @@ class WebAppRepository(
         if (isNoIconPath(webApp.iconPath)) {
             return BrowserIconComposer.defaultWebAppIcon(webApp.name, webApp.startUrl, size)
         }
+        val siteIconPath = iconPathFor(webApp)
+            ?: return BrowserIconComposer.defaultWebAppIcon(webApp.name, webApp.startUrl, size)
         return BrowserIconComposer.badgedSiteIcon(
             context,
-            iconPathFor(webApp),
-            webApp.startUrl,
+            siteIconPath,
             size
         )
     }

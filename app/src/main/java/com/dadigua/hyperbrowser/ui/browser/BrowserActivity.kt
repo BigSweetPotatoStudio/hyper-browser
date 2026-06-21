@@ -930,7 +930,12 @@ private fun BrowserScreen(
                 }
         }
 
-    fun confirmWebAppDetailsDialog(dialog: WebAppDetailsDialogState) {
+    fun confirmWebAppDetailsDialog(rawDialog: WebAppDetailsDialogState) {
+        val dialog = if (rawDialog.selectedIcon == WebAppIconSelection.Site && rawDialog.siteIconPath == null) {
+            rawDialog.copy(selectedIcon = WebAppIconSelection.None)
+        } else {
+            rawDialog
+        }
         webAppDetailsDialog = null
         scope.launch {
             when (dialog.mode) {
