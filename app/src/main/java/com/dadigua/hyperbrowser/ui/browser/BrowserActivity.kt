@@ -845,32 +845,41 @@ private fun BrowserScreen(
     }
 
     fun showInstallWebAppDetailsDialog(name: String, startUrl: String, siteIconPath: String?) {
+        val usableSiteIconPath = faviconStore.existingIconPath(siteIconPath)
         webAppDetailsDialog = WebAppDetailsDialogState(
             mode = WebAppDetailsDialogMode.Install,
             name = name,
             startUrl = startUrl,
-            siteIconPath = siteIconPath
+            siteIconPath = usableSiteIconPath,
+            selectedIcon = if (usableSiteIconPath != null) {
+                WebAppIconSelection.Site
+            } else {
+                WebAppIconSelection.None
+            }
         )
     }
 
     fun showEditWebAppDetailsDialog(webApp: WebAppDefinition) {
         val currentCustomIconPath = faviconStore.existingIconPath(webApp.iconPath)
             ?.takeIf { faviconStore.isCustomIconPath(it) }
+        val siteIconPath = if (currentCustomIconPath == null && !WebAppRepository.isNoIconPath(webApp.iconPath)) {
+            faviconStore.existingIconPath(webApp.iconPath)
+                ?: faviconStore.cachedIconPath(webApp.startUrl)
+        } else {
+            faviconStore.cachedIconPath(webApp.startUrl)
+        }
         val selectedIcon = when {
             WebAppRepository.isNoIconPath(webApp.iconPath) -> WebAppIconSelection.None
             currentCustomIconPath != null -> WebAppIconSelection.Image(currentCustomIconPath)
-            else -> WebAppIconSelection.Site
+            siteIconPath != null -> WebAppIconSelection.Site
+            else -> WebAppIconSelection.None
         }
         webAppDetailsDialog = WebAppDetailsDialogState(
             mode = WebAppDetailsDialogMode.Edit,
             webAppId = webApp.id,
             name = webApp.name,
             startUrl = webApp.startUrl,
-            siteIconPath = if (currentCustomIconPath == null && !WebAppRepository.isNoIconPath(webApp.iconPath)) {
-                webApp.iconPath
-            } else {
-                faviconStore.cachedIconPath(webApp.startUrl)
-            },
+            siteIconPath = siteIconPath,
             selectedIcon = selectedIcon
         )
     }
