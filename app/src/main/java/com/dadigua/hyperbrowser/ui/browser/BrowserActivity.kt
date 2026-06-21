@@ -824,6 +824,7 @@ private fun BrowserScreen(
     var extensionMessage by remember { mutableStateOf<String?>(null) }
     var installingAddonGuid by remember { mutableStateOf<String?>(null) }
     var currentIconPath by remember { mutableStateOf<String?>(null) }
+    var optimisticBookmarkState by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
 
     fun handlePageContentTouchStarted() {
         focusManager.clearFocus(force = true)
@@ -1444,7 +1445,18 @@ private fun BrowserScreen(
             } else if (!onSearchPage) {
                 val toolbar = @Composable {
                     val currentPageUrl = pageState.url.ifBlank { tab.input }
-                    val installedWebApp = if (GeckoSessionController.isInternalUrl(currentPageUrl)) {
+                    val currentPageIsInternal = GeckoSessionController.isInternalUrl(currentPageUrl)
+                    val storedPageBookmarked = !currentPageIsInternal && bookmarks.any { it.url == currentPageUrl }
+                    val currentPageBookmarked = optimisticBookmarkState
+                        ?.takeIf { it.first == currentPageUrl }
+                        ?.second
+                        ?: storedPageBookmarked
+                    LaunchedEffect(currentPageUrl, storedPageBookmarked) {
+                        if (optimisticBookmarkState == (currentPageUrl to storedPageBookmarked)) {
+                            optimisticBookmarkState = null
+                        }
+                    }
+                    val installedWebApp = if (currentPageIsInternal) {
                         null
                     } else {
                         webApps.firstOrNull { it.startUrl == currentPageUrl }
@@ -1453,8 +1465,7 @@ private fun BrowserScreen(
                         input = tab.input,
                         pageState = pageState,
                         tabCount = tabs.size,
-                        bookmarked = !GeckoSessionController.isInternalUrl(pageState.url) &&
-                            profileStore.isBookmarked(currentPageUrl),
+                        bookmarked = currentPageBookmarked,
                         webAppInstalled = installedWebApp != null,
                         installedExtensions = installedExtensions,
                         extensionActions = extensionActions,
@@ -1485,9 +1496,10 @@ private fun BrowserScreen(
                             controller.loadHome()
                             message = null
                         },
-                        onToggleBookmark = {
-                            val url = pageState.url.ifBlank { tab.input }
-                            profileStore.toggleBookmark(url, pageState.title, currentIconPath)
+                        onToggleBookmark = toggleBookmark@{
+                            if (currentPageUrl.isBlank() || currentPageIsInternal) return@toggleBookmark
+                            optimisticBookmarkState = currentPageUrl to !currentPageBookmarked
+                            profileStore.toggleBookmark(currentPageUrl, pageState.title, currentIconPath)
                         },
                         onShowBookmarks = {
                             tab.input = GeckoSessionController.BOOKMARKS_URL
