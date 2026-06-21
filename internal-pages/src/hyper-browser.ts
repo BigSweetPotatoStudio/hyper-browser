@@ -179,7 +179,7 @@ type HyperBrowserApi = {
   clearHistory(): void;
   openApp(id: string): void;
   pinApp(id: string): void;
-  editApp(id: string, name: string, startUrl: string): void;
+  editApp(id: string): void;
   deleteApp(id: string): void;
 };
 
@@ -345,8 +345,8 @@ window.hyperBrowser = {
   pinApp(id) {
     command("apps.pin", { id });
   },
-  editApp(id, name, startUrl) {
-    command("apps.edit", { id, name, startUrl });
+  editApp(id) {
+    command("apps.edit", { id });
   },
   deleteApp(id) {
     command("apps.delete", { id });

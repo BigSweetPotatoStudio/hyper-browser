@@ -134,6 +134,24 @@ class WebAppRepository(
         return updated
     }
 
+    suspend fun updateIcon(id: String, iconPath: String): WebAppDefinition? {
+        val current = state.value.firstOrNull { it.id == id } ?: return null
+        val validIconPath = faviconStore.existingIconPath(iconPath) ?: return null
+        val updated = current.copy(iconPath = validIconPath)
+        upsert(updated)
+        updateShortcut(updated)
+        return updated
+    }
+
+    suspend fun resetIconToSite(id: String): WebAppDefinition? {
+        val current = state.value.firstOrNull { it.id == id } ?: return null
+        val resolvedIconPath = resolveWebAppIconPath(current.startUrl, null)
+        val updated = current.copy(iconPath = resolvedIconPath)
+        upsert(updated)
+        updateShortcut(updated)
+        return updated
+    }
+
     suspend fun delete(id: String): Boolean {
         val current = state.value.firstOrNull { it.id == id } ?: return false
         save(state.value.filterNot { it.id == id })
@@ -178,7 +196,11 @@ class WebAppRepository(
         val validIconPath = faviconStore.existingIconPath(iconPath) ?: return false
         val shortcutUpdates = mutableListOf<WebAppDefinition>()
         val updated = state.value.map { webApp ->
-            if (sameOrigin(webApp.startUrl, url) && webApp.iconPath != validIconPath) {
+            if (
+                sameOrigin(webApp.startUrl, url) &&
+                !faviconStore.isCustomIconPath(webApp.iconPath) &&
+                webApp.iconPath != validIconPath
+            ) {
                 webApp.copy(iconPath = validIconPath).also { shortcutUpdates.add(it) }
             } else {
                 webApp
@@ -252,6 +274,7 @@ class WebAppRepository(
 
     private suspend fun resolveWebAppIconPath(startUrl: String, currentIconPath: String?): String? {
         val existing = faviconStore.existingIconPath(currentIconPath)
+        if (faviconStore.isCustomIconPath(existing)) return existing
         val cached = faviconStore.cachedIconPath(startUrl)
         val resolved = runCatching { faviconStore.resolveIconPath(startUrl) }.getOrNull()
         return resolved ?: cached ?: existing

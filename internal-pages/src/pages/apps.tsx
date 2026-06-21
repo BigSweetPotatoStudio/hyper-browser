@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
@@ -10,7 +10,6 @@ function AppsPage() {
   const [apps, setApps] = useState<WebAppItem[] | null>(() => readBootstrapData<WebAppItem>());
   const [failed, setFailed] = useState(false);
   const [menuApp, setMenuApp] = useState<WebAppItem | null>(null);
-  const [editingApp, setEditingApp] = useState<WebAppItem | null>(null);
   const [deletingApp, setDeletingApp] = useState<WebAppItem | null>(null);
   const [query, setQuery] = useState("");
 
@@ -78,7 +77,7 @@ function AppsPage() {
             setMenuApp(null);
           }}
           onEdit={() => {
-            setEditingApp(menuApp);
+            window.hyperBrowser.editApp(menuApp.id);
             setMenuApp(null);
           }}
           onDelete={() => {
@@ -95,21 +94,6 @@ function AppsPage() {
             window.hyperBrowser.deleteApp(deletingApp.id);
             setApps((current) => (current || []).filter((app) => app.id !== deletingApp.id));
             setDeletingApp(null);
-          }}
-        />
-      )}
-      {editingApp && (
-        <EditAppDialog
-          app={editingApp}
-          onClose={() => setEditingApp(null)}
-          onSave={(name, startUrl) => {
-            window.hyperBrowser.editApp(editingApp.id, name, startUrl);
-            setApps((current) => (current || []).map((app) => (
-              app.id === editingApp.id
-                ? { ...app, name, startUrl }
-                : app
-            )));
-            setEditingApp(null);
           }}
         />
       )}
@@ -265,56 +249,6 @@ function AppActionSheet(props: {
         <button type="button" role="menuitem" onClick={props.onEdit}>{t("common.edit")}</button>
         <button className="danger" type="button" role="menuitem" onClick={props.onDelete}>{t("common.delete")}</button>
       </div>
-    </div>
-  );
-}
-
-function EditAppDialog(props: {
-  app: WebAppItem;
-  onClose: () => void;
-  onSave: (name: string, startUrl: string) => void;
-}) {
-  const [name, setName] = useState(props.app.name || "");
-  const [startUrl, setStartUrl] = useState(props.app.startUrl);
-  const startUrlInputRef = useRef<HTMLInputElement>(null);
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    const cleanUrl = startUrl.trim();
-    if (!cleanUrl) {
-      setStartUrl("");
-      window.requestAnimationFrame(() => {
-        startUrlInputRef.current?.focus();
-        startUrlInputRef.current?.reportValidity();
-      });
-      return;
-    }
-    props.onSave(name.trim() || hostLabel(cleanUrl), cleanUrl);
-  }
-
-  return (
-    <div className="app-menu-scrim">
-      <form className="app-edit-dialog" onSubmit={submit}>
-        <h2>{t("apps.editTitle")}</h2>
-        <label>
-          <span>{t("common.name")}</span>
-          <input value={name} onChange={(event) => setName(event.currentTarget.value)} />
-        </label>
-        <label>
-          <span>{t("common.url")}</span>
-          <input
-            ref={startUrlInputRef}
-            value={startUrl}
-            inputMode="url"
-            required
-            onChange={(event) => setStartUrl(event.currentTarget.value)}
-          />
-        </label>
-        <div className="app-edit-actions">
-          <button type="button" onClick={props.onClose}>{t("common.cancel")}</button>
-          <button type="submit">{t("common.save")}</button>
-        </div>
-      </form>
     </div>
   );
 }

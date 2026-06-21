@@ -88,7 +88,7 @@ class BrowserBackupManager(
                 val item = array.optJSONObject(index) ?: continue
                 val startUrl = item.optString("startUrl").trim()
                 if (startUrl.isBlank()) continue
-                val iconPath = faviconStore.saveIconDataUrl(startUrl, item.optString("iconDataUrl").ifBlank { null })
+                val iconPath = faviconStore.saveCustomIconDataUrl(startUrl, item.optString("iconDataUrl").ifBlank { null })
                 add(
                     WebAppDefinition(
                         id = item.optString("id").trim().ifBlank { UUID.randomUUID().toString() },

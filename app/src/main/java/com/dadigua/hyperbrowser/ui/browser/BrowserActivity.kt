@@ -55,6 +55,7 @@ import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.SavedBrowserTabs
+import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
 import com.dadigua.hyperbrowser.gecko.GeckoAuthPromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoCertificatePromptRequest
@@ -77,6 +78,7 @@ import com.dadigua.hyperbrowser.update.AvailableUpdate
 import com.dadigua.hyperbrowser.update.UpdateDownloadState
 import com.dadigua.hyperbrowser.update.UpdateSettingsStore
 import com.dadigua.hyperbrowser.webapp.PinnedShortcutRequestResult
+import com.dadigua.hyperbrowser.webapp.WebAppIconPresets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -576,11 +578,7 @@ private fun BrowserScreen(
                 ok()
             }
             "apps.edit" -> {
-                pendingHyperCommand = HyperCommand.Apps.Edit(
-                    id = payload.optString("id"),
-                    name = payload.optString("name"),
-                    startUrl = payload.optString("startUrl")
-                )
+                pendingHyperCommand = HyperCommand.Apps.Edit(payload.optString("id"))
                 ok()
             }
             "apps.delete" -> {
@@ -824,9 +822,156 @@ private fun BrowserScreen(
     var extensionMessage by remember { mutableStateOf<String?>(null) }
     var installingAddonGuid by remember { mutableStateOf<String?>(null) }
     var currentIconPath by remember { mutableStateOf<String?>(null) }
+    var webAppDetailsDialog by remember { mutableStateOf<WebAppDetailsDialogState?>(null) }
+    val webAppIconImageLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        val dialog = webAppDetailsDialog ?: return@rememberLauncherForActivityResult
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val key = dialog.webAppId ?: dialog.startUrl
+            val iconPath = runCatching { faviconStore.saveCustomIconFromUri(key, uri) }.getOrNull()
+            if (iconPath == null) {
+                message = context.getString(R.string.webapp_icon_choose_failed)
+            } else {
+                webAppDetailsDialog = dialog.copy(selectedIcon = WebAppIconSelection.Image(iconPath))
+            }
+        }
+    }
 
     fun handlePageContentTouchStarted() {
         focusManager.clearFocus(force = true)
+    }
+
+    fun showInstallWebAppDetailsDialog(name: String, startUrl: String, siteIconPath: String?) {
+        webAppDetailsDialog = WebAppDetailsDialogState(
+            mode = WebAppDetailsDialogMode.Install,
+            name = name,
+            startUrl = startUrl,
+            siteIconPath = siteIconPath
+        )
+    }
+
+    fun showEditWebAppDetailsDialog(webApp: WebAppDefinition) {
+        val currentCustomIconPath = faviconStore.existingIconPath(webApp.iconPath)
+            ?.takeIf { faviconStore.isCustomIconPath(it) }
+        webAppDetailsDialog = WebAppDetailsDialogState(
+            mode = WebAppDetailsDialogMode.Edit,
+            webAppId = webApp.id,
+            name = webApp.name,
+            startUrl = webApp.startUrl,
+            siteIconPath = if (currentCustomIconPath == null) {
+                webApp.iconPath
+            } else {
+                faviconStore.cachedIconPath(webApp.startUrl)
+            },
+            selectedIcon = currentCustomIconPath
+                ?.let { WebAppIconSelection.Image(it) }
+                ?: WebAppIconSelection.Site
+        )
+    }
+
+    fun refreshAppsPageIfVisible() {
+        if (GeckoSessionController.isAppsUrl(pageState.url)) {
+            tab.input = GeckoSessionController.APPS_URL
+            controller.loadApps()
+        }
+    }
+
+    fun normalizeWebAppUrl(input: String): String? {
+        val trimmed = input.trim()
+        if (trimmed.isBlank()) return null
+        val normalized = if (
+            trimmed.startsWith("http://", ignoreCase = true) ||
+            trimmed.startsWith("https://", ignoreCase = true)
+        ) {
+            trimmed
+        } else if (trimmed.contains(".") && !trimmed.any { it.isWhitespace() }) {
+            "https://$trimmed"
+        } else {
+            trimmed
+        }
+        return normalized.takeIf {
+            it.startsWith("http://", ignoreCase = true) ||
+                it.startsWith("https://", ignoreCase = true)
+        }
+    }
+
+    fun cleanWebAppName(name: String, url: String): String =
+        name.trim().ifBlank {
+            Uri.parse(url).host.orEmpty().removePrefix("www.").ifBlank {
+                context.getString(R.string.browser_search_source_webapp)
+            }
+        }
+
+    suspend fun selectedIconPath(dialog: WebAppDetailsDialogState, key: String): String? =
+        when (val selection = dialog.selectedIcon) {
+            WebAppIconSelection.Site -> dialog.siteIconPath
+            is WebAppIconSelection.Image -> selection.iconPath
+            is WebAppIconSelection.Preset -> WebAppIconPresets.find(selection.id)
+                ?.let { preset ->
+                    withContext(Dispatchers.IO) {
+                        faviconStore.saveCustomIconPreset(dialog.webAppId ?: key, preset)
+                    }
+                }
+        }
+
+    fun confirmWebAppDetailsDialog(dialog: WebAppDetailsDialogState) {
+        webAppDetailsDialog = null
+        scope.launch {
+            when (dialog.mode) {
+                WebAppDetailsDialogMode.Install -> {
+                    runCatching {
+                        val cleanUrl = normalizeWebAppUrl(dialog.startUrl)
+                            ?: error(context.getString(R.string.webapp_update_failed))
+                        val cleanName = cleanWebAppName(dialog.name, cleanUrl)
+                        val iconPath = selectedIconPath(dialog, cleanUrl)
+                        if (dialog.selectedIcon != WebAppIconSelection.Site && iconPath == null) {
+                            error(context.getString(R.string.webapp_icon_update_failed))
+                        }
+                        app.webApps.installFromPage(
+                            name = cleanName,
+                            url = cleanUrl,
+                            iconPath = iconPath
+                        )
+                    }
+                        .onSuccess {
+                            message = context.getString(
+                                R.string.webapp_installed_with_shortcut,
+                                it.webApp.name,
+                                shortcutRequestMessage(context, it.shortcutRequest)
+                            )
+                        }
+                        .onFailure { message = it.message ?: context.getString(R.string.webapp_install_failed) }
+                }
+                WebAppDetailsDialogMode.Edit -> {
+                    val webAppId = dialog.webAppId
+                    if (webAppId.isNullOrBlank()) {
+                        message = context.getString(R.string.webapp_not_found)
+                        return@launch
+                    }
+                    runCatching {
+                        val cleanUrl = normalizeWebAppUrl(dialog.startUrl)
+                            ?: error(context.getString(R.string.webapp_update_failed))
+                        val cleanName = cleanWebAppName(dialog.name, cleanUrl)
+                        val updatedDetails = app.webApps.update(webAppId, cleanName, cleanUrl)
+                            ?: error(context.getString(R.string.webapp_not_found))
+                        if (dialog.selectedIcon == WebAppIconSelection.Site) {
+                            app.webApps.resetIconToSite(webAppId)
+                        } else {
+                            val iconPath = selectedIconPath(dialog, cleanUrl)
+                                ?: error(context.getString(R.string.webapp_icon_update_failed))
+                            app.webApps.updateIcon(webAppId, iconPath)
+                        } ?: updatedDetails
+                    }
+                        .onSuccess { updated ->
+                            refreshAppsPageIfVisible()
+                            message = context.getString(R.string.webapp_updated, updated.name)
+                        }
+                        .onFailure { message = it.message ?: context.getString(R.string.webapp_update_failed) }
+                }
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -1065,6 +1210,7 @@ private fun BrowserScreen(
     BackHandler {
         when {
             pageFullScreen -> controller.exitFullScreen()
+            webAppDetailsDialog != null -> webAppDetailsDialog = null
             extensionPopup != null -> app.extensions.closePopup()
             activePanel != BrowserPanel.None -> closePanel()
             pageState.canGoBack -> controller.goBack()
@@ -1194,16 +1340,11 @@ private fun BrowserScreen(
                 }
             }
             is HyperCommand.Apps.Edit -> {
-                scope.launch {
-                    runCatching { app.webApps.update(command.id, command.name, command.startUrl) }
-                        .onSuccess {
-                            message = if (it != null) {
-                                context.getString(R.string.webapp_updated, it.name)
-                            } else {
-                                context.getString(R.string.webapp_not_found)
-                            }
-                        }
-                        .onFailure { message = it.message ?: context.getString(R.string.webapp_update_failed) }
+                val webApp = webApps.firstOrNull { it.id == command.id } ?: app.webApps.get(command.id)
+                if (webApp == null) {
+                    message = context.getString(R.string.webapp_not_found)
+                } else {
+                    showEditWebAppDetailsDialog(webApp)
                 }
             }
             is HyperCommand.Apps.Delete -> {
@@ -1530,19 +1671,9 @@ private fun BrowserScreen(
                                 message = context.getString(R.string.webapp_open_page_before_install)
                                 return@install
                             }
-                            scope.launch {
-                                val title = pageState.title.ifBlank { tab.input }
-                                val url = pageState.url.ifBlank { tab.input }
-                                runCatching { app.webApps.installFromPage(title, url, iconPath = currentIconPath) }
-                                    .onSuccess {
-                                        message = context.getString(
-                                            R.string.webapp_installed_with_shortcut,
-                                            it.webApp.name,
-                                            shortcutRequestMessage(context, it.shortcutRequest)
-                                        )
-                                    }
-                                    .onFailure { message = it.message ?: context.getString(R.string.webapp_install_failed) }
-                            }
+                            val title = pageState.title.ifBlank { tab.input }
+                            val url = pageState.url.ifBlank { tab.input }
+                            showInstallWebAppDetailsDialog(title, url, currentIconPath)
                         }
                     )
                 }
@@ -1608,6 +1739,17 @@ private fun BrowserScreen(
             GeckoPromptDialog(
                 prompt = request,
                 onFinished = { geckoPrompt = null }
+            )
+        }
+        webAppDetailsDialog?.let { dialog ->
+            WebAppDetailsDialog(
+                state = dialog,
+                onNameChange = { name -> webAppDetailsDialog = dialog.copy(name = name) },
+                onStartUrlChange = { url -> webAppDetailsDialog = dialog.copy(startUrl = url) },
+                onSelect = { selection -> webAppDetailsDialog = dialog.copy(selectedIcon = selection) },
+                onChooseImage = { webAppIconImageLauncher.launch("image/*") },
+                onConfirm = { confirmWebAppDetailsDialog(dialog) },
+                onDismiss = { webAppDetailsDialog = null }
             )
         }
         if (!pageFullScreen) {
