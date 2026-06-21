@@ -79,7 +79,6 @@ import com.dadigua.hyperbrowser.update.UpdateDownloadState
 import com.dadigua.hyperbrowser.update.UpdateSettingsStore
 import com.dadigua.hyperbrowser.webapp.PinnedShortcutRequestResult
 import com.dadigua.hyperbrowser.webapp.WebAppIconPresets
-import com.dadigua.hyperbrowser.webapp.WebAppRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -851,28 +850,22 @@ private fun BrowserScreen(
             name = name,
             startUrl = startUrl,
             siteIconPath = usableSiteIconPath,
-            selectedIcon = if (usableSiteIconPath != null) {
-                WebAppIconSelection.Site
-            } else {
-                WebAppIconSelection.None
-            }
+            selectedIcon = WebAppIconSelection.Site
         )
     }
 
     fun showEditWebAppDetailsDialog(webApp: WebAppDefinition) {
         val currentCustomIconPath = faviconStore.existingIconPath(webApp.iconPath)
             ?.takeIf { faviconStore.isCustomIconPath(it) }
-        val siteIconPath = if (currentCustomIconPath == null && !WebAppRepository.isNoIconPath(webApp.iconPath)) {
+        val siteIconPath = if (currentCustomIconPath == null) {
             faviconStore.existingIconPath(webApp.iconPath)
                 ?: faviconStore.cachedIconPath(webApp.startUrl)
         } else {
             faviconStore.cachedIconPath(webApp.startUrl)
         }
         val selectedIcon = when {
-            WebAppRepository.isNoIconPath(webApp.iconPath) -> WebAppIconSelection.None
             currentCustomIconPath != null -> WebAppIconSelection.Image(currentCustomIconPath)
-            siteIconPath != null -> WebAppIconSelection.Site
-            else -> WebAppIconSelection.None
+            else -> WebAppIconSelection.Site
         }
         webAppDetailsDialog = WebAppDetailsDialogState(
             mode = WebAppDetailsDialogMode.Edit,
@@ -919,7 +912,6 @@ private fun BrowserScreen(
 
     suspend fun selectedIconPath(dialog: WebAppDetailsDialogState, key: String): String? =
         when (val selection = dialog.selectedIcon) {
-            WebAppIconSelection.None -> WebAppRepository.NO_ICON_PATH
             WebAppIconSelection.Site -> dialog.siteIconPath
             is WebAppIconSelection.Image -> selection.iconPath
             is WebAppIconSelection.Preset -> WebAppIconPresets.find(selection.id)
@@ -930,12 +922,7 @@ private fun BrowserScreen(
                 }
         }
 
-    fun confirmWebAppDetailsDialog(rawDialog: WebAppDetailsDialogState) {
-        val dialog = if (rawDialog.selectedIcon == WebAppIconSelection.Site && rawDialog.siteIconPath == null) {
-            rawDialog.copy(selectedIcon = WebAppIconSelection.None)
-        } else {
-            rawDialog
-        }
+    fun confirmWebAppDetailsDialog(dialog: WebAppDetailsDialogState) {
         webAppDetailsDialog = null
         scope.launch {
             when (dialog.mode) {

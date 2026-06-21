@@ -57,11 +57,10 @@ internal data class WebAppDetailsDialogState(
     val name: String,
     val startUrl: String,
     val siteIconPath: String?,
-    val selectedIcon: WebAppIconSelection = WebAppIconSelection.None
+    val selectedIcon: WebAppIconSelection = WebAppIconSelection.Site
 )
 
 internal sealed class WebAppIconSelection {
-    data object None : WebAppIconSelection()
     data object Site : WebAppIconSelection()
     data class Preset(val id: String) : WebAppIconSelection()
     data class Image(val iconPath: String) : WebAppIconSelection()
@@ -77,12 +76,6 @@ internal fun WebAppDetailsDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val canUseSiteIcon = state.siteIconPath != null
-    val selectedIcon = if (state.selectedIcon == WebAppIconSelection.Site && !canUseSiteIcon) {
-        WebAppIconSelection.None
-    } else {
-        state.selectedIcon
-    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -109,7 +102,7 @@ internal fun WebAppDetailsDialog(
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     WebAppIconPreview(
-                        selection = selectedIcon,
+                        selection = state.selectedIcon,
                         siteIconPath = state.siteIconPath,
                         name = state.name,
                         startUrl = state.startUrl,
@@ -135,7 +128,7 @@ internal fun WebAppDetailsDialog(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            selectedIconLabel(selectedIcon),
+                            selectedIconLabel(state.selectedIcon, state.siteIconPath != null),
                             style = MaterialTheme.typography.labelMedium,
                             color = Color(0xFF126D6A),
                             maxLines = 1,
@@ -176,36 +169,27 @@ internal fun WebAppDetailsDialog(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     WebAppIconOption(
-                        selected = selectedIcon == WebAppIconSelection.None,
-                        label = stringResource(R.string.webapp_icon_none),
-                        onClick = { onSelect(WebAppIconSelection.None) }
+                        selected = state.selectedIcon == WebAppIconSelection.Site,
+                        label = stringResource(
+                            if (state.siteIconPath != null) {
+                                R.string.webapp_icon_site
+                            } else {
+                                R.string.webapp_icon_title_fallback
+                            }
+                        ),
+                        onClick = { onSelect(WebAppIconSelection.Site) }
                     ) {
                         WebAppIconPreview(
-                            selection = WebAppIconSelection.None,
+                            selection = WebAppIconSelection.Site,
                             siteIconPath = state.siteIconPath,
                             name = state.name,
                             startUrl = state.startUrl,
                             modifier = Modifier.size(48.dp)
                         )
                     }
-                    if (canUseSiteIcon) {
-                        WebAppIconOption(
-                            selected = selectedIcon == WebAppIconSelection.Site,
-                            label = stringResource(R.string.webapp_icon_site),
-                            onClick = { onSelect(WebAppIconSelection.Site) }
-                        ) {
-                            WebAppIconPreview(
-                                selection = WebAppIconSelection.Site,
-                                siteIconPath = state.siteIconPath,
-                                name = state.name,
-                                startUrl = state.startUrl,
-                                modifier = Modifier.size(48.dp)
-                            )
-                        }
-                    }
                     WebAppIconPresets.all.forEach { preset ->
                         WebAppIconOption(
-                            selected = selectedIcon == WebAppIconSelection.Preset(preset.id),
+                            selected = state.selectedIcon == WebAppIconSelection.Preset(preset.id),
                             label = stringResource(preset.labelRes),
                             onClick = { onSelect(WebAppIconSelection.Preset(preset.id)) }
                         ) {
@@ -241,10 +225,15 @@ internal fun WebAppDetailsDialog(
 }
 
 @Composable
-private fun selectedIconLabel(selection: WebAppIconSelection): String =
+private fun selectedIconLabel(selection: WebAppIconSelection, hasSiteIcon: Boolean): String =
     when (selection) {
-        WebAppIconSelection.None -> stringResource(R.string.webapp_icon_none)
-        WebAppIconSelection.Site -> stringResource(R.string.webapp_icon_site)
+        WebAppIconSelection.Site -> stringResource(
+            if (hasSiteIcon) {
+                R.string.webapp_icon_site
+            } else {
+                R.string.webapp_icon_title_fallback
+            }
+        )
         is WebAppIconSelection.Image -> stringResource(R.string.webapp_icon_selected_image)
         is WebAppIconSelection.Preset -> WebAppIconPresets.find(selection.id)
             ?.let { stringResource(it.labelRes) }
@@ -289,7 +278,6 @@ private fun WebAppIconPreview(
     modifier: Modifier = Modifier
 ) {
     when (selection) {
-        WebAppIconSelection.None -> FallbackIcon(name, startUrl, modifier)
         WebAppIconSelection.Site -> FileIconOrFallback(siteIconPath, name, startUrl, modifier)
         is WebAppIconSelection.Image -> FileIconOrFallback(selection.iconPath, name, startUrl, modifier)
         is WebAppIconSelection.Preset -> {

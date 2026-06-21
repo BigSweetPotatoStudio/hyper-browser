@@ -206,8 +206,8 @@
     <string name="webapp_install_failed">Install failed.</string>
     <string name="webapp_icon_dialog_title">Choose WebApp icon</string>
     <string name="webapp_icon_source_title">Icon source</string>
-    <string name="webapp_icon_none">None</string>
     <string name="webapp_icon_site">Site icon</string>
+    <string name="webapp_icon_title_fallback">Title initial</string>
     <string name="webapp_icon_default_library">Default icons</string>
     <string name="webapp_icon_choose_image">Choose image</string>
     <string name="webapp_icon_selected_image">Selected image</string>
