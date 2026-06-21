@@ -21,8 +21,8 @@ android {
         applicationId = "com.dadigua.hyperbrowser"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.1.7-beta.3"
+        versionCode = 14
+        versionName = "0.1.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
