@@ -28,6 +28,8 @@ object HyperBridge {
         "settings.privacy.update",
         "settings.batteryOptimizationState",
         "settings.openBatteryOptimization",
+        "sync.webdav.update",
+        "sync.webdav.run",
         "backup.export",
         "backup.import",
         "update.check",

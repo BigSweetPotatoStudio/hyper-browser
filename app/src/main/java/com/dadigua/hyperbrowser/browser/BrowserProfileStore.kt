@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.UUID
 import kotlin.math.roundToInt
 
 data class BrowserHistoryEntry(
@@ -34,7 +35,13 @@ data class BrowserSettings(
     val dohProviderUrl: String = DEFAULT_DOH_PROVIDER_URL,
     val httpsOnlyEnabled: Boolean = false,
     val privacyProtectionLevel: String = PRIVACY_PROTECTION_STANDARD,
-    val localePreference: String = LOCALE_DEFAULT
+    val localePreference: String = LOCALE_DEFAULT,
+    val webDavSyncEnabled: Boolean = false,
+    val webDavSyncUrl: String = "",
+    val webDavSyncUsername: String = "",
+    val webDavSyncPassword: String = "",
+    val webDavSyncDeviceName: String = "",
+    val webDavSyncDeviceId: String = ""
 ) {
     val echEnabled: Boolean
         get() = dohEnabled
@@ -373,6 +380,27 @@ class BrowserProfileStore(context: Context) {
         saveSettings(next)
     }
 
+    fun updateWebDavSyncSettings(
+        enabled: Boolean,
+        url: String,
+        username: String,
+        password: String,
+        deviceName: String
+    ): BrowserSettings {
+        val current = settingsState.value
+        val next = current.copy(
+            webDavSyncEnabled = enabled,
+            webDavSyncUrl = url.trim(),
+            webDavSyncUsername = username.trim(),
+            webDavSyncPassword = password,
+            webDavSyncDeviceName = deviceName.trim(),
+            webDavSyncDeviceId = current.webDavSyncDeviceId.ifBlank { UUID.randomUUID().toString() }
+        )
+        settingsState.value = next
+        saveSettings(next)
+        return next
+    }
+
     private fun loadHistory(): List<BrowserHistoryEntry> {
         if (!historyFile.exists()) return emptyList()
         return runCatching {
@@ -458,6 +486,12 @@ class BrowserProfileStore(context: Context) {
                 .put("httpsOnlyEnabled", settings.httpsOnlyEnabled)
                 .put("privacyProtectionLevel", settings.privacyProtectionLevel)
                 .put("localePreference", settings.localePreference)
+                .put("webDavSyncEnabled", settings.webDavSyncEnabled)
+                .put("webDavSyncUrl", settings.webDavSyncUrl)
+                .put("webDavSyncUsername", settings.webDavSyncUsername)
+                .put("webDavSyncPassword", settings.webDavSyncPassword)
+                .put("webDavSyncDeviceName", settings.webDavSyncDeviceName)
+                .put("webDavSyncDeviceId", settings.webDavSyncDeviceId)
                 .put("privacySettingsVersion", CURRENT_PRIVACY_SETTINGS_VERSION)
                 .toString()
         )
@@ -544,7 +578,13 @@ class BrowserProfileStore(context: Context) {
                     },
                     localePreference = BrowserSettings.normalizedLocalePreference(
                         item.optString("localePreference", BrowserSettings.LOCALE_DEFAULT)
-                    )
+                    ),
+                    webDavSyncEnabled = item.optBoolean("webDavSyncEnabled", false),
+                    webDavSyncUrl = item.optString("webDavSyncUrl"),
+                    webDavSyncUsername = item.optString("webDavSyncUsername"),
+                    webDavSyncPassword = item.optString("webDavSyncPassword"),
+                    webDavSyncDeviceName = item.optString("webDavSyncDeviceName"),
+                    webDavSyncDeviceId = item.optString("webDavSyncDeviceId")
                 )
             }.getOrDefault(BrowserSettings())
         }

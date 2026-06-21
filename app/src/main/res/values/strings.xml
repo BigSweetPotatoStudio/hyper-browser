@@ -190,6 +190,7 @@
     <string name="backup_read_failed">Unable to read backup file.</string>
     <string name="backup_choose_save_location">Choose where to save the JSON backup.</string>
     <string name="backup_choose_file">Choose a Hyper Browser JSON backup.</string>
+    <string name="webdav_sync_failed">WebDAV sync failed.</string>
     <string name="webapp_updated">Updated %1$s.</string>
     <string name="webapp_not_found">WebApp not found.</string>
     <string name="webapp_update_failed">Update failed.</string>

@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Hyper Browser Sync",
+  "version": "0.1.0",
+  "description": "Sync a Chrome bookmark folder and Hyper Browser WebApps through WebDAV.",
+  "permissions": ["bookmarks", "storage"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Hyper Browser Sync"
+  },
+  "background": {
+    "service_worker": "assets/background.js",
+    "type": "module"
+  },
+  "options_page": "options.html"
+}

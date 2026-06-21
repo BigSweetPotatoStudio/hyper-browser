@@ -50,6 +50,35 @@ type BrowserSettings = {
   httpsOnlyEnabled: boolean;
   privacyProtectionLevel: "none" | "standard" | "strict";
   localePreference: "default" | "zh" | "en";
+  webDavSyncEnabled: boolean;
+  webDavSyncUrl: string;
+  webDavSyncUsername: string;
+  webDavSyncPassword: string;
+  webDavSyncDeviceName: string;
+  webDavSyncDeviceId: string;
+};
+
+type WebDavSyncSettings = Pick<BrowserSettings,
+  "webDavSyncEnabled" |
+  "webDavSyncUrl" |
+  "webDavSyncUsername" |
+  "webDavSyncPassword" |
+  "webDavSyncDeviceName"
+>;
+
+type WebDavSyncResult = {
+  bookmarkCount: number;
+  webAppCount: number;
+  deletedBookmarkCount: number;
+  deletedWebAppCount: number;
+  importedBookmarkCount: number;
+  removedBookmarkCount: number;
+  importedWebAppCount: number;
+  removedWebAppCount: number;
+  syncedAt: number;
+  deviceId: string;
+  attemptCount: number;
+  settings?: BrowserSettings;
 };
 
 type UpdateAsset = {
@@ -110,6 +139,8 @@ type HyperBridgeMessageType =
   | "settings.privacy.update"
   | "settings.batteryOptimizationState"
   | "settings.openBatteryOptimization"
+  | "sync.webdav.update"
+  | "sync.webdav.run"
   | "backup.export"
   | "backup.import"
   | "update.check"
@@ -162,6 +193,8 @@ type HyperBrowserApi = {
   updatePrivacySettings(settings: Pick<BrowserSettings, "dohEnabled" | "dohProviderUrl" | "httpsOnlyEnabled" | "privacyProtectionLevel">): Promise<BrowserSettings>;
   requestBatteryOptimizationState(): Promise<BatteryOptimizationState>;
   openBatteryOptimizationSettings(): Promise<BatteryOptimizationState>;
+  updateWebDavSyncSettings(settings: WebDavSyncSettings): Promise<BrowserSettings>;
+  runWebDavSync(): Promise<WebDavSyncResult>;
   exportBackup(): Promise<BackupActionResult>;
   importBackup(): Promise<BackupActionResult>;
   checkUpdate(ignoreSkipped?: boolean): Promise<UpdateCheckResult>;
@@ -298,6 +331,18 @@ window.hyperBrowser = {
   openBatteryOptimizationSettings() {
     return requestObject<BatteryOptimizationState>("settings.openBatteryOptimization");
   },
+  updateWebDavSyncSettings(settings) {
+    return send("sync.webdav.update", {
+      enabled: settings.webDavSyncEnabled ? "true" : "false",
+      url: settings.webDavSyncUrl,
+      username: settings.webDavSyncUsername,
+      password: settings.webDavSyncPassword,
+      deviceName: settings.webDavSyncDeviceName,
+    }).then((response) => response.data as BrowserSettings);
+  },
+  runWebDavSync() {
+    return send("sync.webdav.run").then((response) => response.data as WebDavSyncResult);
+  },
   exportBackup() {
     return send("backup.export").then((response) => response.data as BackupActionResult);
   },
@@ -359,4 +404,4 @@ window.hyperBrowser = {
   }
 };
 
-export type { AvailableUpdate, BackupActionResult, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem };
+export type { AvailableUpdate, BackupActionResult, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem, WebDavSyncResult, WebDavSyncSettings };

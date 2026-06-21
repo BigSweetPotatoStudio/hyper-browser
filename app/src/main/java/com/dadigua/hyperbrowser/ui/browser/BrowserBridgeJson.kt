@@ -39,6 +39,12 @@ internal fun BrowserSettings.toJson(): JSONObject =
         .put("httpsOnlyEnabled", httpsOnlyEnabled)
         .put("privacyProtectionLevel", privacyProtectionLevel)
         .put("localePreference", localePreference)
+        .put("webDavSyncEnabled", webDavSyncEnabled)
+        .put("webDavSyncUrl", webDavSyncUrl)
+        .put("webDavSyncUsername", webDavSyncUsername)
+        .put("webDavSyncPassword", webDavSyncPassword)
+        .put("webDavSyncDeviceName", webDavSyncDeviceName)
+        .put("webDavSyncDeviceId", webDavSyncDeviceId)
 
 internal fun UpdateCheckResult.toJson(): JSONObject =
     JSONObject()

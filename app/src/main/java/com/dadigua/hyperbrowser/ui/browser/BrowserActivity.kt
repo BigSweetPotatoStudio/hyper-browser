@@ -69,6 +69,7 @@ import com.dadigua.hyperbrowser.gecko.GeckoRuntimeProvider
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.HyperCommand
 import com.dadigua.hyperbrowser.gecko.HyperRoute
+import com.dadigua.hyperbrowser.sync.WebDavSyncManager
 import com.dadigua.hyperbrowser.ui.FullscreenSystemBarsEffect
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
 import com.dadigua.hyperbrowser.ui.withAppLocale
@@ -206,6 +207,7 @@ private fun BrowserScreen(
     val linkCopiedText = stringResource(R.string.browser_toast_link_copied)
     val faviconStore = remember { FaviconRepository(app) }
     val backupManager = remember { BrowserBackupManager(profileStore, app.webApps, faviconStore) }
+    val webDavSyncManager = remember { WebDavSyncManager(app, profileStore, app.webApps, faviconStore) }
     val downloadStore = remember { DownloadStore(app) }
     val downloadHandler = remember { DownloadHandler(app, downloadStore) }
     val updateManager = remember { AppUpdateManager(app, UpdateSettingsStore(app)) }
@@ -516,6 +518,42 @@ private fun BrowserScreen(
                     .put("opened", openBatteryOptimizationSettings())
                     .put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
             )
+            "sync.webdav.update" -> {
+                val nextSettings = profileStore.updateWebDavSyncSettings(
+                    enabled = payload.optString("enabled") == "true",
+                    url = payload.optString("url"),
+                    username = payload.optString("username"),
+                    password = payload.optString("password"),
+                    deviceName = payload.optString("deviceName")
+                )
+                okData(nextSettings.toJson())
+            }
+            "sync.webdav.run" -> {
+                val currentSettings = profileStore.observeSettings().value
+                val syncSettings = if (currentSettings.webDavSyncDeviceId.isBlank()) {
+                    profileStore.updateWebDavSyncSettings(
+                        enabled = currentSettings.webDavSyncEnabled,
+                        url = currentSettings.webDavSyncUrl,
+                        username = currentSettings.webDavSyncUsername,
+                        password = currentSettings.webDavSyncPassword,
+                        deviceName = currentSettings.webDavSyncDeviceName
+                    )
+                } else {
+                    currentSettings
+                }
+                runCatching {
+                    runBlocking { webDavSyncManager.sync(syncSettings) }
+                }.fold(
+                    onSuccess = { result ->
+                        okData(result.toJson().put("settings", profileStore.observeSettings().value.toJson()))
+                    },
+                    onFailure = { throwable ->
+                        JSONObject()
+                        .put("ok", false)
+                        .put("error", throwable.message ?: context.getString(R.string.webdav_sync_failed))
+                    }
+                )
+            }
             "backup.export" -> {
                 scope.launch { exportBackupLauncher.launch(defaultBackupFileName()) }
                 okData(JSONObject().put("message", context.getString(R.string.backup_choose_save_location)))
