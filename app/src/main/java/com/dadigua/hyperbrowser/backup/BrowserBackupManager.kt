@@ -29,6 +29,7 @@ class BrowserBackupManager(
 
         val webApps = JSONArray()
         webAppRepository.observeAll().value.forEach { webApp ->
+            val hasCustomIcon = faviconStore.isCustomIconPath(webApp.iconPath)
             webApps.put(
                 JSONObject()
                     .put("id", webApp.id)
@@ -39,7 +40,8 @@ class BrowserBackupManager(
                     .put("displayMode", webApp.displayMode)
                     .put("createdAt", webApp.createdAt)
                     .put("lastOpenedAt", webApp.lastOpenedAt)
-                    .put("iconDataUrl", faviconStore.iconDataUrl(webApp.iconPath, webApp.startUrl))
+                    .put("iconMode", if (hasCustomIcon) "custom" else "site")
+                    .put("iconDataUrl", if (hasCustomIcon) faviconStore.iconDataUrl(webApp.iconPath) else null)
             )
         }
 
@@ -88,7 +90,10 @@ class BrowserBackupManager(
                 val item = array.optJSONObject(index) ?: continue
                 val startUrl = item.optString("startUrl").trim()
                 if (startUrl.isBlank()) continue
-                val iconPath = faviconStore.saveIconDataUrl(startUrl, item.optString("iconDataUrl").ifBlank { null })
+                val iconPath = when (item.optString("iconMode")) {
+                    "none", "site" -> null
+                    else -> faviconStore.saveCustomIconDataUrl(startUrl, item.optString("iconDataUrl").ifBlank { null })
+                }
                 add(
                     WebAppDefinition(
                         id = item.optString("id").trim().ifBlank { UUID.randomUUID().toString() },

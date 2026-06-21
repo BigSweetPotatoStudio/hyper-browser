@@ -10,6 +10,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.net.Uri
 import com.dadigua.hyperbrowser.R
+import java.text.BreakIterator
 
 object BrowserIconComposer {
     fun badgedSiteIcon(context: Context, iconPath: String?, size: Int): Bitmap? {
@@ -52,6 +53,15 @@ object BrowserIconComposer {
         return output
     }
 
+    fun defaultWebAppIcon(name: String, pageUrl: String?, size: Int): Bitmap? {
+        val host = pageUrl
+            ?.let { runCatching { Uri.parse(it).host.orEmpty() }.getOrNull() }
+            ?.removePrefix("www.")
+            .orEmpty()
+        val labelSource = name.ifBlank { host }.ifBlank { "W" }
+        return defaultLabelIcon(labelSource, pageUrl ?: labelSource, size)
+    }
+
     private fun defaultSiteIcon(pageUrl: String?, size: Int): Bitmap? {
         if (size <= 0) return null
         val host = pageUrl
@@ -59,18 +69,23 @@ object BrowserIconComposer {
             ?.removePrefix("www.")
             ?.takeIf { it.isNotBlank() }
             ?: return null
+        return defaultLabelIcon(host, host, size)
+    }
+
+    private fun defaultLabelIcon(labelSource: String, colorSource: String?, size: Int): Bitmap? {
+        if (size <= 0) return null
         val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
-        val hue = ((host.hashCode() and 0x7fffffff) % 360).toFloat()
+        val hue = (((colorSource ?: labelSource).hashCode() and 0x7fffffff) % 360).toFloat()
         val background = Color.HSVToColor(floatArrayOf(hue, 0.42f, 0.76f))
         canvas.drawColor(background)
 
-        val label = host.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString().orEmpty()
+        val label = firstDisplaySymbol(labelSource)
         if (label.isNotBlank()) {
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 textAlign = Paint.Align.CENTER
-                textSize = size * 0.52f
+                textSize = size * (if (label.length > 2) 0.42f else 0.52f)
                 typeface = Typeface.DEFAULT_BOLD
             }
             val metrics = paint.fontMetrics
@@ -78,5 +93,21 @@ object BrowserIconComposer {
             canvas.drawText(label, size / 2f, baseline, paint)
         }
         return output
+    }
+
+    private fun firstDisplaySymbol(value: String): String {
+        val trimmed = value.trimStart()
+        if (trimmed.isBlank()) return ""
+        val iterator = BreakIterator.getCharacterInstance()
+        iterator.setText(trimmed)
+        var start = iterator.first()
+        var end = iterator.next()
+        while (end != BreakIterator.DONE) {
+            val symbol = trimmed.substring(start, end).trim()
+            if (symbol.isNotEmpty()) return symbol.uppercase()
+            start = end
+            end = iterator.next()
+        }
+        return ""
     }
 }

@@ -21,8 +21,8 @@ android {
         applicationId = "com.dadigua.hyperbrowser"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.1.7-beta.2"
+        versionCode = 14
+        versionName = "0.1.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -31,7 +31,7 @@ android {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            include("arm64-v8a", "x86_64")
             isUniversalApk = false
         }
     }

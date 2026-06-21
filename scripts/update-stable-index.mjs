@@ -53,7 +53,7 @@ if (!fs.existsSync(signedApkDir)) {
   throw new Error(`Signed APK directory does not exist: ${signedApkDir}`);
 }
 
-const abis = ["arm64-v8a", "armeabi-v7a", "x86_64"];
+const abis = ["arm64-v8a", "x86_64"];
 const assets = abis.map((abi) => {
   const apkName = `HyperBrowser-${abi}-release.apk`;
   const apkPath = path.join(signedApkDir, apkName);

@@ -201,7 +201,10 @@ Kotlin 侧要把页面路由和页面命令分开：
 - `home.tsx` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestHomeData()`
 - `bookmarks.tsx` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestBookmarksData()`
 - `history.tsx` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestHistoryData()`
+- `apps.tsx` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestAppsData()`
 - `request*Data()` 必须返回 Promise，并由 bridge 直接返回 JSON 数据；不要通过 URL 跳转、hash 二次加载或 fallback 到旧协议取数据
+- 内置页面的数据修改必须由页面通过 `window.hyperBrowser` bridge 发起，并由页面自己更新 React state / DOM；Kotlin/native 只负责持久化、系统能力和返回 JSON 结果
+- 需要原生 UI 参与的异步流程，例如 WebApp 编辑弹窗，必须通过 bridge Promise / `GeckoResult` 在保存、取消或失败后返回结果；不要用 `session.loadUri("javascript:...")`、focus/pageshow 轮询、重新 load 内置页或 hash reload 来刷新页面
 
 移动端内置页要求：
 

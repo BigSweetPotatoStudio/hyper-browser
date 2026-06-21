@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
@@ -10,18 +10,12 @@ function AppsPage() {
   const [apps, setApps] = useState<WebAppItem[] | null>(() => readBootstrapData<WebAppItem>());
   const [failed, setFailed] = useState(false);
   const [menuApp, setMenuApp] = useState<WebAppItem | null>(null);
-  const [editingApp, setEditingApp] = useState<WebAppItem | null>(null);
   const [deletingApp, setDeletingApp] = useState<WebAppItem | null>(null);
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    if (apps !== null) return;
-    loadApps();
-  }, [apps]);
-
-  function loadApps() {
+  function loadApps(showLoading = true) {
     setFailed(false);
-    setApps(null);
+    if (showLoading) setApps(null);
     window.hyperBrowser.requestAppsData()
       .then((items) => {
         setApps(items);
@@ -29,6 +23,11 @@ function AppsPage() {
       })
       .catch(() => setFailed(true));
   }
+
+  useEffect(() => {
+    if (apps !== null) return;
+    loadApps(true);
+  }, [apps]);
 
   const items = apps || [];
   const visibleItems = filterApps(items, query);
@@ -43,7 +42,7 @@ function AppsPage() {
         {failed ? (
           <div className="apps-empty">
             {t("apps.failed")}{" "}
-            <button className="go-button" type="button" onClick={loadApps}>{t("apps.retry")}</button>
+            <button className="go-button" type="button" onClick={() => loadApps(true)}>{t("apps.retry")}</button>
           </div>
         ) : apps === null ? (
           <div className="apps-empty">{t("apps.loading")}</div>
@@ -78,7 +77,13 @@ function AppsPage() {
             setMenuApp(null);
           }}
           onEdit={() => {
-            setEditingApp(menuApp);
+            const appId = menuApp.id;
+            window.hyperBrowser.editApp(appId)
+              .then((items) => {
+                setApps(items);
+                setFailed(false);
+              })
+              .catch(() => loadApps(false));
             setMenuApp(null);
           }}
           onDelete={() => {
@@ -95,21 +100,6 @@ function AppsPage() {
             window.hyperBrowser.deleteApp(deletingApp.id);
             setApps((current) => (current || []).filter((app) => app.id !== deletingApp.id));
             setDeletingApp(null);
-          }}
-        />
-      )}
-      {editingApp && (
-        <EditAppDialog
-          app={editingApp}
-          onClose={() => setEditingApp(null)}
-          onSave={(name, startUrl) => {
-            window.hyperBrowser.editApp(editingApp.id, name, startUrl);
-            setApps((current) => (current || []).map((app) => (
-              app.id === editingApp.id
-                ? { ...app, name, startUrl }
-                : app
-            )));
-            setEditingApp(null);
           }}
         />
       )}
@@ -269,60 +259,19 @@ function AppActionSheet(props: {
   );
 }
 
-function EditAppDialog(props: {
-  app: WebAppItem;
-  onClose: () => void;
-  onSave: (name: string, startUrl: string) => void;
-}) {
-  const [name, setName] = useState(props.app.name || "");
-  const [startUrl, setStartUrl] = useState(props.app.startUrl);
-  const startUrlInputRef = useRef<HTMLInputElement>(null);
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    const cleanUrl = startUrl.trim();
-    if (!cleanUrl) {
-      setStartUrl("");
-      window.requestAnimationFrame(() => {
-        startUrlInputRef.current?.focus();
-        startUrlInputRef.current?.reportValidity();
-      });
-      return;
-    }
-    props.onSave(name.trim() || hostLabel(cleanUrl), cleanUrl);
-  }
-
-  return (
-    <div className="app-menu-scrim">
-      <form className="app-edit-dialog" onSubmit={submit}>
-        <h2>{t("apps.editTitle")}</h2>
-        <label>
-          <span>{t("common.name")}</span>
-          <input value={name} onChange={(event) => setName(event.currentTarget.value)} />
-        </label>
-        <label>
-          <span>{t("common.url")}</span>
-          <input
-            ref={startUrlInputRef}
-            value={startUrl}
-            inputMode="url"
-            required
-            onChange={(event) => setStartUrl(event.currentTarget.value)}
-          />
-        </label>
-        <div className="app-edit-actions">
-          <button type="button" onClick={props.onClose}>{t("common.cancel")}</button>
-          <button type="submit">{t("common.save")}</button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
 function appInitial(name: string): string {
-  const trimmed = name.trim();
+  const trimmed = name.trimStart();
   if (!trimmed) return "A";
-  return Array.from(trimmed)[0].toUpperCase();
+  const segmenterType = (Intl as typeof Intl & {
+    Segmenter?: new (
+      locale?: string,
+      options?: { granularity?: "grapheme" },
+    ) => { segment: (value: string) => Iterable<{ segment: string }> };
+  }).Segmenter;
+  const first = segmenterType
+    ? Array.from(new segmenterType(undefined, { granularity: "grapheme" }).segment(trimmed))[0]?.segment
+    : Array.from(trimmed)[0];
+  return first ? first.toLocaleUpperCase() : "A";
 }
 
 function hostLabel(url: string): string {
