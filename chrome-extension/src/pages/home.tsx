@@ -19,6 +19,7 @@ import {
 import {
   rectSortingStrategy,
   SortableContext,
+  type SortingStrategy,
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -270,6 +271,10 @@ function DesktopPage() {
       .sort((left, right) => cellIndex(left, gridMetrics.columns) - cellIndex(right, gridMetrics.columns))
       .map((cell) => cell.id),
     [currentPageIndex, desktopCells, gridMetrics.columns],
+  );
+  const desktopSortingStrategy = useMemo(
+    () => createDesktopSortingStrategy(desktopIds, activeId, dropPreview),
+    [activeId, desktopIds, dropPreview],
   );
   const desktopEntries = useMemo(() => desktopIds
       .map((id) => folderEntries.get(id) || availableEntries.get(id))
@@ -782,7 +787,7 @@ function DesktopPage() {
         onDragOver={handleDragOver}
         onDragStart={handleDragStart}
       >
-        <SortableContext items={desktopIds} strategy={rectSortingStrategy}>
+        <SortableContext items={desktopIds} strategy={desktopSortingStrategy}>
           <DesktopDropGrid columns={gridMetrics.columns} editMode={editMode} enabled={editMode && !openFolder}>
             {loading && <div className="desktop-status">Loading desktop...</div>}
             {!loading && desktopEntries.length === 0 && !editMode && <div className="desktop-status desktop-empty-status">This page is empty.</div>}
@@ -1601,6 +1606,38 @@ function dropPlacementFor(pointerClientX: number | null, overRect: ClientRect, a
 
 function normalizeInsertPlacement(placement: DropPlacement, insidePlacement: "before" | "after"): DropPlacement {
   return placement === "inside" ? insidePlacement : placement;
+}
+
+function createDesktopSortingStrategy(items: string[], activeId: string | null, dropPreview: DropPreview | null): SortingStrategy {
+  if (!activeId || !dropPreview?.slotDropId) return rectSortingStrategy;
+  if (dropPreview.kind === "folder") return stableSortingStrategy;
+  if (dropPreview.kind !== "insert") return rectSortingStrategy;
+  if (!items.includes(activeId) || !items.includes(dropPreview.targetId)) return rectSortingStrategy;
+
+  const previewOrder = insertRelative(items, activeId, dropPreview.targetId, dropPreview.placement);
+  if (!sameStringSet(previewOrder, items)) return rectSortingStrategy;
+
+  return ({ rects, index }) => {
+    const id = items[index];
+    const nextIndex = previewOrder.indexOf(id);
+    const currentRect = rects[index];
+    const nextRect = rects[nextIndex];
+    if (!currentRect || !nextRect) return null;
+    return {
+      x: nextRect.left - currentRect.left,
+      y: nextRect.top - currentRect.top,
+      scaleX: nextRect.width / currentRect.width,
+      scaleY: nextRect.height / currentRect.height,
+    };
+  };
+}
+
+const stableSortingStrategy: SortingStrategy = () => null;
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const seen = new Set(left);
+  return seen.size === left.length && right.every((value) => seen.has(value));
 }
 
 function dragPointerClientX(event: { activatorEvent: Event; delta: { x: number } }, fallback: number | null): number | null {
