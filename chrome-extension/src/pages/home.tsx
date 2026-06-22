@@ -128,6 +128,7 @@ type DropPreview = {
   kind: DropPreviewKind;
   targetId: string;
   placement: DropPlacement;
+  slotDropId?: string;
 };
 
 type SyncState = "idle" | "syncing" | "success" | "error" | "needs-settings";
@@ -403,18 +404,24 @@ function DesktopPage() {
       setDropPreview(null);
       return;
     }
+    const targetContainer = containerData(event.over.data.current?.container);
+    const targetFolderId = stringData(event.over.data.current?.folderId);
+    const targetCell = cellData(event.over.data.current);
+    const slotDropId = desktopSlotDropId(targetId, targetContainer, targetCell);
+    const placementRect = slotDropId ? rectForDropSlot(slotDropId) || event.over.rect : event.over.rect;
     const currentPointerX = dragPointerClientX(event, pointerX.current);
     pointerX.current = currentPointerX ?? pointerX.current;
-    const placement = dropPlacementFor(currentPointerX, event.over.rect, event.active.rect.current.translated);
+    const placement = dropPlacementFor(currentPointerX, placementRect, event.active.rect.current.translated);
     setDropPreview(dropPreviewFor(
       String(event.active.id),
       containerData(event.active.data.current?.container),
       stringData(event.active.data.current?.folderId),
       targetId,
-      containerData(event.over.data.current?.container),
-      stringData(event.over.data.current?.folderId),
-      cellData(event.over.data.current),
+      targetContainer,
+      targetFolderId,
+      targetCell,
       placement,
+      slotDropId,
     ));
   }
 
@@ -427,16 +434,17 @@ function DesktopPage() {
     targetFolderId: string | undefined,
     targetCell: DesktopCellPosition | undefined,
     placement: DropPlacement,
+    slotDropId?: string,
   ): DropPreview | null {
     if (targetCell) {
-      return { kind: "cell", targetId, placement: "inside" };
+      return { kind: "cell", targetId, placement: "inside", slotDropId };
     }
     const targetEntry = resolveEntry(targetId);
     if (!targetEntry) return null;
     const itemIsFolder = itemId.startsWith("folder:");
 
     if (targetEntry.kind === "folder") {
-      return itemIsFolder ? null : { kind: "folder", targetId, placement: "inside" };
+      return itemIsFolder ? null : { kind: "folder", targetId, placement: "inside", slotDropId };
     }
     if (targetContainer === "dock") {
       return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "after") };
@@ -445,15 +453,30 @@ function DesktopPage() {
       return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "before") };
     }
     if (!targetFolderId && !itemIsFolder && placement === "inside") {
-      return { kind: "folder", targetId, placement };
+      return { kind: "folder", targetId, placement, slotDropId };
     }
     if (sourceContainer === "folder" && !targetFolderId) {
-      return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "before") };
+      return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "before"), slotDropId };
     }
     if (!targetFolderId) {
-      return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "before") };
+      return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "before"), slotDropId };
     }
     return itemIsFolder ? null : { kind: "folder", targetId, placement: "inside" };
+  }
+
+  function desktopSlotDropId(
+    targetId: string,
+    targetContainer: LauncherContainer | undefined,
+    targetCell: DesktopCellPosition | undefined,
+  ): string | undefined {
+    if (targetCell) return cellDropId(targetCell);
+    if (targetContainer !== "desktop") return undefined;
+    return desktopSlots.find((slot) => slot.entry?.id === targetId)?.dropId;
+  }
+
+  function rectForDropSlot(slotDropId: string): DOMRect | null {
+    const safeDropId = slotDropId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return document.querySelector<HTMLElement>(`[data-drop-id="${safeDropId}"]`)?.getBoundingClientRect() || null;
   }
 
   function handleDragEnd(event: DragEndEvent) {
@@ -464,9 +487,11 @@ function DesktopPage() {
     const targetFolderId = stringData(event.over?.data.current?.folderId);
     const targetContainer = containerData(event.over?.data.current?.container);
     const targetCell = cellData(event.over?.data.current);
+    const targetSlotDropId = event.over ? desktopSlotDropId(targetId, targetContainer, targetCell) : undefined;
+    const placementRect = targetSlotDropId ? rectForDropSlot(targetSlotDropId) || event.over?.rect : event.over?.rect;
     const currentPointerX = dragPointerClientX(event, pointerX.current);
     pointerX.current = currentPointerX ?? pointerX.current;
-    const placement = event.over ? dropPlacementFor(currentPointerX, event.over.rect, event.active.rect.current.translated) : "inside";
+    const placement = placementRect ? dropPlacementFor(currentPointerX, placementRect, event.active.rect.current.translated) : "inside";
     setActiveId(null);
     setDropPreview(null);
     if (!targetId || draggedId === targetId) return;
@@ -1083,11 +1108,13 @@ function DesktopCellSlot(props: {
     },
     disabled: !props.editMode,
   });
-  const isPreview = props.dropPreview?.kind === "cell" && props.dropPreview.targetId === props.slot.dropId;
+  const isPreview = props.dropPreview?.slotDropId === props.slot.dropId || (props.dropPreview?.kind === "cell" && props.dropPreview.targetId === props.slot.dropId);
+  const dropClass = isPreview ? ` drop-${props.dropPreview?.kind} drop-${props.dropPreview?.placement}` : "";
   return (
     <div
-      className={`desktop-cell-slot${props.editMode ? " editing" : ""}${isOver || isPreview ? " cell-over" : ""}`}
+      className={`desktop-cell-slot${props.editMode ? " editing" : ""}${isOver || (isPreview && props.dropPreview?.kind === "cell") ? " cell-over" : ""}${dropClass}`}
       data-cell={`${props.slot.page}:${props.slot.row}:${props.slot.column}`}
+      data-drop-id={props.slot.dropId}
       ref={setNodeRef}
     >
       {props.children}
@@ -1138,7 +1165,7 @@ function DesktopTile(props: {
   };
   const dragListeners = props.editMode ? listeners : undefined;
   const dragAttributes = props.editMode ? attributes : undefined;
-  const dropClass = props.dropPreview?.targetId === props.entry.id ? ` drop-${props.dropPreview.kind} drop-${props.dropPreview.placement}` : "";
+  const dropClass = props.dropPreview?.targetId === props.entry.id && !props.dropPreview.slotDropId ? ` drop-${props.dropPreview.kind} drop-${props.dropPreview.placement}` : "";
 
   return (
     <button

@@ -354,6 +354,8 @@ button:disabled {
   text-align: center;
 }
 
+.desktop-cell-slot.drop-insert.drop-before::before,
+.desktop-cell-slot.drop-insert.drop-after::after,
 .desktop-tile.drop-insert.drop-before::before,
 .desktop-tile.drop-insert.drop-after::after {
   position: absolute;
@@ -377,6 +379,14 @@ button:disabled {
   text-shadow: 0 2px 5px rgba(0, 0, 0, 0.36);
 }
 
+.desktop-cell-slot.drop-insert.drop-before::before {
+  left: -10px;
+}
+
+.desktop-cell-slot.drop-insert.drop-after::after {
+  right: -10px;
+}
+
 .desktop-tile.drop-insert.drop-before::before {
   left: -16px;
 }
@@ -385,6 +395,7 @@ button:disabled {
   right: -16px;
 }
 
+.desktop-cell-slot.drop-folder::before,
 .desktop-tile.drop-folder::before {
   position: absolute;
   top: -6px;
@@ -402,6 +413,14 @@ button:disabled {
   pointer-events: none;
 }
 
+.desktop-cell-slot.drop-folder::before {
+  top: 1px;
+  right: 4px;
+  bottom: 26px;
+  left: 4px;
+}
+
+.desktop-cell-slot.drop-folder .desktop-tile,
 .desktop-tile.drop-folder .desktop-icon,
 .desktop-tile.drop-folder .desktop-label,
 .desktop-dock-tile.drop-folder .desktop-icon {
