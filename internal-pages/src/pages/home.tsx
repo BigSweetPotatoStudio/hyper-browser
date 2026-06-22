@@ -77,7 +77,6 @@ function HomePage() {
     unpackFolder: t("home.unpackFolder"),
     moveToDesktop: t("home.moveToDesktop"),
     moveToDock: t("home.moveToDock"),
-    moveToFolder: (name: string) => t("home.moveToFolder", { name }),
     pinApp: t("apps.pin"),
     editApp: t("apps.editTitle"),
     editIcon: t("apps.editIcon"),

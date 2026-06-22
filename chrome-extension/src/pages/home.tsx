@@ -9,9 +9,9 @@ import { sendCommand } from "./bridge";
 
 const LAYOUT_STORAGE_KEY = "launcherLayout";
 const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"];
+const DEPRECATED_ENTRY_IDS = ["system:chrome"];
 
 const systemEntries: LauncherSystemEntry[] = [
-  { id: "system:chrome", kind: "system", title: "Chrome", mark: "C", color: "#4285f4", action: "chrome" },
   { id: "system:bookmarks", kind: "system", title: "Bookmarks", mark: "B", color: "#34a853", action: "bookmarks" },
   { id: "system:history", kind: "system", title: "History", mark: "H", color: "#fbbc04", action: "history" },
   { id: "system:extensions", kind: "system", title: "Extensions", mark: "Ex", color: "#ea4335", action: "extensions" },
@@ -44,13 +44,13 @@ function ChromeHomePage() {
   const platform = useMemo<LauncherPlatform>(() => ({
     systemEntries,
     defaultDockEntryIds: DEFAULT_DOCK_ENTRY_IDS,
+    deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
     loadApps: () => sendCommand<WebAppRecord[]>("webapps.list"),
     openApp: (app) => {
       chrome.tabs.create({ url: app.startUrl });
     },
     openSystem: (action) => {
       const urls: Record<string, string> = {
-        chrome: "chrome://newtab/",
         bookmarks: "chrome://bookmarks/",
         history: "chrome://history/",
         extensions: "chrome://extensions/",
@@ -89,6 +89,8 @@ function ChromeHomePage() {
         deviceId: settings.deviceId,
         deviceName: settings.deviceName || "Chrome",
         clientName: "hyper-browser-chrome-extension",
+      }, {
+        deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
       });
       if (layoutResult.direction === "pull") setLayoutRevision((current) => current + 1);
       setSyncState("success");

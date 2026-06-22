@@ -32,20 +32,61 @@ export type LauncherLayoutSyncResult = {
   updatedAt: number;
 };
 
+export type LauncherLayoutSyncOptions = {
+  deprecatedEntryIds?: string[];
+};
+
 export async function syncLauncherLayout(
   storage: LauncherLayoutStorage,
   settings: LauncherLayoutSyncSettings,
+  options: LauncherLayoutSyncOptions = {},
 ): Promise<LauncherLayoutSyncResult> {
   const client = new LauncherWebDavClient(settings);
   await client.ensureCollections();
+  const deprecatedEntryIds = new Set(options.deprecatedEntryIds || []);
 
   let lastConflict: unknown;
   for (let attempt = 0; attempt < MAX_SYNC_ATTEMPTS; attempt += 1) {
-    const local = completeLayout(await storage.load());
+    const localResult = sanitizeLayout(completeLayout(await storage.load()), deprecatedEntryIds);
+    const local = localResult.layout;
     const remote = await client.getJson<RemoteLauncherDocument>(LAUNCHER_FILE);
-    const remoteLayout = completeLayout(remote?.data.layout);
+    const remoteResult = sanitizeLayout(completeLayout(remote?.data.layout), deprecatedEntryIds);
+    const remoteLayout = remoteResult.layout;
     const localUpdatedAt = validTimestamp(local?.updatedAt);
     const remoteUpdatedAt = remoteLayout ? validTimestamp(remote?.data.updatedAt || remoteLayout.updatedAt) : 0;
+
+    if (remote && remoteLayout && remoteResult.changed && remoteUpdatedAt > localUpdatedAt) {
+      try {
+        await storage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
+        await client.putJson(LAUNCHER_FILE, launcherDocument(remoteLayout, settings, remoteUpdatedAt), remote.etag);
+        await client.putManifest();
+        await client.putDeviceState();
+        return { changed: true, direction: "pull", updatedAt: remoteUpdatedAt };
+      } catch (error) {
+        if (error instanceof WebDavConflictError) {
+          lastConflict = error;
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (remote && remoteLayout && remoteResult.changed && local && remoteUpdatedAt <= localUpdatedAt) {
+      const updatedAt = localUpdatedAt || Date.now();
+      try {
+        await client.putJson(LAUNCHER_FILE, launcherDocument(local, settings, updatedAt), remote.etag);
+        await client.putManifest();
+        await client.putDeviceState();
+        if (localResult.changed || !local.updatedAt) await storage.save({ ...local, updatedAt });
+        return { changed: true, direction: "push", updatedAt };
+      } catch (error) {
+        if (error instanceof WebDavConflictError) {
+          lastConflict = error;
+          continue;
+        }
+        throw error;
+      }
+    }
 
     if (remoteLayout && remoteUpdatedAt > localUpdatedAt) {
       await storage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
@@ -56,13 +97,19 @@ export async function syncLauncherLayout(
       return { changed: false, direction: "none", updatedAt: remoteUpdatedAt };
     }
 
+    if (remoteLayout && remoteUpdatedAt === localUpdatedAt && !sameLauncherLayout(local, remoteLayout)) {
+      await storage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
+      await client.putDeviceState();
+      return { changed: true, direction: "pull", updatedAt: remoteUpdatedAt };
+    }
+
     if (localUpdatedAt > remoteUpdatedAt || !remote) {
       const updatedAt = localUpdatedAt || Date.now();
       try {
         await client.putJson(LAUNCHER_FILE, launcherDocument(local, settings, updatedAt), remote?.etag);
         await client.putManifest();
         await client.putDeviceState();
-        if (!local.updatedAt) await storage.save({ ...local, updatedAt });
+        if (localResult.changed || !local.updatedAt) await storage.save({ ...local, updatedAt });
         return { changed: true, direction: "push", updatedAt };
       } catch (error) {
         if (error instanceof WebDavConflictError) {
@@ -91,6 +138,33 @@ function launcherDocument(layout: LauncherLayout, settings: LauncherLayoutSyncSe
   };
 }
 
+function sameLauncherLayout(left: LauncherLayout, right: LauncherLayout): boolean {
+  return layoutSignature(left) === layoutSignature(right);
+}
+
+function layoutSignature(layout: LauncherLayout): string {
+  return JSON.stringify({
+    cells: [...layout.cells]
+      .map((cell) => ({
+        id: cell.id,
+        page: cell.page,
+        row: cell.row,
+        column: cell.column,
+        index: cell.index,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+    dock: layout.dock,
+    folders: [...layout.folders]
+      .map((folder) => ({
+        id: folder.id,
+        title: folder.title,
+        childIds: folder.childIds,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+    gridColumns: layout.gridColumns,
+  });
+}
+
 function validTimestamp(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
@@ -104,6 +178,43 @@ function completeLayout(value: Awaited<ReturnType<LauncherLayoutStorage["load"]>
     folders: value.folders,
     gridColumns: typeof value.gridColumns === "number" ? value.gridColumns : undefined,
     updatedAt: validTimestamp(value.updatedAt) || undefined,
+  };
+}
+
+function sanitizeLayout(layout: LauncherLayout | null, deprecatedEntryIds: Set<string>): { layout: LauncherLayout | null; changed: boolean } {
+  if (!layout || deprecatedEntryIds.size === 0) return { layout, changed: false };
+  let changed = false;
+  const removedFolderIds = new Set<string>();
+  const folders = layout.folders.flatMap((folder) => {
+    const childIds = folder.childIds.filter((id) => !deprecatedEntryIds.has(id));
+    if (childIds.length === 0) {
+      changed = true;
+      removedFolderIds.add(folder.id);
+      return [];
+    }
+    if (childIds.length !== folder.childIds.length) {
+      changed = true;
+      return [{ ...folder, childIds }];
+    }
+    return [folder];
+  });
+  const cells = layout.cells.filter((cell) => {
+    const keep = !deprecatedEntryIds.has(cell.id);
+    const keepFolder = !removedFolderIds.has(cell.id);
+    if (!keep) changed = true;
+    if (!keepFolder) changed = true;
+    return keep && keepFolder;
+  });
+  const dock = layout.dock.filter((id) => {
+    const keep = !deprecatedEntryIds.has(id);
+    const keepFolder = !removedFolderIds.has(id);
+    if (!keep) changed = true;
+    if (!keepFolder) changed = true;
+    return keep && keepFolder;
+  });
+  return {
+    layout: changed ? { ...layout, cells, dock, folders } : layout,
+    changed,
   };
 }
 

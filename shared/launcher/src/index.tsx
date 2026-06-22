@@ -116,6 +116,7 @@ export type LauncherLayoutStorage = {
 export type LauncherPlatform = {
   systemEntries: LauncherSystemEntry[];
   defaultDockEntryIds: string[];
+  deprecatedEntryIds?: string[];
   loadApps: () => Promise<LauncherApp[]>;
   openApp: (app: LauncherApp) => void;
   openSystem: (action: string) => void;
@@ -159,7 +160,6 @@ export type LauncherLabels = {
   unpackFolder: string;
   moveToDesktop: string;
   moveToDock: string;
-  moveToFolder: (name: string) => string;
   pinApp: string;
   editApp: string;
   editIcon: string;
@@ -202,7 +202,6 @@ const defaultLabels: LauncherLabels = {
   unpackFolder: "Move items out",
   moveToDesktop: "Move to desktop",
   moveToDock: "Move to Dock",
-  moveToFolder: (name) => `Move to ${name}`,
   pinApp: "Send to home screen",
   editApp: "Edit WebApp",
   editIcon: "Edit icon",
@@ -332,12 +331,13 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
   const pointerY = useRef<number | null>(null);
   const suppressClickForId = useRef<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const deprecatedEntryIds = useMemo(() => new Set(platform.deprecatedEntryIds || []), [platform.deprecatedEntryIds]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadDesktop() {
       try {
-        const nextLayout = normalizeStoredLayout(await storage.load(), platform.defaultDockEntryIds, gridMetrics, labels.folder);
+        const nextLayout = normalizeStoredLayout(await storage.load(), platform.defaultDockEntryIds, gridMetrics, labels.folder, deprecatedEntryIds);
         if (!cancelled) setLayout(nextLayout);
       } catch (loadError) {
         if (!cancelled) showToast(loadError instanceof Error ? loadError.message : labels.loadLayoutError);
@@ -360,7 +360,7 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
     return () => {
       cancelled = true;
     };
-  }, [gridMetrics, labels.folder, labels.loadAppsError, labels.loadLayoutError, platform, storage]);
+  }, [deprecatedEntryIds, gridMetrics, labels.folder, labels.loadAppsError, labels.loadLayoutError, platform, storage]);
 
   useEffect(() => {
     if (loading) return;
@@ -403,7 +403,6 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
     ...systemEntries.map((item) => [item.id, item] as const),
     ...appEntries.map((item) => [item.id, item] as const),
   ]), [appEntries, systemEntries]);
-  const availableEntryIds = useMemo(() => new Set(availableEntries.keys()), [availableEntries]);
 
   const folders = useMemo<FolderEntry[]>(() => layout.folders.map((folder) => ({
     id: folder.id,
@@ -451,20 +450,24 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
   const activeEntry = activeId ? resolveEntry(activeId) : undefined;
 
   function commitLayout(updater: (current: LauncherLayout) => LauncherLayout) {
-    setLayout((current) => ({ ...pruneEmptyFolders(updater(current), availableEntryIds), version: LAYOUT_VERSION, gridColumns: gridMetrics.columns, updatedAt: Date.now() }));
+    setLayout((current) => ({ ...pruneEmptyFolders(removeDeprecatedEntryIds(updater(current), deprecatedEntryIds)), version: LAYOUT_VERSION, gridColumns: gridMetrics.columns, updatedAt: Date.now() }));
   }
 
   useEffect(() => {
     if (loading) return;
     setLayout((current) => {
-      const pruned = pruneEmptyFolders(current, availableEntryIds);
-      const nextCells = normalizeDesktopCells(pruned.cells, visibleDesktopIds, gridMetrics);
+      const pruned = pruneEmptyFolders(removeDeprecatedEntryIds(current, deprecatedEntryIds));
+      const preservedCellIds = pruned.cells
+        .map((cell) => cell.id)
+        .filter((id) => !pruned.dock.includes(id) && !pruned.folders.some((folder) => folder.childIds.includes(id)));
+      const nextCellIds = uniqueStrings([...preservedCellIds, ...visibleDesktopIds]);
+      const nextCells = normalizeDesktopCells(pruned.cells, nextCellIds, gridMetrics);
       const next = sameCells(pruned.cells, nextCells, gridMetrics) && pruned.gridColumns === gridMetrics.columns
         ? pruned
         : { ...pruned, cells: nextCells, version: LAYOUT_VERSION, gridColumns: gridMetrics.columns };
       return next === current ? current : next;
     });
-  }, [availableEntryIds, gridMetrics, loading, visibleDesktopIds]);
+  }, [deprecatedEntryIds, gridMetrics, loading, visibleDesktopIds]);
 
   useEffect(() => {
     if (openFolderId && !folderEntries.has(openFolderId)) {
@@ -1156,7 +1159,6 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
 
       {menu && (
         <DesktopMenu
-          folders={folders}
           item={resolveEntry(menu.itemId)}
           sourceContainer={menu.sourceContainer}
           sourceFolderId={menu.folderId}
@@ -1173,7 +1175,6 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
           }}
           onCreateFolder={createFolderWith}
           onMoveToDock={moveToDock}
-          onMoveToFolder={moveToFolder}
           onMoveToDesktop={moveToDesktop}
           onRenameFolder={renameFolder}
           onUnpackFolder={unpackFolder}
@@ -1717,7 +1718,6 @@ function DesktopMenu(props: {
   item?: LauncherEntry;
   sourceContainer: LauncherContainer;
   sourceFolderId?: string;
-  folders: FolderEntry[];
   x: number;
   y: number;
   onClose: () => void;
@@ -1725,7 +1725,6 @@ function DesktopMenu(props: {
   onStartEditMode: () => void;
   onCreateFolder: (itemId: string, sourceContainer: LauncherContainer) => void;
   onMoveToDock: (itemId: string) => void;
-  onMoveToFolder: (itemId: string, folderId: string) => void;
   onMoveToDesktop: (itemId: string) => void;
   onRenameFolder: (folderId: string) => void;
   onUnpackFolder: (folderId: string) => void;
@@ -1776,11 +1775,6 @@ function DesktopMenu(props: {
             {props.item.kind === "app" && props.canEditIcon && (
               <button type="button" role="menuitem" onClick={() => props.onEditIcon(props.item!.id)}>{props.labels.editIcon}</button>
             )}
-            {props.folders.filter((folder) => folder.id !== props.item?.id).map((folder) => (
-              <button type="button" role="menuitem" key={folder.id} onClick={() => props.onMoveToFolder(props.item!.id, folder.id)}>
-                {props.labels.moveToFolder(folder.title)}
-              </button>
-            ))}
             {props.item.kind === "app" && props.canDeleteApp && (
               <button className="danger" type="button" role="menuitem" onClick={() => props.onDeleteApp(props.item!.id)}>{props.labels.deleteApp}</button>
             )}
@@ -1796,16 +1790,18 @@ function normalizeStoredLayout(
   defaultDockEntryIds: string[],
   metrics: DesktopGridMetrics,
   defaultFolderTitle: string,
+  deprecatedEntryIds: Set<string>,
 ): LauncherLayout {
-  const dock = Array.isArray(value?.dock) ? uniqueStrings(value.dock) : [...defaultDockEntryIds];
+  const dock = (Array.isArray(value?.dock) ? uniqueStrings(value.dock) : [...defaultDockEntryIds])
+    .filter((id) => !deprecatedEntryIds.has(id));
   const dockSet = new Set(dock);
   const legacyOrder = Array.isArray(value?.order)
-    ? uniqueStrings(value.order).filter((id) => !dockSet.has(id))
+    ? uniqueStrings(value.order).filter((id) => !dockSet.has(id) && !deprecatedEntryIds.has(id))
     : [];
   const pages = Array.isArray(value?.pages)
     ? value.pages
       .filter((page): page is string[] => Array.isArray(page))
-      .map((page) => uniqueStrings(page).filter((id) => !dockSet.has(id)))
+      .map((page) => uniqueStrings(page).filter((id) => !dockSet.has(id) && !deprecatedEntryIds.has(id)))
     : [];
   const cells = Array.isArray(value?.cells)
     ? value.cells
@@ -1815,7 +1811,7 @@ function normalizeStoredLayout(
         && Number.isInteger(cell.row)
         && Number.isInteger(cell.column)
       ))
-      .filter((cell) => !dockSet.has(cell.id))
+      .filter((cell) => !dockSet.has(cell.id) && !deprecatedEntryIds.has(cell.id))
     : [];
   const gridColumns = readStoredGridColumns(value?.gridColumns, cells, metrics);
   return {
@@ -1828,7 +1824,7 @@ function normalizeStoredLayout(
         .map((folder) => ({
           id: folder.id,
           title: typeof folder.title === "string" ? folder.title : defaultFolderTitle,
-          childIds: uniqueStrings(folder.childIds).filter((id) => !dockSet.has(id)),
+          childIds: uniqueStrings(folder.childIds).filter((id) => !dockSet.has(id) && !deprecatedEntryIds.has(id)),
         }))
       : [],
     gridColumns: metrics.columns,
@@ -2266,6 +2262,28 @@ const desktopCollisionDetection: CollisionDetection = (args) => {
 
 function removeChildFromFolders(folders: FolderLayout[], itemId: string): FolderLayout[] {
   return folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) }));
+}
+
+function removeDeprecatedEntryIds(layout: LauncherLayout, deprecatedEntryIds: Set<string>): LauncherLayout {
+  if (deprecatedEntryIds.size === 0) return layout;
+  let changed = false;
+  const cells = layout.cells.filter((cell) => {
+    const keep = !deprecatedEntryIds.has(cell.id);
+    if (!keep) changed = true;
+    return keep;
+  });
+  const dock = layout.dock.filter((id) => {
+    const keep = !deprecatedEntryIds.has(id);
+    if (!keep) changed = true;
+    return keep;
+  });
+  const folders = layout.folders.map((folder) => {
+    const childIds = folder.childIds.filter((id) => !deprecatedEntryIds.has(id));
+    if (sameStringList(childIds, folder.childIds)) return folder;
+    changed = true;
+    return { ...folder, childIds };
+  });
+  return changed ? { ...layout, cells, dock, folders } : layout;
 }
 
 function pruneEmptyFolders(layout: LauncherLayout, availableEntryIds?: Set<string>): LauncherLayout {
