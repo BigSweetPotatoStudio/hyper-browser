@@ -159,6 +159,7 @@ function DesktopPage() {
   const [syncMessage, setSyncMessage] = useState("");
   const longPressTimer = useRef<number | null>(null);
   const pointerX = useRef<number | null>(null);
+  const pointerY = useRef<number | null>(null);
   const suppressClickForId = useRef<string | null>(null);
   const gridMetrics = useDesktopGridMetrics();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -212,6 +213,7 @@ function DesktopPage() {
   useEffect(() => {
     const updatePointerX = (event: Event) => {
       pointerX.current = pointerClientX(event) ?? pointerX.current;
+      pointerY.current = pointerClientY(event) ?? pointerY.current;
     };
     window.addEventListener("pointermove", updatePointerX, { capture: true });
     window.addEventListener("mousemove", updatePointerX, { capture: true });
@@ -394,6 +396,7 @@ function DesktopPage() {
     closeMenu();
     const draggedId = String(event.active.id);
     pointerX.current = pointerClientX(event.activatorEvent) ?? pointerX.current;
+    pointerY.current = pointerClientY(event.activatorEvent) ?? pointerY.current;
     suppressClickForId.current = draggedId;
     setActiveId(draggedId);
     setDropPreview(null);
@@ -408,7 +411,24 @@ function DesktopPage() {
   }
 
   function updateDropPreview(event: DragMoveEvent) {
-    if (!editMode || !event.over) {
+    if (!editMode) {
+      setDropPreview(null);
+      return;
+    }
+    const currentPointerX = dragPointerClientX(event, pointerX.current);
+    const currentPointerY = dragPointerClientY(event, pointerY.current);
+    pointerX.current = currentPointerX ?? pointerX.current;
+    pointerY.current = currentPointerY ?? pointerY.current;
+    if (closeOpenFolderWhenDragLeaves(
+      containerData(event.active.data.current?.container),
+      stringData(event.active.data.current?.folderId),
+      currentPointerX,
+      currentPointerY,
+    )) {
+      setDropPreview(null);
+      return;
+    }
+    if (!event.over) {
       setDropPreview(null);
       return;
     }
@@ -424,8 +444,6 @@ function DesktopPage() {
       return;
     }
     const placementRect = resolvedTarget.slotDropId ? rectForDropSlot(resolvedTarget.slotDropId) || event.over.rect : event.over.rect;
-    const currentPointerX = dragPointerClientX(event, pointerX.current);
-    pointerX.current = currentPointerX ?? pointerX.current;
     const placement = dropPlacementFor(currentPointerX, placementRect, event.active.rect.current.translated);
     setDropPreview(dropPreviewFor(
       String(event.active.id),
@@ -438,6 +456,25 @@ function DesktopPage() {
       placement,
       resolvedTarget.slotDropId,
     ));
+  }
+
+  function closeOpenFolderWhenDragLeaves(
+    sourceContainer: LauncherContainer | undefined,
+    sourceFolderId: string | undefined,
+    clientX: number | null,
+    clientY: number | null,
+  ): boolean {
+    if (sourceContainer !== "folder" || !sourceFolderId || openFolderId !== sourceFolderId) return false;
+    if (clientX === null || clientY === null) return false;
+    const folderRect = document.querySelector<HTMLElement>(".desktop-folder")?.getBoundingClientRect();
+    if (!folderRect) return false;
+    const insideFolder = clientX >= folderRect.left
+      && clientX <= folderRect.right
+      && clientY >= folderRect.top
+      && clientY <= folderRect.bottom;
+    if (insideFolder) return false;
+    setOpenFolderId(null);
+    return true;
   }
 
   function dropPreviewFor(
@@ -1824,6 +1861,11 @@ function dragPointerClientX(event: { activatorEvent: Event; delta: { x: number }
   return startX === null ? fallback : startX + event.delta.x;
 }
 
+function dragPointerClientY(event: { activatorEvent: Event; delta: { y: number } }, fallback: number | null): number | null {
+  const startY = pointerClientY(event.activatorEvent);
+  return startY === null ? fallback : startY + event.delta.y;
+}
+
 function pointerClientX(event: Event): number | null {
   if ("clientX" in event && typeof event.clientX === "number") {
     return event.clientX;
@@ -1834,6 +1876,20 @@ function pointerClientX(event: Event): number | null {
   }
   if (touchEvent.changedTouches && touchEvent.changedTouches.length > 0) {
     return touchEvent.changedTouches[0].clientX;
+  }
+  return null;
+}
+
+function pointerClientY(event: Event): number | null {
+  if ("clientY" in event && typeof event.clientY === "number") {
+    return event.clientY;
+  }
+  const touchEvent = event as Partial<TouchEvent>;
+  if (touchEvent.touches && touchEvent.touches.length > 0) {
+    return touchEvent.touches[0].clientY;
+  }
+  if (touchEvent.changedTouches && touchEvent.changedTouches.length > 0) {
+    return touchEvent.changedTouches[0].clientY;
   }
   return null;
 }
