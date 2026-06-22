@@ -6,10 +6,13 @@ import {
   DragEndEvent,
   DragOverlay,
   DragStartEvent,
+  pointerWithin,
   PointerSensor,
   useSensor,
   useSensors,
+  useDroppable,
   type ClientRect,
+  type CollisionDetection,
 } from "@dnd-kit/core";
 import {
   rectSortingStrategy,
@@ -23,6 +26,7 @@ import { sendCommand } from "./bridge";
 
 const LAYOUT_STORAGE_KEY = "launcherLayout";
 const LONG_PRESS_MS = 540;
+const DESKTOP_DROP_ID = "drop:desktop";
 
 type SystemAction = "chrome" | "bookmarks" | "history" | "extensions";
 
@@ -88,21 +92,37 @@ function DesktopPage() {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   useEffect(() => {
-    Promise.all([loadLayout(), sendCommand<WebAppRecord[]>("webapps.list")])
-      .then(([nextLayout, records]) => {
-        setLayout(nextLayout);
-        setApps(records);
-        setError("");
-      })
-      .catch((loadError) => {
-        setError(loadError instanceof Error ? loadError.message : "Unable to load desktop.");
-      })
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    async function loadDesktop() {
+      try {
+        const nextLayout = await loadLayout();
+        if (!cancelled) setLayout(nextLayout);
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load desktop layout.");
+      }
+
+      try {
+        const records = await sendCommand<WebAppRecord[]>("webapps.list");
+        if (!cancelled) {
+          setApps(records);
+          setError("");
+        }
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load WebApps.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    loadDesktop();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
+    if (loading) return;
     chrome.storage.local.set({ [LAYOUT_STORAGE_KEY]: layout }).catch(console.error);
-  }, [layout]);
+  }, [layout, loading]);
 
   const systemEntries = useMemo<SystemEntry[]>(() => ([
     { id: "system:chrome", kind: "system", title: "Chrome", mark: "C", color: "#4285f4", action: "chrome" },
@@ -215,14 +235,19 @@ function DesktopPage() {
       suppressClickForId.current = null;
       return;
     }
-    if (editMode) return;
+    if (editMode) {
+      if (entry.kind === "folder") setOpenFolderId(entry.id);
+      return;
+    }
     openEntry(entry);
   }
 
   function handleDragStart(event: DragStartEvent) {
     if (!editMode) return;
     closeMenu();
-    setActiveId(String(event.active.id));
+    const draggedId = String(event.active.id);
+    suppressClickForId.current = draggedId;
+    setActiveId(draggedId);
   }
 
   function handleDragEnd(event: DragEndEvent) {
@@ -237,6 +262,14 @@ function DesktopPage() {
   }
 
   function handleDrop(itemId: string, sourceFolderId: string | undefined, targetId: string, targetFolderId: string | undefined, placement: DropPlacement) {
+    if (targetId === DESKTOP_DROP_ID) {
+      if (sourceFolderId) {
+        moveToDesktopEnd(itemId);
+      } else {
+        moveRootToEnd(itemId);
+      }
+      return;
+    }
     const targetEntry = resolveEntry(targetId);
     if (!targetEntry) return;
     if (targetEntry.kind === "folder") {
@@ -268,6 +301,10 @@ function DesktopPage() {
     setLayout((current) => ({ ...current, order: insertRelative(desktopIds, itemId, targetId, placement) }));
   }
 
+  function moveRootToEnd(itemId: string) {
+    setLayout((current) => ({ ...current, order: [...desktopIds.filter((id) => id !== itemId), itemId] }));
+  }
+
   function moveInsideFolderRelative(folderId: string, itemId: string, targetId: string, placement: DropPlacement) {
     setLayout((current) => ({
       ...current,
@@ -282,6 +319,15 @@ function DesktopPage() {
       order: insertRelative(desktopIds, itemId, targetId, placement),
       folders: current.folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) })),
     }));
+    setOpenFolderId(null);
+  }
+
+  function moveToDesktopEnd(itemId: string) {
+    setLayout((current) => ({
+      order: [...desktopIds.filter((id) => id !== itemId), itemId],
+      folders: current.folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) })),
+    }));
+    setOpenFolderId(null);
   }
 
   function moveToFolder(itemId: string, folderId: string) {
@@ -385,13 +431,13 @@ function DesktopPage() {
 
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCenter}
+        collisionDetection={desktopCollisionDetection}
         onDragCancel={() => setActiveId(null)}
         onDragEnd={handleDragEnd}
         onDragStart={handleDragStart}
       >
         <SortableContext items={desktopIds} strategy={rectSortingStrategy}>
-          <section className="desktop-grid" aria-label="Hyper Browser desktop">
+          <DesktopDropGrid enabled={editMode && !openFolder}>
             {loading && <div className="desktop-status">Loading desktop...</div>}
             {error && <button className="desktop-status" type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })}>{error}</button>}
             {desktopEntries.map((entry) => (
@@ -406,11 +452,11 @@ function DesktopPage() {
                 onPointerEnd={clearLongPress}
               />
             ))}
-          </section>
+          </DesktopDropGrid>
         </SortableContext>
 
         {openFolder && (
-          <div className="desktop-folder-scrim" onClick={() => setOpenFolderId(null)}>
+          <DesktopFolderScrim editMode={editMode} onClose={() => setOpenFolderId(null)}>
             <section className="desktop-folder" role="dialog" aria-modal="true" aria-label={openFolder.title} onClick={(event) => event.stopPropagation()}>
               <header className="desktop-folder-header">
                 <h2>{openFolder.title}</h2>
@@ -435,7 +481,7 @@ function DesktopPage() {
                 </div>
               </SortableContext>
             </section>
-          </div>
+          </DesktopFolderScrim>
         )}
 
         <DragOverlay>
@@ -472,6 +518,32 @@ function DesktopPage() {
         />
       )}
     </main>
+  );
+}
+
+function DesktopDropGrid(props: { children: React.ReactNode; enabled: boolean }) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: DESKTOP_DROP_ID,
+    data: { kind: "desktop" },
+    disabled: !props.enabled,
+  });
+  return (
+    <section className={`desktop-grid${isOver ? " desktop-grid-over" : ""}`} aria-label="Hyper Browser desktop" ref={setNodeRef}>
+      {props.children}
+    </section>
+  );
+}
+
+function DesktopFolderScrim(props: { children: React.ReactNode; editMode: boolean; onClose: () => void }) {
+  const { setNodeRef } = useDroppable({
+    id: DESKTOP_DROP_ID,
+    data: { kind: "desktop" },
+    disabled: !props.editMode,
+  });
+  return (
+    <div className="desktop-folder-scrim" onClick={props.onClose} ref={setNodeRef}>
+      {props.children}
+    </div>
   );
 }
 
@@ -623,6 +695,19 @@ function dropPlacementFor(activeRect: ClientRect | null, overRect: ClientRect): 
   if (ratio > 0.76) return "after";
   return "inside";
 }
+
+const desktopCollisionDetection: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args);
+  const pointerTargets = pointerCollisions.filter((collision) => collision.id !== DESKTOP_DROP_ID);
+  if (pointerTargets.length > 0) return pointerTargets;
+
+  const desktopCollision = pointerCollisions.find((collision) => collision.id === DESKTOP_DROP_ID);
+  if (desktopCollision) return [desktopCollision];
+
+  const centerCollisions = closestCenter(args);
+  const centerTargets = centerCollisions.filter((collision) => collision.id !== DESKTOP_DROP_ID);
+  return centerTargets.length > 0 ? centerTargets : centerCollisions;
+};
 
 function insertRelative(ids: string[], itemId: string, targetId: string, placement: DropPlacement): string[] {
   const next = ids.filter((id) => id !== itemId);
