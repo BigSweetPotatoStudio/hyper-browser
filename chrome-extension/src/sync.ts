@@ -282,12 +282,21 @@ function getBookmarkNode(id: string): Promise<chrome.bookmarks.BookmarkTreeNode 
 
 function getFolderBookmarks(folderId: string): Promise<chrome.bookmarks.BookmarkTreeNode[]> {
   return new Promise((resolve, reject) => {
-    chrome.bookmarks.getChildren(folderId, (nodes) => {
+    chrome.bookmarks.getSubTree(folderId, (nodes) => {
       const error = chrome.runtime.lastError;
       if (error) reject(new Error(error.message));
-      else resolve(nodes.filter((node) => !!node.url));
+      else resolve(flattenBookmarkNodes(nodes[0]).filter((node) => !!node.url));
     });
   });
+}
+
+function flattenBookmarkNodes(node?: chrome.bookmarks.BookmarkTreeNode): chrome.bookmarks.BookmarkTreeNode[] {
+  if (!node) return [];
+  const children = node.children || [];
+  return [
+    node,
+    ...children.flatMap((child) => flattenBookmarkNodes(child)),
+  ];
 }
 
 function createBookmark(bookmark: chrome.bookmarks.CreateDetails): Promise<chrome.bookmarks.BookmarkTreeNode> {

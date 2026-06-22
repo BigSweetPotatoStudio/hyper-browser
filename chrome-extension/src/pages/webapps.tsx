@@ -1,8 +1,8 @@
 import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { deleteRemoteWebApp, loadRemoteWebApps, saveRemoteWebApp } from "../sync";
+import { deleteRemoteWebApp, loadRemoteWebApps, saveRemoteWebApp, syncNow } from "../sync";
 import "../styles.css";
-import type { WebAppRecord } from "../types";
+import type { SyncResult, WebAppRecord } from "../types";
 
 type Draft = {
   id?: string;
@@ -40,6 +40,21 @@ function WebAppsPage() {
     loadRemoteWebApps()
       .then(setItems)
       .catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load WebApps."))
+      .finally(() => setBusy(false));
+  }
+
+  function syncBookmarks() {
+    setBusy(true);
+    setError("");
+    setMessage("Syncing bookmarks...");
+    syncNow()
+      .then((result: SyncResult) => {
+        setMessage(`Synced ${result.bookmarkCount} bookmarks from the Hyper Browser folder. Tombstones: ${result.deletedBookmarkCount}.`);
+      })
+      .catch((syncError) => {
+        setMessage("");
+        setError(syncError instanceof Error ? syncError.message : "Unable to sync bookmarks.");
+      })
       .finally(() => setBusy(false));
   }
 
@@ -102,7 +117,10 @@ function WebAppsPage() {
           <h1 className="title">Hyper Browser WebApps</h1>
           <p className="subtitle">Manage WebApps stored in WebDAV webapps.json.</p>
         </div>
-        <button className="button" type="button" onClick={refresh} disabled={busy}>Refresh</button>
+        <div className="actions">
+          <button className="button" type="button" onClick={refresh} disabled={busy}>Refresh WebApps</button>
+          <button className="button primary" type="button" onClick={syncBookmarks} disabled={busy}>Sync bookmarks</button>
+        </div>
       </header>
 
       <form className="panel" onSubmit={submit}>
