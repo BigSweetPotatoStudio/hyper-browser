@@ -323,9 +323,17 @@ button:disabled {
 
 .desktop-cell-slot {
   position: relative;
+  display: grid;
   width: 98px;
   height: 105px;
+  place-items: center;
   border-radius: 14px;
+  overflow: visible;
+}
+
+.desktop-cell-slot.drop-folder,
+.desktop-cell-slot.drop-insert {
+  z-index: 30;
 }
 
 .desktop-cell-slot.editing {
@@ -344,6 +352,10 @@ button:disabled {
   position: relative;
   display: grid;
   grid-template-rows: 64px 34px;
+  width: 98px;
+  height: 105px;
+  box-sizing: border-box;
+  align-content: center;
   justify-items: center;
   gap: 7px;
   min-width: 0;
@@ -360,7 +372,7 @@ button:disabled {
 .desktop-tile.drop-insert.drop-after::after {
   position: absolute;
   top: 2px;
-  z-index: 2;
+  z-index: 1000;
   display: grid;
   width: 18px;
   height: 70px;
@@ -380,11 +392,13 @@ button:disabled {
 }
 
 .desktop-cell-slot.drop-insert.drop-before::before {
-  left: -10px;
+  left: 0;
+  transform: translateX(-50%);
 }
 
 .desktop-cell-slot.drop-insert.drop-after::after {
-  right: -10px;
+  right: 0;
+  transform: translateX(50%);
 }
 
 .desktop-tile.drop-insert.drop-before::before {
