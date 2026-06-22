@@ -27,8 +27,9 @@ import { sendCommand } from "./bridge";
 const LAYOUT_STORAGE_KEY = "launcherLayout";
 const LONG_PRESS_MS = 540;
 const DESKTOP_DROP_ID = "drop:desktop";
-const DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"] as const;
-const DOCK_ENTRY_ID_SET = new Set<string>(DOCK_ENTRY_IDS);
+const DOCK_DROP_ID = "drop:dock";
+const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"] as const;
+const DROP_ZONE_IDS = new Set<string>([DESKTOP_DROP_ID, DOCK_DROP_ID]);
 
 type SystemAction = "chrome" | "bookmarks" | "history" | "extensions";
 
@@ -68,11 +69,15 @@ type LauncherEntry = SystemEntry | AppEntry | FolderEntry;
 
 type LauncherLayout = {
   order: string[];
+  dock: string[];
   folders: FolderLayout[];
 };
 
+type LauncherContainer = "desktop" | "dock" | "folder";
+
 type MenuState = {
   itemId: string;
+  sourceContainer: LauncherContainer;
   folderId?: string;
   x: number;
   y: number;
@@ -82,7 +87,7 @@ type DropPlacement = "before" | "inside" | "after";
 
 function DesktopPage() {
   const [apps, setApps] = useState<WebAppRecord[]>([]);
-  const [layout, setLayout] = useState<LauncherLayout>({ order: [], folders: [] });
+  const [layout, setLayout] = useState<LauncherLayout>({ order: [], dock: [...DEFAULT_DOCK_ENTRY_IDS], folders: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -151,22 +156,22 @@ function DesktopPage() {
     id: folder.id,
     kind: "folder",
     title: folder.title || "Folder",
-    childIds: folder.childIds.filter((id) => availableEntries.has(id) && !DOCK_ENTRY_ID_SET.has(id)),
+    childIds: folder.childIds.filter((id) => availableEntries.has(id)),
     children: folder.childIds
       .map((id) => availableEntries.get(id))
-      .filter((item): item is SystemEntry | AppEntry => !!item && !DOCK_ENTRY_ID_SET.has(item.id))
+      .filter((item): item is SystemEntry | AppEntry => !!item)
   })), [availableEntries, layout.folders]);
-
-  const dockEntries = useMemo(() => DOCK_ENTRY_IDS
-    .map((id) => availableEntries.get(id))
-    .filter((item): item is SystemEntry | AppEntry => !!item), [availableEntries]);
 
   const folderEntries = useMemo(() => new Map(folders.map((folder) => [folder.id, folder] as const)), [folders]);
   const containedIds = useMemo(() => new Set(folders.flatMap((folder) => folder.childIds)), [folders]);
+  const dockIds = useMemo(() => layout.dock.filter((id) => !containedIds.has(id) && (availableEntries.has(id) || folderEntries.has(id))), [availableEntries, containedIds, folderEntries, layout.dock]);
+  const dockEntries = useMemo(() => dockIds
+    .map((id) => folderEntries.get(id) || availableEntries.get(id))
+    .filter((item): item is LauncherEntry => !!item), [availableEntries, dockIds, folderEntries]);
 
   const desktopEntries = useMemo(() => {
     const allIds = [...availableEntries.keys(), ...folderEntries.keys()];
-    const visibleIds = allIds.filter((id) => !containedIds.has(id) && !DOCK_ENTRY_ID_SET.has(id));
+    const visibleIds = allIds.filter((id) => !containedIds.has(id) && !dockIds.includes(id));
     const ordered = [
       ...layout.order.filter((id) => visibleIds.includes(id)),
       ...visibleIds.filter((id) => !layout.order.includes(id)),
@@ -174,7 +179,7 @@ function DesktopPage() {
     return ordered
       .map((id) => folderEntries.get(id) || availableEntries.get(id))
       .filter((item): item is LauncherEntry => !!item);
-  }, [availableEntries, containedIds, folderEntries, layout.order]);
+  }, [availableEntries, containedIds, dockIds, folderEntries, layout.order]);
 
   const desktopIds = useMemo(() => desktopEntries.map((entry) => entry.id), [desktopEntries]);
   const openFolder = openFolderId ? folderEntries.get(openFolderId) : undefined;
@@ -203,7 +208,7 @@ function DesktopPage() {
     chrome.tabs.create({ url: urls[entry.action] });
   }
 
-  function startLongPress(event: React.PointerEvent<HTMLElement>, itemId: string, folderId?: string) {
+  function startLongPress(event: React.PointerEvent<HTMLElement>, itemId: string, sourceContainer: LauncherContainer, folderId?: string) {
     if (editMode) return;
     if (event.button !== 0) return;
     clearLongPress();
@@ -213,7 +218,7 @@ function DesktopPage() {
       longPressTimer.current = null;
       if (editMode) return;
       suppressClickForId.current = itemId;
-      setMenu((current) => current || { itemId, folderId, x, y });
+      setMenu((current) => current || { itemId, sourceContainer, folderId, x, y });
     }, LONG_PRESS_MS);
   }
 
@@ -223,11 +228,11 @@ function DesktopPage() {
     longPressTimer.current = null;
   }
 
-  function openContextMenu(event: React.MouseEvent<HTMLElement>, itemId: string, folderId?: string) {
+  function openContextMenu(event: React.MouseEvent<HTMLElement>, itemId: string, sourceContainer: LauncherContainer, folderId?: string) {
     event.preventDefault();
     clearLongPress();
     if (editMode) return;
-    setMenu({ itemId, folderId, x: event.clientX, y: event.clientY });
+    setMenu({ itemId, sourceContainer, folderId, x: event.clientX, y: event.clientY });
   }
 
   function closeMenu() {
@@ -260,20 +265,30 @@ function DesktopPage() {
     const draggedId = String(event.active.id);
     const targetId = event.over ? String(event.over.id) : "";
     const sourceFolderId = stringData(event.active.data.current?.folderId);
+    const sourceContainer = containerData(event.active.data.current?.container);
     const targetFolderId = stringData(event.over?.data.current?.folderId);
+    const targetContainer = containerData(event.over?.data.current?.container);
     const placement = event.over ? dropPlacementFor(event.active.rect.current.translated, event.over.rect) : "inside";
     setActiveId(null);
     if (!targetId || draggedId === targetId) return;
-    handleDrop(draggedId, sourceFolderId, targetId, targetFolderId, placement);
+    handleDrop(draggedId, sourceContainer, sourceFolderId, targetId, targetContainer, targetFolderId, placement);
   }
 
-  function handleDrop(itemId: string, sourceFolderId: string | undefined, targetId: string, targetFolderId: string | undefined, placement: DropPlacement) {
+  function handleDrop(
+    itemId: string,
+    sourceContainer: LauncherContainer | undefined,
+    sourceFolderId: string | undefined,
+    targetId: string,
+    targetContainer: LauncherContainer | undefined,
+    targetFolderId: string | undefined,
+    placement: DropPlacement,
+  ) {
     if (targetId === DESKTOP_DROP_ID) {
-      if (sourceFolderId) {
-        moveToDesktopEnd(itemId);
-      } else {
-        moveRootToEnd(itemId);
-      }
+      moveToDesktopEnd(itemId);
+      return;
+    }
+    if (targetId === DOCK_DROP_ID) {
+      moveToDockEnd(itemId);
       return;
     }
     const targetEntry = resolveEntry(targetId);
@@ -282,33 +297,33 @@ function DesktopPage() {
       if (!itemId.startsWith("folder:")) moveToFolder(itemId, targetEntry.id);
       return;
     }
-    if (!targetFolderId && !itemId.startsWith("folder:") && placement === "inside") {
-      createFolderFromDrop(itemId, targetId);
+    if (targetContainer === "dock") {
+      if (!itemId.startsWith("folder:") && placement === "inside") {
+        createFolderFromDrop(itemId, targetId, "dock");
+      } else {
+        moveToDockNear(itemId, targetId, placement);
+      }
       return;
     }
     if (sourceFolderId && targetFolderId === sourceFolderId) {
       moveInsideFolderRelative(sourceFolderId, itemId, targetId, placement);
       return;
     }
-    if (sourceFolderId && !targetFolderId) {
+    if (!targetFolderId && !itemId.startsWith("folder:") && placement === "inside") {
+      createFolderFromDrop(itemId, targetId, "desktop");
+      return;
+    }
+    if (sourceContainer === "folder" && !targetFolderId) {
       moveToDesktopNear(itemId, targetId, placement);
       return;
     }
-    if (!sourceFolderId && !targetFolderId) {
-      moveRootRelative(itemId, targetId, placement);
+    if (!targetFolderId) {
+      moveToDesktopNear(itemId, targetId, placement);
       return;
     }
-    if (!sourceFolderId && targetFolderId) {
+    if (targetFolderId) {
       moveToFolder(itemId, targetFolderId);
     }
-  }
-
-  function moveRootRelative(itemId: string, targetId: string, placement: DropPlacement) {
-    setLayout((current) => ({ ...current, order: insertRelative(desktopIds, itemId, targetId, placement) }));
-  }
-
-  function moveRootToEnd(itemId: string) {
-    setLayout((current) => ({ ...current, order: [...desktopIds.filter((id) => id !== itemId), itemId] }));
   }
 
   function moveInsideFolderRelative(folderId: string, itemId: string, targetId: string, placement: DropPlacement) {
@@ -323,7 +338,8 @@ function DesktopPage() {
   function moveToDesktopNear(itemId: string, targetId: string, placement: DropPlacement) {
     setLayout((current) => ({
       order: insertRelative(desktopIds, itemId, targetId, placement),
-      folders: current.folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) })),
+      dock: current.dock.filter((id) => id !== itemId),
+      folders: removeChildFromFolders(current.folders, itemId),
     }));
     setOpenFolderId(null);
   }
@@ -331,7 +347,26 @@ function DesktopPage() {
   function moveToDesktopEnd(itemId: string) {
     setLayout((current) => ({
       order: [...desktopIds.filter((id) => id !== itemId), itemId],
-      folders: current.folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) })),
+      dock: current.dock.filter((id) => id !== itemId),
+      folders: removeChildFromFolders(current.folders, itemId),
+    }));
+    setOpenFolderId(null);
+  }
+
+  function moveToDockNear(itemId: string, targetId: string, placement: DropPlacement) {
+    setLayout((current) => ({
+      order: current.order.filter((id) => id !== itemId),
+      dock: insertRelative(dockIds, itemId, targetId, placement),
+      folders: removeChildFromFolders(current.folders, itemId),
+    }));
+    setOpenFolderId(null);
+  }
+
+  function moveToDockEnd(itemId: string) {
+    setLayout((current) => ({
+      order: current.order.filter((id) => id !== itemId),
+      dock: [...dockIds.filter((id) => id !== itemId), itemId],
+      folders: removeChildFromFolders(current.folders, itemId),
     }));
     setOpenFolderId(null);
   }
@@ -340,6 +375,7 @@ function DesktopPage() {
     if (itemId.startsWith("folder:")) return;
     setLayout((current) => ({
       order: current.order.filter((id) => id !== itemId),
+      dock: current.dock.filter((id) => id !== itemId),
       folders: current.folders.map((folder) => {
         const childIds = folder.childIds.filter((id) => id !== itemId);
         return folder.id === folderId ? { ...folder, childIds: [...childIds, itemId] } : { ...folder, childIds };
@@ -351,20 +387,36 @@ function DesktopPage() {
   function moveToDesktop(itemId: string) {
     setLayout((current) => ({
       order: [...current.order.filter((id) => id !== itemId), itemId],
-      folders: current.folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) })),
+      dock: current.dock.filter((id) => id !== itemId),
+      folders: removeChildFromFolders(current.folders, itemId),
     }));
     closeMenu();
   }
 
-  function createFolderWith(itemId: string) {
+  function moveToDock(itemId: string) {
+    setLayout((current) => ({
+      order: current.order.filter((id) => id !== itemId),
+      dock: [...current.dock.filter((id) => id !== itemId), itemId],
+      folders: removeChildFromFolders(current.folders, itemId),
+    }));
+    setOpenFolderId(null);
+    closeMenu();
+  }
+
+  function createFolderWith(itemId: string, sourceContainer: LauncherContainer) {
     if (itemId.startsWith("folder:")) return;
     const folderId = `folder:${crypto.randomUUID()}`;
     setLayout((current) => ({
-      order: current.order.includes(itemId)
-        ? current.order.map((id) => (id === itemId ? folderId : id))
-        : [...desktopIds.filter((id) => id !== itemId), folderId],
+      order: sourceContainer === "dock"
+        ? current.order.filter((id) => id !== itemId)
+        : (current.order.includes(itemId)
+          ? current.order.map((id) => (id === itemId ? folderId : id))
+          : [...desktopIds.filter((id) => id !== itemId), folderId]),
+      dock: sourceContainer === "dock"
+        ? current.dock.map((id) => (id === itemId ? folderId : id))
+        : current.dock.filter((id) => id !== itemId),
       folders: [
-        ...current.folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) })),
+        ...removeChildFromFolders(current.folders, itemId),
         { id: folderId, title: "Folder", childIds: [itemId] },
       ],
     }));
@@ -372,14 +424,16 @@ function DesktopPage() {
     closeMenu();
   }
 
-  function createFolderFromDrop(itemId: string, targetId: string) {
+  function createFolderFromDrop(itemId: string, targetId: string, targetContainer: "desktop" | "dock") {
     if (itemId === targetId || itemId.startsWith("folder:") || targetId.startsWith("folder:")) return;
     const folderId = `folder:${crypto.randomUUID()}`;
-    const targetIndex = Math.max(0, desktopIds.indexOf(targetId));
-    const nextOrder = desktopIds.filter((id) => id !== itemId && id !== targetId);
-    nextOrder.splice(Math.min(targetIndex, nextOrder.length), 0, folderId);
+    const targetIds = targetContainer === "dock" ? dockIds : desktopIds;
+    const targetIndex = Math.max(0, targetIds.indexOf(targetId));
+    const nextIds = targetIds.filter((id) => id !== itemId && id !== targetId);
+    nextIds.splice(Math.min(targetIndex, nextIds.length), 0, folderId);
     setLayout((current) => ({
-      order: nextOrder,
+      order: targetContainer === "desktop" ? nextIds : current.order.filter((id) => id !== itemId && id !== targetId),
+      dock: targetContainer === "dock" ? nextIds : current.dock.filter((id) => id !== itemId && id !== targetId),
       folders: [
         ...current.folders.map((folder) => ({
           ...folder,
@@ -408,6 +462,7 @@ function DesktopPage() {
     if (!folder) return;
     setLayout((current) => ({
       order: current.order.flatMap((id) => (id === folderId ? folder.childIds : [id])),
+      dock: current.dock.flatMap((id) => (id === folderId ? folder.childIds : [id])),
       folders: current.folders.filter((item) => item.id !== folderId),
     }));
     setOpenFolderId(null);
@@ -422,7 +477,8 @@ function DesktopPage() {
       .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : "Unable to delete WebApp."));
     setLayout((current) => ({
       order: current.order.filter((id) => id !== itemId),
-      folders: current.folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) })),
+      dock: current.dock.filter((id) => id !== itemId),
+      folders: removeChildFromFolders(current.folders, itemId),
     }));
     closeMenu();
   }
@@ -448,6 +504,7 @@ function DesktopPage() {
             {error && <button className="desktop-status" type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })}>{error}</button>}
             {desktopEntries.map((entry) => (
               <DesktopTile
+                container="desktop"
                 entry={entry}
                 editMode={editMode}
                 folderId={undefined}
@@ -474,6 +531,7 @@ function DesktopPage() {
                     <div className="desktop-status">This folder is empty.</div>
                   ) : openFolder.children.map((entry) => (
                     <DesktopTile
+                      container="folder"
                       entry={entry}
                       editMode={editMode}
                       folderId={openFolder.id}
@@ -490,6 +548,17 @@ function DesktopPage() {
           </DesktopFolderScrim>
         )}
 
+        <SortableContext items={dockIds} strategy={rectSortingStrategy}>
+          <DesktopDock
+            entries={dockEntries}
+            editMode={editMode}
+            onClick={clickEntry}
+            onContextMenu={openContextMenu}
+            onPointerDown={startLongPress}
+            onPointerEnd={clearLongPress}
+          />
+        </SortableContext>
+
         <DragOverlay>
           {activeEntry && (
             <div className="desktop-drag-overlay">
@@ -499,12 +568,11 @@ function DesktopPage() {
         </DragOverlay>
       </DndContext>
 
-      <DesktopDock entries={dockEntries} editMode={editMode} onClick={clickEntry} />
-
       {menu && (
         <DesktopMenu
           folders={folders}
           item={resolveEntry(menu.itemId)}
+          sourceContainer={menu.sourceContainer}
           sourceFolderId={menu.folderId}
           x={menu.x}
           y={menu.y}
@@ -518,6 +586,7 @@ function DesktopPage() {
             closeMenu();
           }}
           onCreateFolder={createFolderWith}
+          onMoveToDock={moveToDock}
           onMoveToFolder={moveToFolder}
           onMoveToDesktop={moveToDesktop}
           onRenameFolder={renameFolder}
@@ -529,20 +598,31 @@ function DesktopPage() {
   );
 }
 
-function DesktopDock(props: { entries: Array<SystemEntry | AppEntry>; editMode: boolean; onClick: (entry: SystemEntry | AppEntry) => void }) {
+function DesktopDock(props: {
+  entries: LauncherEntry[];
+  editMode: boolean;
+  onClick: (entry: LauncherEntry) => void;
+  onContextMenu: (event: React.MouseEvent<HTMLElement>, itemId: string, sourceContainer: LauncherContainer, folderId?: string) => void;
+  onPointerDown: (event: React.PointerEvent<HTMLElement>, itemId: string, sourceContainer: LauncherContainer, folderId?: string) => void;
+  onPointerEnd: () => void;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: DOCK_DROP_ID,
+    data: { container: "dock" satisfies LauncherContainer, kind: "dock" },
+    disabled: !props.editMode,
+  });
   return (
-    <nav className="desktop-dock" aria-label="Dock">
+    <nav className={`desktop-dock${isOver ? " desktop-dock-over" : ""}`} aria-label="Dock" ref={setNodeRef}>
       {props.entries.map((entry) => (
-        <button
-          className={`desktop-dock-tile${props.editMode ? " editing" : ""}`}
+        <DockTile
+          editMode={props.editMode}
+          entry={entry}
           key={entry.id}
-          title={entry.title}
-          type="button"
-          aria-label={entry.title}
-          onClick={() => props.onClick(entry)}
-        >
-          <DesktopIconVisual entry={entry} />
-        </button>
+          onClick={props.onClick}
+          onContextMenu={props.onContextMenu}
+          onPointerDown={props.onPointerDown}
+          onPointerEnd={props.onPointerEnd}
+        />
       ))}
     </nav>
   );
@@ -575,12 +655,13 @@ function DesktopFolderScrim(props: { children: React.ReactNode; editMode: boolea
 }
 
 function DesktopTile(props: {
+  container: LauncherContainer;
   entry: LauncherEntry;
   editMode: boolean;
   folderId?: string;
   onClick: (entry: LauncherEntry) => void;
-  onContextMenu: (event: React.MouseEvent<HTMLElement>, itemId: string, folderId?: string) => void;
-  onPointerDown: (event: React.PointerEvent<HTMLElement>, itemId: string, folderId?: string) => void;
+  onContextMenu: (event: React.MouseEvent<HTMLElement>, itemId: string, sourceContainer: LauncherContainer, folderId?: string) => void;
+  onPointerDown: (event: React.PointerEvent<HTMLElement>, itemId: string, sourceContainer: LauncherContainer, folderId?: string) => void;
   onPointerEnd: () => void;
 }) {
   const {
@@ -592,7 +673,7 @@ function DesktopTile(props: {
     transition,
   } = useSortable({
     id: props.entry.id,
-    data: { folderId: props.folderId || "", kind: props.entry.kind },
+    data: { container: props.container, folderId: props.folderId || "", kind: props.entry.kind },
     disabled: !props.editMode,
   });
   const style = {
@@ -612,8 +693,8 @@ function DesktopTile(props: {
       title={props.entry.title}
       type="button"
       onClick={() => props.onClick(props.entry)}
-      onContextMenu={(event) => props.onContextMenu(event, props.entry.id, props.folderId)}
-      onPointerDown={props.editMode ? undefined : (event) => props.onPointerDown(event, props.entry.id, props.folderId)}
+      onContextMenu={(event) => props.onContextMenu(event, props.entry.id, props.container, props.folderId)}
+      onPointerDown={props.editMode ? undefined : (event) => props.onPointerDown(event, props.entry.id, props.container, props.folderId)}
       onPointerUp={props.editMode ? undefined : props.onPointerEnd}
       onPointerLeave={props.editMode ? undefined : props.onPointerEnd}
       onPointerCancel={props.editMode ? undefined : props.onPointerEnd}
@@ -625,26 +706,82 @@ function DesktopTile(props: {
   );
 }
 
+function DockTile(props: {
+  entry: LauncherEntry;
+  editMode: boolean;
+  onClick: (entry: LauncherEntry) => void;
+  onContextMenu: (event: React.MouseEvent<HTMLElement>, itemId: string, sourceContainer: LauncherContainer, folderId?: string) => void;
+  onPointerDown: (event: React.PointerEvent<HTMLElement>, itemId: string, sourceContainer: LauncherContainer, folderId?: string) => void;
+  onPointerEnd: () => void;
+}) {
+  const {
+    attributes,
+    isDragging,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+  } = useSortable({
+    id: props.entry.id,
+    data: { container: "dock" satisfies LauncherContainer, folderId: "", kind: props.entry.kind },
+    disabled: !props.editMode,
+  });
+  const style = {
+    opacity: isDragging ? 0.34 : undefined,
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+  const dragListeners = props.editMode ? listeners : undefined;
+  const dragAttributes = props.editMode ? attributes : undefined;
+
+  return (
+    <button
+      aria-label={props.entry.title}
+      className={`desktop-dock-tile${props.editMode ? " editing" : ""}`}
+      data-launcher-id={props.entry.id}
+      ref={setNodeRef}
+      style={style}
+      title={props.entry.title}
+      type="button"
+      onClick={() => props.onClick(props.entry)}
+      onContextMenu={(event) => props.onContextMenu(event, props.entry.id, "dock")}
+      onPointerDown={props.editMode ? undefined : (event) => props.onPointerDown(event, props.entry.id, "dock")}
+      onPointerUp={props.editMode ? undefined : props.onPointerEnd}
+      onPointerLeave={props.editMode ? undefined : props.onPointerEnd}
+      onPointerCancel={props.editMode ? undefined : props.onPointerEnd}
+      {...dragAttributes}
+      {...dragListeners}
+    >
+      <DesktopLauncherIcon entry={props.entry} />
+    </button>
+  );
+}
+
 function DesktopTileVisual({ entry }: { entry: LauncherEntry }) {
   return (
     <>
       {entry.kind === "folder" ? (
-        <span className="desktop-icon desktop-folder-icon" aria-hidden="true">
-          {entry.children.slice(0, 4).map((child) => (
-            <span className="desktop-folder-dot" key={child.id} style={{ background: child.kind === "folder" ? "#dfe5eb" : child.color }}>
-              {child.kind === "folder" ? "" : child.mark.slice(0, 1)}
-            </span>
-          ))}
-        </span>
+        <DesktopLauncherIcon entry={entry} />
       ) : (
-        <DesktopIconVisual entry={entry} />
+        <DesktopLauncherIcon entry={entry} />
       )}
       <span className="desktop-label">{entry.title}</span>
     </>
   );
 }
 
-function DesktopIconVisual({ entry }: { entry: SystemEntry | AppEntry }) {
+function DesktopLauncherIcon({ entry }: { entry: LauncherEntry }) {
+  if (entry.kind === "folder") {
+    return (
+      <span className="desktop-icon desktop-folder-icon" aria-hidden="true">
+        {entry.children.slice(0, 4).map((child) => (
+          <span className="desktop-folder-dot" key={child.id} style={{ background: child.kind === "folder" ? "#dfe5eb" : child.color }}>
+            {child.kind === "folder" ? "" : child.mark.slice(0, 1)}
+          </span>
+        ))}
+      </span>
+    );
+  }
   return (
     <span className={entry.kind === "app" && entry.app.iconDataUrl ? "desktop-icon image" : "desktop-icon"} style={{ background: entry.color }} aria-hidden="true">
       {entry.kind === "app" && entry.app.iconDataUrl ? <img src={entry.app.iconDataUrl} alt="" /> : entry.mark}
@@ -654,6 +791,7 @@ function DesktopIconVisual({ entry }: { entry: SystemEntry | AppEntry }) {
 
 function DesktopMenu(props: {
   item?: LauncherEntry;
+  sourceContainer: LauncherContainer;
   sourceFolderId?: string;
   folders: FolderEntry[];
   x: number;
@@ -661,7 +799,8 @@ function DesktopMenu(props: {
   onClose: () => void;
   onOpen: (item: LauncherEntry) => void;
   onStartEditMode: () => void;
-  onCreateFolder: (itemId: string) => void;
+  onCreateFolder: (itemId: string, sourceContainer: LauncherContainer) => void;
+  onMoveToDock: (itemId: string) => void;
   onMoveToFolder: (itemId: string, folderId: string) => void;
   onMoveToDesktop: (itemId: string) => void;
   onRenameFolder: (folderId: string) => void;
@@ -681,12 +820,20 @@ function DesktopMenu(props: {
           <>
             <button type="button" role="menuitem" onClick={() => props.onRenameFolder(props.item!.id)}>Rename folder</button>
             <button type="button" role="menuitem" onClick={() => props.onUnpackFolder(props.item!.id)}>Move items out</button>
+            {props.sourceContainer === "dock" ? (
+              <button type="button" role="menuitem" onClick={() => props.onMoveToDesktop(props.item!.id)}>Move to desktop</button>
+            ) : (
+              <button type="button" role="menuitem" onClick={() => props.onMoveToDock(props.item!.id)}>Move to Dock</button>
+            )}
           </>
         ) : (
           <>
-            <button type="button" role="menuitem" onClick={() => props.onCreateFolder(props.item!.id)}>New folder</button>
-            {props.sourceFolderId && (
+            <button type="button" role="menuitem" onClick={() => props.onCreateFolder(props.item!.id, props.sourceContainer)}>New folder</button>
+            {props.sourceContainer === "dock" || props.sourceFolderId ? (
               <button type="button" role="menuitem" onClick={() => props.onMoveToDesktop(props.item!.id)}>Move to desktop</button>
+            ) : null}
+            {props.sourceContainer !== "dock" && (
+              <button type="button" role="menuitem" onClick={() => props.onMoveToDock(props.item!.id)}>Move to Dock</button>
             )}
             {props.folders.filter((folder) => folder.id !== props.item?.id).map((folder) => (
               <button type="button" role="menuitem" key={folder.id} onClick={() => props.onMoveToFolder(props.item!.id, folder.id)}>
@@ -706,17 +853,20 @@ function DesktopMenu(props: {
 async function loadLayout(): Promise<LauncherLayout> {
   const stored = await chrome.storage.local.get(LAYOUT_STORAGE_KEY);
   const value = stored[LAYOUT_STORAGE_KEY] as Partial<LauncherLayout> | undefined;
+  const dock = Array.isArray(value?.dock) ? uniqueStrings(value.dock) : [...DEFAULT_DOCK_ENTRY_IDS];
+  const dockSet = new Set(dock);
   return {
     order: Array.isArray(value?.order)
-      ? value.order.filter((id): id is string => typeof id === "string" && !DOCK_ENTRY_ID_SET.has(id))
+      ? uniqueStrings(value.order).filter((id) => !dockSet.has(id))
       : [],
+    dock,
     folders: Array.isArray(value?.folders)
       ? value.folders
         .filter((folder): folder is FolderLayout => typeof folder?.id === "string" && Array.isArray(folder.childIds))
         .map((folder) => ({
           id: folder.id,
           title: typeof folder.title === "string" ? folder.title : "Folder",
-          childIds: folder.childIds.filter((id): id is string => typeof id === "string" && !DOCK_ENTRY_ID_SET.has(id)),
+          childIds: uniqueStrings(folder.childIds).filter((id) => !dockSet.has(id)),
         }))
       : [],
   };
@@ -733,14 +883,14 @@ function dropPlacementFor(activeRect: ClientRect | null, overRect: ClientRect): 
 
 const desktopCollisionDetection: CollisionDetection = (args) => {
   const pointerCollisions = pointerWithin(args);
-  const pointerTargets = pointerCollisions.filter((collision) => collision.id !== DESKTOP_DROP_ID);
+  const pointerTargets = pointerCollisions.filter((collision) => !DROP_ZONE_IDS.has(String(collision.id)));
   if (pointerTargets.length > 0) return pointerTargets;
 
-  const desktopCollision = pointerCollisions.find((collision) => collision.id === DESKTOP_DROP_ID);
-  if (desktopCollision) return [desktopCollision];
+  const dropZoneCollision = pointerCollisions.find((collision) => DROP_ZONE_IDS.has(String(collision.id)));
+  if (dropZoneCollision) return [dropZoneCollision];
 
   const centerCollisions = closestCenter(args);
-  const centerTargets = centerCollisions.filter((collision) => collision.id !== DESKTOP_DROP_ID);
+  const centerTargets = centerCollisions.filter((collision) => !DROP_ZONE_IDS.has(String(collision.id)));
   return centerTargets.length > 0 ? centerTargets : centerCollisions;
 };
 
@@ -752,8 +902,25 @@ function insertRelative(ids: string[], itemId: string, targetId: string, placeme
   return next;
 }
 
+function removeChildFromFolders(folders: FolderLayout[], itemId: string): FolderLayout[] {
+  return folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) }));
+}
+
+function uniqueStrings(values: unknown[]): string[] {
+  const seen = new Set<string>();
+  return values.filter((value): value is string => {
+    if (typeof value !== "string" || seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+}
+
 function stringData(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
+}
+
+function containerData(value: unknown): LauncherContainer | undefined {
+  return value === "desktop" || value === "dock" || value === "folder" ? value : undefined;
 }
 
 function appInitial(name: string): string {
