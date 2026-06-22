@@ -354,31 +354,59 @@ button:disabled {
   text-align: center;
 }
 
-.desktop-tile.drop-before::before,
-.desktop-tile.drop-after::after {
+.desktop-tile.drop-insert.drop-before::before,
+.desktop-tile.drop-insert.drop-after::after {
   position: absolute;
-  top: 7px;
-  bottom: 40px;
-  width: 4px;
+  top: 2px;
+  z-index: 2;
+  display: grid;
+  width: 18px;
+  height: 70px;
+  place-items: center;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.36);
+  background: rgba(66, 133, 244, 0.44);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.42),
+    0 12px 24px rgba(0, 0, 0, 0.24);
+  color: #fff;
+  content: "|";
+  font-size: 38px;
+  font-weight: 850;
+  line-height: 1;
+  pointer-events: none;
+  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.36);
+}
+
+.desktop-tile.drop-insert.drop-before::before {
+  left: -16px;
+}
+
+.desktop-tile.drop-insert.drop-after::after {
+  right: -16px;
+}
+
+.desktop-tile.drop-folder::before {
+  position: absolute;
+  top: -6px;
+  right: 5px;
+  bottom: 28px;
+  left: 5px;
+  z-index: 0;
+  border: 3px solid rgba(255, 255, 255, 0.86);
+  border-radius: 22px;
+  background: rgba(66, 133, 244, 0.16);
+  box-shadow:
+    0 0 0 5px rgba(66, 133, 244, 0.24),
+    0 14px 28px rgba(0, 0, 0, 0.18);
   content: "";
+  pointer-events: none;
 }
 
-.desktop-tile.drop-before::before {
-  left: -7px;
-}
-
-.desktop-tile.drop-after::after {
-  right: -7px;
-}
-
-.desktop-tile.drop-inside .desktop-icon,
-.desktop-dock-tile.drop-inside .desktop-icon {
-  outline: 3px solid rgba(255, 255, 255, 0.82);
-  outline-offset: 4px;
-  transform: scale(1.08);
+.desktop-tile.drop-folder .desktop-icon,
+.desktop-tile.drop-folder .desktop-label,
+.desktop-dock-tile.drop-folder .desktop-icon {
+  position: relative;
+  z-index: 1;
 }
 
 .desktop-tile:focus-visible {
@@ -440,24 +468,49 @@ button:disabled {
   color: inherit;
 }
 
-.desktop-dock-tile.drop-before::before,
-.desktop-dock-tile.drop-after::after {
+.desktop-dock-tile.drop-insert.drop-before::before,
+.desktop-dock-tile.drop-insert.drop-after::after {
   position: absolute;
-  top: 7px;
-  bottom: 7px;
-  width: 4px;
+  top: -3px;
+  z-index: 2;
+  display: grid;
+  width: 18px;
+  height: 66px;
+  place-items: center;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.36);
+  background: rgba(66, 133, 244, 0.44);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.42),
+    0 12px 24px rgba(0, 0, 0, 0.24);
+  color: #fff;
+  content: "|";
+  font-size: 36px;
+  font-weight: 850;
+  line-height: 1;
+  pointer-events: none;
+  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.36);
+}
+
+.desktop-dock-tile.drop-insert.drop-before::before {
+  left: -20px;
+}
+
+.desktop-dock-tile.drop-insert.drop-after::after {
+  right: -20px;
+}
+
+.desktop-dock-tile.drop-folder::before {
+  position: absolute;
+  inset: -7px;
+  z-index: 0;
+  border: 3px solid rgba(255, 255, 255, 0.86);
+  border-radius: 24px;
+  background: rgba(66, 133, 244, 0.16);
+  box-shadow:
+    0 0 0 5px rgba(66, 133, 244, 0.24),
+    0 14px 28px rgba(0, 0, 0, 0.18);
   content: "";
-}
-
-.desktop-dock-tile.drop-before::before {
-  left: -7px;
-}
-
-.desktop-dock-tile.drop-after::after {
-  right: -7px;
+  pointer-events: none;
 }
 
 .desktop-dock-tile:focus-visible {

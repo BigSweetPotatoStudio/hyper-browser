@@ -4,6 +4,7 @@ import {
   closestCenter,
   DndContext,
   DragEndEvent,
+  DragMoveEvent,
   DragOverlay,
   DragOverEvent,
   DragStartEvent,
@@ -103,6 +104,7 @@ type MenuState = {
 };
 
 type DropPlacement = "before" | "inside" | "after";
+type DropPreviewKind = "cell" | "folder" | "insert";
 
 type DesktopGridMetrics = {
   columns: number;
@@ -123,6 +125,7 @@ type DesktopSlot = DesktopCellPosition & {
 };
 
 type DropPreview = {
+  kind: DropPreviewKind;
   targetId: string;
   placement: DropPlacement;
 };
@@ -145,6 +148,7 @@ function DesktopPage() {
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [syncMessage, setSyncMessage] = useState("");
   const longPressTimer = useRef<number | null>(null);
+  const pointerX = useRef<number | null>(null);
   const suppressClickForId = useRef<string | null>(null);
   const gridMetrics = useDesktopGridMetrics();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -194,6 +198,20 @@ function DesktopPage() {
     const timer = window.setTimeout(() => setToast(""), 3000);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    const updatePointerX = (event: Event) => {
+      pointerX.current = pointerClientX(event) ?? pointerX.current;
+    };
+    window.addEventListener("pointermove", updatePointerX, { capture: true });
+    window.addEventListener("mousemove", updatePointerX, { capture: true });
+    window.addEventListener("touchmove", updatePointerX, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("pointermove", updatePointerX, { capture: true });
+      window.removeEventListener("mousemove", updatePointerX, { capture: true });
+      window.removeEventListener("touchmove", updatePointerX, { capture: true });
+    };
+  }, []);
 
   const systemEntries = useMemo<SystemEntry[]>(() => ([
     { id: "system:chrome", kind: "system", title: "Chrome", mark: "C", color: "#4285f4", action: "chrome" },
@@ -361,12 +379,21 @@ function DesktopPage() {
     if (!editMode) return;
     closeMenu();
     const draggedId = String(event.active.id);
+    pointerX.current = pointerClientX(event.activatorEvent) ?? pointerX.current;
     suppressClickForId.current = draggedId;
     setActiveId(draggedId);
     setDropPreview(null);
   }
 
   function handleDragOver(event: DragOverEvent) {
+    updateDropPreview(event);
+  }
+
+  function handleDragMove(event: DragMoveEvent) {
+    updateDropPreview(event);
+  }
+
+  function updateDropPreview(event: DragMoveEvent) {
     if (!editMode || !event.over) {
       setDropPreview(null);
       return;
@@ -376,10 +403,57 @@ function DesktopPage() {
       setDropPreview(null);
       return;
     }
-    setDropPreview({
+    const currentPointerX = dragPointerClientX(event, pointerX.current);
+    pointerX.current = currentPointerX ?? pointerX.current;
+    const placement = dropPlacementFor(currentPointerX, event.over.rect, event.active.rect.current.translated);
+    setDropPreview(dropPreviewFor(
+      String(event.active.id),
+      containerData(event.active.data.current?.container),
+      stringData(event.active.data.current?.folderId),
       targetId,
-      placement: targetId.startsWith("drop:cell:") ? "inside" : dropPlacementFor(event.active.rect.current.translated, event.over.rect),
-    });
+      containerData(event.over.data.current?.container),
+      stringData(event.over.data.current?.folderId),
+      cellData(event.over.data.current),
+      placement,
+    ));
+  }
+
+  function dropPreviewFor(
+    itemId: string,
+    sourceContainer: LauncherContainer | undefined,
+    sourceFolderId: string | undefined,
+    targetId: string,
+    targetContainer: LauncherContainer | undefined,
+    targetFolderId: string | undefined,
+    targetCell: DesktopCellPosition | undefined,
+    placement: DropPlacement,
+  ): DropPreview | null {
+    if (targetCell) {
+      return { kind: "cell", targetId, placement: "inside" };
+    }
+    const targetEntry = resolveEntry(targetId);
+    if (!targetEntry) return null;
+    const itemIsFolder = itemId.startsWith("folder:");
+
+    if (targetEntry.kind === "folder") {
+      return itemIsFolder ? null : { kind: "folder", targetId, placement: "inside" };
+    }
+    if (targetContainer === "dock") {
+      return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "after") };
+    }
+    if (sourceFolderId && targetFolderId === sourceFolderId) {
+      return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "before") };
+    }
+    if (!targetFolderId && !itemIsFolder && placement === "inside") {
+      return { kind: "folder", targetId, placement };
+    }
+    if (sourceContainer === "folder" && !targetFolderId) {
+      return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "before") };
+    }
+    if (!targetFolderId) {
+      return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "before") };
+    }
+    return itemIsFolder ? null : { kind: "folder", targetId, placement: "inside" };
   }
 
   function handleDragEnd(event: DragEndEvent) {
@@ -390,7 +464,9 @@ function DesktopPage() {
     const targetFolderId = stringData(event.over?.data.current?.folderId);
     const targetContainer = containerData(event.over?.data.current?.container);
     const targetCell = cellData(event.over?.data.current);
-    const placement = event.over ? dropPlacementFor(event.active.rect.current.translated, event.over.rect) : "inside";
+    const currentPointerX = dragPointerClientX(event, pointerX.current);
+    pointerX.current = currentPointerX ?? pointerX.current;
+    const placement = event.over ? dropPlacementFor(currentPointerX, event.over.rect, event.active.rect.current.translated) : "inside";
     setActiveId(null);
     setDropPreview(null);
     if (!targetId || draggedId === targetId) return;
@@ -426,11 +502,11 @@ function DesktopPage() {
       return;
     }
     if (targetContainer === "dock") {
-      moveToDockNear(itemId, targetId, placement === "inside" ? "after" : placement);
+      moveToDockNear(itemId, targetId, normalizeInsertPlacement(placement, "after"));
       return;
     }
     if (sourceFolderId && targetFolderId === sourceFolderId) {
-      moveInsideFolderRelative(sourceFolderId, itemId, targetId, placement);
+      moveInsideFolderRelative(sourceFolderId, itemId, targetId, normalizeInsertPlacement(placement, "before"));
       return;
     }
     if (!targetFolderId && !itemId.startsWith("folder:") && placement === "inside") {
@@ -438,11 +514,11 @@ function DesktopPage() {
       return;
     }
     if (sourceContainer === "folder" && !targetFolderId) {
-      moveToDesktopNear(itemId, targetId, placement);
+      moveToDesktopNear(itemId, targetId, normalizeInsertPlacement(placement, "before"));
       return;
     }
     if (!targetFolderId) {
-      moveToDesktopNear(itemId, targetId, placement);
+      moveToDesktopNear(itemId, targetId, normalizeInsertPlacement(placement, "before"));
       return;
     }
     if (targetFolderId) {
@@ -650,7 +726,7 @@ function DesktopPage() {
   }
 
   return (
-    <main className="desktop-page">
+    <main className="desktop-page" onPointerMoveCapture={(event) => { pointerX.current = event.clientX; }}>
       <div className="desktop-commands">
         {syncMessage && (
           <button className={`desktop-sync-status ${syncState}`} type="button" onClick={() => syncState === "needs-settings" && setSettingsOpen(true)}>
@@ -677,6 +753,7 @@ function DesktopPage() {
           setDropPreview(null);
         }}
         onDragEnd={handleDragEnd}
+        onDragMove={handleDragMove}
         onDragOver={handleDragOver}
         onDragStart={handleDragStart}
       >
@@ -1006,7 +1083,7 @@ function DesktopCellSlot(props: {
     },
     disabled: !props.editMode,
   });
-  const isPreview = props.dropPreview?.targetId === props.slot.dropId;
+  const isPreview = props.dropPreview?.kind === "cell" && props.dropPreview.targetId === props.slot.dropId;
   return (
     <div
       className={`desktop-cell-slot${props.editMode ? " editing" : ""}${isOver || isPreview ? " cell-over" : ""}`}
@@ -1061,7 +1138,7 @@ function DesktopTile(props: {
   };
   const dragListeners = props.editMode ? listeners : undefined;
   const dragAttributes = props.editMode ? attributes : undefined;
-  const dropClass = props.dropPreview?.targetId === props.entry.id ? ` drop-${props.dropPreview.placement}` : "";
+  const dropClass = props.dropPreview?.targetId === props.entry.id ? ` drop-${props.dropPreview.kind} drop-${props.dropPreview.placement}` : "";
 
   return (
     <button
@@ -1113,7 +1190,7 @@ function DockTile(props: {
   };
   const dragListeners = props.editMode ? listeners : undefined;
   const dragAttributes = props.editMode ? attributes : undefined;
-  const dropClass = props.dropPreview?.targetId === props.entry.id ? ` drop-${props.dropPreview.placement}` : "";
+  const dropClass = props.dropPreview?.targetId === props.entry.id ? ` drop-${props.dropPreview.kind} drop-${props.dropPreview.placement}` : "";
 
   return (
     <button
@@ -1486,13 +1563,36 @@ function cellDropId(cell: DesktopCellPosition): string {
   return `drop:cell:${cell.page}:${cell.row}:${cell.column}`;
 }
 
-function dropPlacementFor(activeRect: ClientRect | null, overRect: ClientRect): DropPlacement {
-  if (!activeRect) return "inside";
-  const activeCenterX = activeRect.left + activeRect.width / 2;
-  const ratio = overRect.width > 0 ? (activeCenterX - overRect.left) / overRect.width : 0.5;
+function dropPlacementFor(pointerClientX: number | null, overRect: ClientRect, activeRect: ClientRect | null): DropPlacement {
+  const fallbackX = activeRect ? activeRect.left + activeRect.width / 2 : overRect.left + overRect.width / 2;
+  const clientX = typeof pointerClientX === "number" ? pointerClientX : fallbackX;
+  const ratio = overRect.width > 0 ? (clientX - overRect.left) / overRect.width : 0.5;
   if (ratio < 0.24) return "before";
   if (ratio > 0.76) return "after";
   return "inside";
+}
+
+function normalizeInsertPlacement(placement: DropPlacement, insidePlacement: "before" | "after"): DropPlacement {
+  return placement === "inside" ? insidePlacement : placement;
+}
+
+function dragPointerClientX(event: { activatorEvent: Event; delta: { x: number } }, fallback: number | null): number | null {
+  const startX = pointerClientX(event.activatorEvent);
+  return startX === null ? fallback : startX + event.delta.x;
+}
+
+function pointerClientX(event: Event): number | null {
+  if ("clientX" in event && typeof event.clientX === "number") {
+    return event.clientX;
+  }
+  const touchEvent = event as Partial<TouchEvent>;
+  if (touchEvent.touches && touchEvent.touches.length > 0) {
+    return touchEvent.touches[0].clientX;
+  }
+  if (touchEvent.changedTouches && touchEvent.changedTouches.length > 0) {
+    return touchEvent.changedTouches[0].clientX;
+  }
+  return null;
 }
 
 const desktopCollisionDetection: CollisionDetection = (args) => {
