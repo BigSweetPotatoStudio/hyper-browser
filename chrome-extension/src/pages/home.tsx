@@ -64,6 +64,7 @@ function DesktopPage() {
   const [error, setError] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [openFolderId, setOpenFolderId] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
   const dragRef = useRef<{ itemId: string; folderId?: string } | null>(null);
   const pressTimer = useRef<number | null>(null);
   const suppressClickUntil = useRef(0);
@@ -156,6 +157,7 @@ function DesktopPage() {
   }
 
   function startLongPress(event: React.PointerEvent<HTMLElement>, itemId: string, folderId?: string) {
+    if (editMode) return;
     if (event.button !== 0) return;
     stopLongPress();
     pressTimer.current = window.setTimeout(() => {
@@ -179,6 +181,7 @@ function DesktopPage() {
 
   function clickEntry(entry: LauncherEntry) {
     stopLongPress();
+    if (editMode) return;
     if (Date.now() < suppressClickUntil.current) return;
     openEntry(entry);
   }
@@ -319,6 +322,7 @@ function DesktopPage() {
   return (
     <main className="desktop-page">
       <div className="desktop-commands">
+        {editMode && <button type="button" onClick={() => setEditMode(false)}>Done</button>}
         <button type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })}>Settings</button>
         <button type="button" onClick={() => sendCommand("sync.run").catch((syncError) => setError(syncError instanceof Error ? syncError.message : "Sync failed."))}>Sync</button>
       </div>
@@ -329,6 +333,7 @@ function DesktopPage() {
         {desktopEntries.map((entry) => (
           <DesktopTile
             entry={entry}
+            editMode={editMode}
             folderId={undefined}
             key={entry.id}
             onClick={clickEntry}
@@ -356,6 +361,7 @@ function DesktopPage() {
               ) : openFolder.children.map((entry) => (
                 <DesktopTile
                   entry={entry}
+                  editMode={editMode}
                   folderId={openFolder.id}
                   key={entry.id}
                   onClick={clickEntry}
@@ -385,6 +391,10 @@ function DesktopPage() {
             openEntry(item);
             setMenu(null);
           }}
+          onStartEditMode={() => {
+            setEditMode(true);
+            setMenu(null);
+          }}
           onCreateFolder={createFolderWith}
           onMoveToFolder={moveToFolder}
           onMoveToDesktop={moveToDesktop}
@@ -399,6 +409,7 @@ function DesktopPage() {
 
 function DesktopTile(props: {
   entry: LauncherEntry;
+  editMode: boolean;
   folderId?: string;
   onClick: (entry: LauncherEntry) => void;
   onContextMenu: (event: React.MouseEvent<HTMLElement>, itemId: string, folderId?: string) => void;
@@ -409,9 +420,9 @@ function DesktopTile(props: {
 }) {
   return (
     <button
-      className="desktop-tile"
+      className={`desktop-tile${props.editMode ? " editing" : ""}`}
       type="button"
-      draggable
+      draggable={props.editMode}
       title={props.entry.title}
       onClick={() => props.onClick(props.entry)}
       onContextMenu={(event) => props.onContextMenu(event, props.entry.id, props.folderId)}
@@ -448,6 +459,7 @@ function DesktopMenu(props: {
   y: number;
   onClose: () => void;
   onOpen: (item: LauncherEntry) => void;
+  onStartEditMode: () => void;
   onCreateFolder: (itemId: string) => void;
   onMoveToFolder: (itemId: string, folderId: string) => void;
   onMoveToDesktop: (itemId: string) => void;
@@ -463,6 +475,7 @@ function DesktopMenu(props: {
       <div className="desktop-menu" role="menu" style={{ top, left }} onClick={(event) => event.stopPropagation()}>
         <div className="desktop-menu-title">{props.item.title}</div>
         <button type="button" role="menuitem" onClick={() => props.onOpen(props.item!)}>Open</button>
+        <button type="button" role="menuitem" onClick={props.onStartEditMode}>Edit Desktop</button>
         {props.item.kind === "folder" ? (
           <>
             <button type="button" role="menuitem" onClick={() => props.onRenameFolder(props.item!.id)}>Rename folder</button>

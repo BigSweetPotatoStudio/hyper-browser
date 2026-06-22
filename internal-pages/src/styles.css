@@ -116,6 +116,7 @@ a {
 }
 
 .launcher-page {
+  position: relative;
   min-height: 100vh;
   padding: calc(env(safe-area-inset-top) + 18px) 14px max(28px, env(safe-area-inset-bottom));
   color: #fff;
@@ -124,6 +125,25 @@ a {
     #202124;
   overflow-x: hidden;
   user-select: none;
+}
+
+.launcher-edit-bar {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  right: 14px;
+  z-index: 6;
+}
+
+.launcher-edit-bar button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 16px;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-weight: 720;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(16px);
 }
 
 .launcher-grid,
@@ -163,6 +183,20 @@ a {
 .launcher-tile.dragging {
   opacity: 0.58;
   transform: scale(0.94);
+}
+
+.launcher-tile.editing:not(.dragging) .launcher-icon {
+  animation: launcher-wiggle 260ms ease-in-out infinite alternate;
+}
+
+@keyframes launcher-wiggle {
+  from {
+    transform: rotate(-1.2deg) translateY(0);
+  }
+
+  to {
+    transform: rotate(1.2deg) translateY(-1px);
+  }
 }
 
 .launcher-icon {

@@ -92,6 +92,7 @@ function HomePage() {
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [openFolderId, setOpenFolderId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
   const gesture = useRef<GestureState | null>(null);
   const rootIds = useRef<string[]>([]);
 
@@ -210,6 +211,23 @@ function HomePage() {
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
     clearGesture();
+    if (editMode) {
+      gesture.current = {
+        itemId,
+        folderId,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        lastX: event.clientX,
+        lastY: event.clientY,
+        longPressed: true,
+        dragging: false,
+        moved: false,
+        menuOpened: false,
+        timer: 0,
+      };
+      return;
+    }
     gesture.current = {
       itemId,
       folderId,
@@ -224,8 +242,8 @@ function HomePage() {
       menuOpened: false,
       timer: window.setTimeout(() => {
         if (!gesture.current || gesture.current.itemId !== itemId) return;
-        gesture.current.longPressed = true;
-        setDraggingId(itemId);
+        gesture.current.menuOpened = true;
+        setMenu({ itemId, folderId, x: gesture.current.lastX, y: gesture.current.lastY });
       }, LONG_PRESS_MS),
     };
   }
@@ -237,6 +255,13 @@ function HomePage() {
     current.lastY = event.clientY;
     const distance = Math.hypot(event.clientX - current.startX, event.clientY - current.startY);
     if (current.menuOpened) return;
+    if (!editMode) {
+      if (distance > DRAG_THRESHOLD_PX) {
+        window.clearTimeout(current.timer);
+        gesture.current = null;
+      }
+      return;
+    }
     if (!current.longPressed) {
       if (distance > DRAG_THRESHOLD_PX) {
         window.clearTimeout(current.timer);
@@ -260,15 +285,16 @@ function HomePage() {
     setDraggingId(null);
     gesture.current = null;
 
-    if (current.dragging) {
+    if (editMode && current.dragging) {
       handleDrop(current.itemId, current.folderId, target);
       return;
     }
+    if (editMode) return;
+    if (current.menuOpened) return;
     if (current.longPressed) {
       setMenu({ itemId: current.itemId, folderId: current.folderId, x: current.lastX, y: current.lastY });
       return;
     }
-    if (current.menuOpened) return;
     const entry = resolveEntry(current.itemId);
     if (entry) openEntry(entry);
   }
@@ -440,6 +466,25 @@ function HomePage() {
     setMenu(null);
   }
 
+  function pinApp(itemId: string) {
+    const entry = availableEntries.get(itemId);
+    if (!entry || entry.kind !== "app") return;
+    window.hyperBrowser.pinApp(entry.app.id);
+    setMenu(null);
+  }
+
+  function editApp(itemId: string) {
+    const entry = availableEntries.get(itemId);
+    if (!entry || entry.kind !== "app") return;
+    window.hyperBrowser.editApp(entry.app.id)
+      .then((items) => {
+        setApps(items);
+        setFailed(false);
+      })
+      .catch(() => loadApps());
+    setMenu(null);
+  }
+
   function clearGesture() {
     if (!gesture.current) return;
     window.clearTimeout(gesture.current.timer);
@@ -449,7 +494,12 @@ function HomePage() {
   const openFolder = openFolderId ? folderEntries.get(openFolderId) : undefined;
 
   return (
-    <main className="launcher-page">
+    <main className={`launcher-page${editMode ? " editing" : ""}`}>
+      {editMode && (
+        <div className="launcher-edit-bar">
+          <button type="button" onClick={() => setEditMode(false)}>{t("home.done")}</button>
+        </div>
+      )}
       <section className="launcher-grid" aria-label={t("home.desktopLabel")}>
         {failed && (
           <button className="launcher-status" type="button" onClick={loadApps}>
@@ -461,6 +511,7 @@ function HomePage() {
           <LauncherTile
             entry={entry}
             dragging={draggingId === entry.id}
+            editing={editMode}
             folderId={undefined}
             key={entry.id}
             onPointerDown={beginPress}
@@ -485,6 +536,7 @@ function HomePage() {
                 <LauncherTile
                   entry={entry}
                   dragging={draggingId === entry.id}
+                  editing={editMode}
                   folderId={openFolder.id}
                   key={entry.id}
                   onPointerDown={beginPress}
@@ -510,11 +562,17 @@ function HomePage() {
             openEntry(item);
             setMenu(null);
           }}
+          onStartEditMode={() => {
+            setEditMode(true);
+            setMenu(null);
+          }}
           onCreateFolder={createFolderWith}
           onMoveToFolder={moveToFolder}
           onMoveToDesktop={moveToDesktop}
           onRenameFolder={renameFolder}
           onUnpackFolder={unpackFolder}
+          onPinApp={pinApp}
+          onEditApp={editApp}
           onDeleteApp={deleteApp}
         />
       )}
@@ -526,6 +584,7 @@ function LauncherTile(props: {
   entry: LauncherEntry;
   folderId?: string;
   dragging: boolean;
+  editing: boolean;
   onPointerDown: (event: React.PointerEvent<HTMLElement>, itemId: string, folderId?: string) => void;
   onPointerMove: (event: React.PointerEvent<HTMLElement>) => void;
   onPointerUp: (event: React.PointerEvent<HTMLElement>) => void;
@@ -534,7 +593,7 @@ function LauncherTile(props: {
   const iconStyle = props.entry.kind === "folder" ? undefined : { background: props.entry.color };
   return (
     <button
-      className={`launcher-tile${props.dragging ? " dragging" : ""}`}
+      className={`launcher-tile${props.dragging ? " dragging" : ""}${props.editing ? " editing" : ""}`}
       type="button"
       data-launcher-id={props.entry.id}
       data-folder-id={props.folderId || ""}
@@ -571,11 +630,14 @@ function LauncherMenu(props: {
   y: number;
   onClose: () => void;
   onOpen: (item: LauncherEntry) => void;
+  onStartEditMode: () => void;
   onCreateFolder: (itemId: string) => void;
   onMoveToFolder: (itemId: string, folderId: string) => void;
   onMoveToDesktop: (itemId: string) => void;
   onRenameFolder: (folderId: string) => void;
   onUnpackFolder: (folderId: string) => void;
+  onPinApp: (itemId: string) => void;
+  onEditApp: (itemId: string) => void;
   onDeleteApp: (itemId: string) => void;
 }) {
   if (!props.item) return null;
@@ -587,6 +649,7 @@ function LauncherMenu(props: {
       <div className="launcher-menu" role="menu" style={{ top, left }} onClick={(event) => event.stopPropagation()}>
         <div className="launcher-menu-title">{props.item.title}</div>
         <button type="button" role="menuitem" onClick={() => props.onOpen(props.item!)}>{t("home.open")}</button>
+        <button type="button" role="menuitem" onClick={props.onStartEditMode}>{t("home.editHomeScreen")}</button>
         {props.item.kind === "folder" ? (
           <>
             <button type="button" role="menuitem" onClick={() => props.onRenameFolder(props.item!.id)}>{t("home.renameFolder")}</button>
@@ -597,6 +660,12 @@ function LauncherMenu(props: {
             <button type="button" role="menuitem" onClick={() => props.onCreateFolder(props.item!.id)}>{t("home.newFolder")}</button>
             {props.sourceFolderId && (
               <button type="button" role="menuitem" onClick={() => props.onMoveToDesktop(props.item!.id)}>{t("home.moveToDesktop")}</button>
+            )}
+            {props.item.kind === "app" && (
+              <>
+                <button type="button" role="menuitem" onClick={() => props.onPinApp(props.item!.id)}>{t("apps.pin")}</button>
+                <button type="button" role="menuitem" onClick={() => props.onEditApp(props.item!.id)}>{t("common.edit")}</button>
+              </>
             )}
             {movableFolders.map((folder) => (
               <button type="button" role="menuitem" key={folder.id} onClick={() => props.onMoveToFolder(props.item!.id, folder.id)}>

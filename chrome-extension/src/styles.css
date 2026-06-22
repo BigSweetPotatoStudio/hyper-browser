@@ -226,6 +226,20 @@ button:disabled {
   outline-offset: 4px;
 }
 
+.desktop-tile.editing .desktop-icon {
+  animation: desktop-wiggle 260ms ease-in-out infinite alternate;
+}
+
+@keyframes desktop-wiggle {
+  from {
+    transform: rotate(-1.2deg) translateY(0);
+  }
+
+  to {
+    transform: rotate(1.2deg) translateY(-1px);
+  }
+}
+
 .desktop-icon {
   display: grid;
   width: 64px;
