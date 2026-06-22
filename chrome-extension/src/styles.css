@@ -295,8 +295,8 @@ button:disabled {
   display: grid;
   gap: 20px 18px;
   grid-auto-rows: 105px;
-  align-items: start;
-  align-content: start;
+  align-items: center;
+  justify-items: center;
 }
 
 .desktop-grid {
@@ -306,6 +306,8 @@ button:disabled {
   bottom: var(--desktop-bottom-safe);
   left: var(--desktop-side-safe);
   grid-template-columns: repeat(var(--desktop-columns), 98px);
+  align-content: center;
+  justify-content: center;
   min-height: 0;
   overflow: auto;
   border-radius: 18px;
@@ -314,6 +316,8 @@ button:disabled {
 
 .desktop-folder-grid {
   grid-template-columns: repeat(auto-fill, minmax(88px, 98px));
+  align-content: start;
+  justify-content: start;
 }
 
 .desktop-grid-over {
@@ -351,7 +355,7 @@ button:disabled {
 .desktop-tile {
   position: relative;
   display: grid;
-  grid-template-rows: 64px 34px;
+  grid-template-rows: 64px auto;
   width: 98px;
   height: 105px;
   box-sizing: border-box;
@@ -453,10 +457,12 @@ button:disabled {
 
 .desktop-drag-overlay {
   display: grid;
-  grid-template-rows: 64px 34px;
+  grid-template-rows: 64px auto;
+  align-content: center;
   justify-items: center;
   gap: 7px;
   width: 98px;
+  height: 105px;
   pointer-events: none;
   transform: scale(1.08);
 }
@@ -471,7 +477,11 @@ button:disabled {
   left: 50%;
   bottom: 22px;
   z-index: 6;
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 72px;
+  grid-template-rows: 72px;
+  place-items: center;
   gap: 12px;
   min-width: 84px;
   min-height: 82px;
@@ -493,8 +503,8 @@ button:disabled {
 .desktop-dock-tile {
   position: relative;
   display: grid;
-  width: 60px;
-  height: 60px;
+  width: 72px;
+  height: 72px;
   place-items: center;
   border-radius: 18px;
   background: transparent;
@@ -504,7 +514,7 @@ button:disabled {
 .desktop-dock-tile.drop-insert.drop-before::before,
 .desktop-dock-tile.drop-insert.drop-after::after {
   position: absolute;
-  top: -3px;
+  top: 3px;
   z-index: 2;
   display: grid;
   width: 18px;
@@ -525,11 +535,11 @@ button:disabled {
 }
 
 .desktop-dock-tile.drop-insert.drop-before::before {
-  left: -20px;
+  left: -9px;
 }
 
 .desktop-dock-tile.drop-insert.drop-after::after {
-  right: -20px;
+  right: -9px;
 }
 
 .desktop-dock-tile.drop-folder::before {

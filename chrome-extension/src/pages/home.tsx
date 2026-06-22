@@ -461,14 +461,14 @@ function DesktopPage() {
     if (targetEntry.kind === "folder") {
       return itemIsFolder ? null : { kind: "folder", targetId, placement: "inside", slotDropId };
     }
-    if (targetContainer === "dock") {
-      return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "after") };
-    }
     if (sourceFolderId && targetFolderId === sourceFolderId) {
       return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "before") };
     }
     if (!targetFolderId && !itemIsFolder && placement === "inside") {
       return { kind: "folder", targetId, placement, slotDropId };
+    }
+    if (targetContainer === "dock") {
+      return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "after") };
     }
     if (sourceContainer === "folder" && !targetFolderId) {
       return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "before"), slotDropId };
@@ -570,20 +570,21 @@ function DesktopPage() {
     }
     const targetEntry = resolveEntry(targetId);
     if (!targetEntry) return;
+    const itemIsFolder = itemId.startsWith("folder:");
     if (targetEntry.kind === "folder") {
-      if (!itemId.startsWith("folder:")) moveToFolder(itemId, targetEntry.id);
-      return;
-    }
-    if (targetContainer === "dock") {
-      moveToDockNear(itemId, targetId, normalizeInsertPlacement(placement, "after"));
+      if (!itemIsFolder) moveToFolder(itemId, targetEntry.id);
       return;
     }
     if (sourceFolderId && targetFolderId === sourceFolderId) {
       moveInsideFolderRelative(sourceFolderId, itemId, targetId, normalizeInsertPlacement(placement, "before"));
       return;
     }
-    if (!targetFolderId && !itemId.startsWith("folder:") && placement === "inside") {
-      createFolderFromDrop(itemId, targetId);
+    if (!targetFolderId && !itemIsFolder && placement === "inside") {
+      createFolderFromDrop(itemId, targetId, targetContainer);
+      return;
+    }
+    if (targetContainer === "dock") {
+      moveToDockNear(itemId, targetId, normalizeInsertPlacement(placement, "after"));
       return;
     }
     if (sourceContainer === "folder" && !targetFolderId) {
@@ -642,7 +643,7 @@ function DesktopPage() {
     commitLayout((current) => ({
       ...current,
       cells: removeFromCells(current.cells, itemId),
-      dock: insertRelative(dockIds, itemId, targetId, placement),
+      dock: insertNearDockItem(dockIds, itemId, targetId, placement),
       folders: removeChildFromFolders(current.folders, itemId),
     }));
     setOpenFolderId(null);
@@ -713,13 +714,17 @@ function DesktopPage() {
     closeMenu();
   }
 
-  function createFolderFromDrop(itemId: string, targetId: string) {
+  function createFolderFromDrop(itemId: string, targetId: string, targetContainer: LauncherContainer | undefined) {
     if (itemId === targetId || itemId.startsWith("folder:") || targetId.startsWith("folder:")) return;
     const folderId = `folder:${crypto.randomUUID()}`;
     commitLayout((current) => ({
       ...current,
-      cells: replaceCellPairWithFolder(current.cells, currentPageIndex, itemId, targetId, folderId, gridMetrics),
-      dock: current.dock.filter((id) => id !== itemId && id !== targetId),
+      cells: targetContainer === "dock"
+        ? removeManyFromCells(current.cells, [itemId, targetId])
+        : replaceCellPairWithFolder(current.cells, currentPageIndex, itemId, targetId, folderId, gridMetrics),
+      dock: targetContainer === "dock"
+        ? replaceDockPairWithFolder(current.dock, itemId, targetId, folderId)
+        : current.dock.filter((id) => id !== itemId && id !== targetId),
       folders: [
         ...current.folders.map((folder) => ({
           ...folder,
@@ -1732,6 +1737,65 @@ function insertRelative(ids: string[], itemId: string, targetId: string, placeme
   if (index < 0) return [...next, itemId];
   next.splice(placement === "after" ? index + 1 : index, 0, itemId);
   return next;
+}
+
+function insertNearDockItem(ids: string[], itemId: string, targetId: string, placement: DropPlacement): string[] {
+  const targetIndex = ids.indexOf(targetId);
+  if (targetIndex < 0) return [...ids.filter((id) => id !== itemId), itemId];
+  return placement === "after"
+    ? placeItemAtIndexBackward(ids, itemId, targetIndex)
+    : placeItemAtIndex(ids, itemId, targetIndex);
+}
+
+function placeItemAtIndex(ids: string[], itemId: string, targetIndex: number): string[] {
+  const occupied = new Map<number, string>();
+  ids.forEach((id, index) => {
+    if (id !== itemId) occupied.set(index, id);
+  });
+  let cursor = Math.max(0, targetIndex);
+  let carry: string | undefined = itemId;
+  while (carry) {
+    const nextCarry = occupied.get(cursor);
+    occupied.set(cursor, carry);
+    carry = nextCarry;
+    cursor += 1;
+  }
+  return Array.from(occupied.entries())
+    .sort(([left], [right]) => left - right)
+    .map(([, id]) => id);
+}
+
+function placeItemAtIndexBackward(ids: string[], itemId: string, targetIndex: number): string[] {
+  const occupied = new Map<number, string>();
+  ids.forEach((id, index) => {
+    if (id !== itemId) occupied.set(index, id);
+  });
+  let cursor = Math.max(0, targetIndex);
+  let carry: string | undefined = itemId;
+  while (carry) {
+    const nextCarry = occupied.get(cursor);
+    occupied.set(cursor, carry);
+    carry = nextCarry;
+    cursor -= 1;
+    if (cursor >= 0 || !carry) continue;
+    cursor = targetIndex + 1;
+    while (carry) {
+      const nextForwardCarry = occupied.get(cursor);
+      occupied.set(cursor, carry);
+      carry = nextForwardCarry;
+      cursor += 1;
+    }
+  }
+  return Array.from(occupied.entries())
+    .sort(([left], [right]) => left - right)
+    .map(([, id]) => id);
+}
+
+function replaceDockPairWithFolder(ids: string[], itemId: string, targetId: string, folderId: string): string[] {
+  const next = ids
+    .filter((id) => id !== itemId)
+    .map((id) => (id === targetId ? folderId : id));
+  return next.includes(folderId) ? next : [...next, folderId];
 }
 
 function dragPointerClientX(event: { activatorEvent: Event; delta: { x: number } }, fallback: number | null): number | null {
