@@ -230,6 +230,21 @@ button:disabled {
   animation: desktop-wiggle 260ms ease-in-out infinite alternate;
 }
 
+.desktop-drag-overlay {
+  display: grid;
+  grid-template-rows: 64px 34px;
+  justify-items: center;
+  gap: 7px;
+  width: 98px;
+  pointer-events: none;
+  transform: scale(1.08);
+}
+
+.desktop-drag-overlay .desktop-icon {
+  animation: none;
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.34);
+}
+
 @keyframes desktop-wiggle {
   from {
     transform: rotate(-1.2deg) translateY(0);

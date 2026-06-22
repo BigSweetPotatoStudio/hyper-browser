@@ -1,5 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import {
+  closestCenter,
+  DndContext,
+  DragEndEvent,
+  DragOverlay,
+  DragStartEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type ClientRect,
+} from "@dnd-kit/core";
+import {
+  rectSortingStrategy,
+  SortableContext,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import "../styles.css";
 import type { WebAppRecord } from "../types";
 import { sendCommand } from "./bridge";
@@ -65,10 +82,10 @@ function DesktopPage() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [openFolderId, setOpenFolderId] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
-  const dragRef = useRef<{ itemId: string; folderId?: string } | null>(null);
-  const pressTimer = useRef<number | null>(null);
-  const suppressClickUntil = useRef(0);
-  const rootIds = useRef<string[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const longPressTimer = useRef<number | null>(null);
+  const suppressClickForId = useRef<string | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   useEffect(() => {
     Promise.all([loadLayout(), sendCommand<WebAppRecord[]>("webapps.list")])
@@ -128,11 +145,15 @@ function DesktopPage() {
       ...layout.order.filter((id) => visibleIds.includes(id)),
       ...visibleIds.filter((id) => !layout.order.includes(id)),
     ];
-    rootIds.current = ordered;
     return ordered
       .map((id) => folderEntries.get(id) || availableEntries.get(id))
       .filter((item): item is LauncherEntry => !!item);
   }, [availableEntries, containedIds, folderEntries, layout.order]);
+
+  const desktopIds = useMemo(() => desktopEntries.map((entry) => entry.id), [desktopEntries]);
+  const openFolder = openFolderId ? folderEntries.get(openFolderId) : undefined;
+  const openFolderIds = openFolder?.childIds || [];
+  const activeEntry = activeId ? resolveEntry(activeId) : undefined;
 
   function resolveEntry(id: string): LauncherEntry | undefined {
     return folderEntries.get(id) || availableEntries.get(id);
@@ -159,36 +180,92 @@ function DesktopPage() {
   function startLongPress(event: React.PointerEvent<HTMLElement>, itemId: string, folderId?: string) {
     if (editMode) return;
     if (event.button !== 0) return;
-    stopLongPress();
-    pressTimer.current = window.setTimeout(() => {
-      suppressClickUntil.current = Date.now() + 650;
-      setMenu({ itemId, folderId, x: event.clientX, y: event.clientY });
+    clearLongPress();
+    const x = event.clientX;
+    const y = event.clientY;
+    longPressTimer.current = window.setTimeout(() => {
+      longPressTimer.current = null;
+      if (editMode) return;
+      suppressClickForId.current = itemId;
+      setMenu((current) => current || { itemId, folderId, x, y });
     }, LONG_PRESS_MS);
   }
 
-  function stopLongPress() {
-    if (pressTimer.current !== null) {
-      window.clearTimeout(pressTimer.current);
-      pressTimer.current = null;
-    }
+  function clearLongPress() {
+    if (longPressTimer.current === null) return;
+    window.clearTimeout(longPressTimer.current);
+    longPressTimer.current = null;
   }
 
   function openContextMenu(event: React.MouseEvent<HTMLElement>, itemId: string, folderId?: string) {
     event.preventDefault();
-    stopLongPress();
+    clearLongPress();
     if (editMode) return;
     setMenu({ itemId, folderId, x: event.clientX, y: event.clientY });
   }
 
+  function closeMenu() {
+    suppressClickForId.current = null;
+    setMenu(null);
+  }
+
   function clickEntry(entry: LauncherEntry) {
-    stopLongPress();
+    clearLongPress();
+    if (suppressClickForId.current === entry.id) {
+      suppressClickForId.current = null;
+      return;
+    }
     if (editMode) return;
-    if (Date.now() < suppressClickUntil.current) return;
     openEntry(entry);
   }
 
+  function handleDragStart(event: DragStartEvent) {
+    if (!editMode) return;
+    closeMenu();
+    setActiveId(String(event.active.id));
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    const draggedId = String(event.active.id);
+    const targetId = event.over ? String(event.over.id) : "";
+    const sourceFolderId = stringData(event.active.data.current?.folderId);
+    const targetFolderId = stringData(event.over?.data.current?.folderId);
+    const placement = event.over ? dropPlacementFor(event.active.rect.current.translated, event.over.rect) : "inside";
+    setActiveId(null);
+    if (!targetId || draggedId === targetId) return;
+    handleDrop(draggedId, sourceFolderId, targetId, targetFolderId, placement);
+  }
+
+  function handleDrop(itemId: string, sourceFolderId: string | undefined, targetId: string, targetFolderId: string | undefined, placement: DropPlacement) {
+    const targetEntry = resolveEntry(targetId);
+    if (!targetEntry) return;
+    if (targetEntry.kind === "folder") {
+      if (!itemId.startsWith("folder:")) moveToFolder(itemId, targetEntry.id);
+      return;
+    }
+    if (!targetFolderId && !itemId.startsWith("folder:") && placement === "inside") {
+      createFolderFromDrop(itemId, targetId);
+      return;
+    }
+    if (sourceFolderId && targetFolderId === sourceFolderId) {
+      moveInsideFolderRelative(sourceFolderId, itemId, targetId, placement);
+      return;
+    }
+    if (sourceFolderId && !targetFolderId) {
+      moveToDesktopNear(itemId, targetId, placement);
+      return;
+    }
+    if (!sourceFolderId && !targetFolderId) {
+      moveRootRelative(itemId, targetId, placement);
+      return;
+    }
+    if (!sourceFolderId && targetFolderId) {
+      moveToFolder(itemId, targetFolderId);
+    }
+  }
+
   function moveRootRelative(itemId: string, targetId: string, placement: DropPlacement) {
-    setLayout((current) => ({ ...current, order: insertRelative(rootIds.current, itemId, targetId, placement) }));
+    setLayout((current) => ({ ...current, order: insertRelative(desktopIds, itemId, targetId, placement) }));
   }
 
   function moveInsideFolderRelative(folderId: string, itemId: string, targetId: string, placement: DropPlacement) {
@@ -202,7 +279,7 @@ function DesktopPage() {
 
   function moveToDesktopNear(itemId: string, targetId: string, placement: DropPlacement) {
     setLayout((current) => ({
-      order: insertRelative(rootIds.current, itemId, targetId, placement),
+      order: insertRelative(desktopIds, itemId, targetId, placement),
       folders: current.folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) })),
     }));
   }
@@ -216,7 +293,7 @@ function DesktopPage() {
         return folder.id === folderId ? { ...folder, childIds: [...childIds, itemId] } : { ...folder, childIds };
       }),
     }));
-    setMenu(null);
+    closeMenu();
   }
 
   function moveToDesktop(itemId: string) {
@@ -224,7 +301,7 @@ function DesktopPage() {
       order: [...current.order.filter((id) => id !== itemId), itemId],
       folders: current.folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) })),
     }));
-    setMenu(null);
+    closeMenu();
   }
 
   function createFolderWith(itemId: string) {
@@ -233,22 +310,21 @@ function DesktopPage() {
     setLayout((current) => ({
       order: current.order.includes(itemId)
         ? current.order.map((id) => (id === itemId ? folderId : id))
-        : [...rootIds.current.filter((id) => id !== itemId), folderId],
+        : [...desktopIds.filter((id) => id !== itemId), folderId],
       folders: [
         ...current.folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) })),
         { id: folderId, title: "Folder", childIds: [itemId] },
       ],
     }));
     setOpenFolderId(folderId);
-    setMenu(null);
+    closeMenu();
   }
 
   function createFolderFromDrop(itemId: string, targetId: string) {
     if (itemId === targetId || itemId.startsWith("folder:") || targetId.startsWith("folder:")) return;
     const folderId = `folder:${crypto.randomUUID()}`;
-    const rootOrder = rootIds.current;
-    const targetIndex = Math.max(0, rootOrder.indexOf(targetId));
-    const nextOrder = rootOrder.filter((id) => id !== itemId && id !== targetId);
+    const targetIndex = Math.max(0, desktopIds.indexOf(targetId));
+    const nextOrder = desktopIds.filter((id) => id !== itemId && id !== targetId);
     nextOrder.splice(Math.min(targetIndex, nextOrder.length), 0, folderId);
     setLayout((current) => ({
       order: nextOrder,
@@ -261,7 +337,7 @@ function DesktopPage() {
       ],
     }));
     setOpenFolderId(folderId);
-    setMenu(null);
+    closeMenu();
   }
 
   function renameFolder(folderId: string) {
@@ -272,7 +348,7 @@ function DesktopPage() {
       ...current,
       folders: current.folders.map((item) => (item.id === folderId ? { ...item, title: title.trim() || "Folder" } : item)),
     }));
-    setMenu(null);
+    closeMenu();
   }
 
   function unpackFolder(folderId: string) {
@@ -283,7 +359,7 @@ function DesktopPage() {
       folders: current.folders.filter((item) => item.id !== folderId),
     }));
     setOpenFolderId(null);
-    setMenu(null);
+    closeMenu();
   }
 
   function deleteApp(itemId: string) {
@@ -296,29 +372,8 @@ function DesktopPage() {
       order: current.order.filter((id) => id !== itemId),
       folders: current.folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) })),
     }));
-    setMenu(null);
+    closeMenu();
   }
-
-  function onDrop(event: React.DragEvent<HTMLElement>, targetId: string, targetFolderId?: string) {
-    event.preventDefault();
-    const dragged = dragRef.current;
-    const placement = dropPlacementFor(event.currentTarget, event.clientX);
-    dragRef.current = null;
-    if (!dragged || dragged.itemId === targetId) return;
-    if (targetId.startsWith("folder:") && !dragged.itemId.startsWith("folder:")) {
-      moveToFolder(dragged.itemId, targetId);
-    } else if (!targetFolderId && !dragged.itemId.startsWith("folder:") && placement === "inside") {
-      createFolderFromDrop(dragged.itemId, targetId);
-    } else if (dragged.folderId && dragged.folderId === targetFolderId) {
-      moveInsideFolderRelative(dragged.folderId, dragged.itemId, targetId, placement);
-    } else if (dragged.folderId && !targetFolderId) {
-      moveToDesktopNear(dragged.itemId, targetId, placement);
-    } else if (!targetFolderId) {
-      moveRootRelative(dragged.itemId, targetId, placement);
-    }
-  }
-
-  const openFolder = openFolderId ? folderEntries.get(openFolderId) : undefined;
 
   return (
     <main className="desktop-page">
@@ -328,57 +383,69 @@ function DesktopPage() {
         <button type="button" onClick={() => sendCommand("sync.run").catch((syncError) => setError(syncError instanceof Error ? syncError.message : "Sync failed."))}>Sync</button>
       </div>
 
-      <section className="desktop-grid" aria-label="Hyper Browser desktop">
-        {loading && <div className="desktop-status">Loading desktop...</div>}
-        {error && <button className="desktop-status" type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })}>{error}</button>}
-        {desktopEntries.map((entry) => (
-          <DesktopTile
-            entry={entry}
-            editMode={editMode}
-            folderId={undefined}
-            key={entry.id}
-            onClick={clickEntry}
-            onContextMenu={openContextMenu}
-            onPointerDown={startLongPress}
-            onPointerUp={stopLongPress}
-            onDragStart={(itemId, folderId) => {
-              dragRef.current = { itemId, folderId };
-            }}
-            onDrop={onDrop}
-          />
-        ))}
-      </section>
-
-      {openFolder && (
-        <div className="desktop-folder-scrim" onClick={() => setOpenFolderId(null)}>
-          <section className="desktop-folder" role="dialog" aria-modal="true" aria-label={openFolder.title} onClick={(event) => event.stopPropagation()}>
-            <header className="desktop-folder-header">
-              <h2>{openFolder.title}</h2>
-              <button type="button" onClick={() => setOpenFolderId(null)}>Close</button>
-            </header>
-            <div className="desktop-folder-grid">
-              {openFolder.children.length === 0 ? (
-                <div className="desktop-status">This folder is empty.</div>
-              ) : openFolder.children.map((entry) => (
-                <DesktopTile
-                  entry={entry}
-                  editMode={editMode}
-                  folderId={openFolder.id}
-                  key={entry.id}
-                  onClick={clickEntry}
-                  onContextMenu={openContextMenu}
-                  onPointerDown={startLongPress}
-                  onPointerUp={stopLongPress}
-                  onDragStart={(itemId, folderId) => {
-                    dragRef.current = { itemId, folderId };
-                  }}
-                  onDrop={onDrop}
-                />
-              ))}
-            </div>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragCancel={() => setActiveId(null)}
+        onDragEnd={handleDragEnd}
+        onDragStart={handleDragStart}
+      >
+        <SortableContext items={desktopIds} strategy={rectSortingStrategy}>
+          <section className="desktop-grid" aria-label="Hyper Browser desktop">
+            {loading && <div className="desktop-status">Loading desktop...</div>}
+            {error && <button className="desktop-status" type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })}>{error}</button>}
+            {desktopEntries.map((entry) => (
+              <DesktopTile
+                entry={entry}
+                editMode={editMode}
+                folderId={undefined}
+                key={entry.id}
+                onClick={clickEntry}
+                onContextMenu={openContextMenu}
+                onPointerDown={startLongPress}
+                onPointerEnd={clearLongPress}
+              />
+            ))}
           </section>
-        </div>
-      )}
+        </SortableContext>
+
+        {openFolder && (
+          <div className="desktop-folder-scrim" onClick={() => setOpenFolderId(null)}>
+            <section className="desktop-folder" role="dialog" aria-modal="true" aria-label={openFolder.title} onClick={(event) => event.stopPropagation()}>
+              <header className="desktop-folder-header">
+                <h2>{openFolder.title}</h2>
+                <button type="button" onClick={() => setOpenFolderId(null)}>Close</button>
+              </header>
+              <SortableContext items={openFolderIds} strategy={rectSortingStrategy}>
+                <div className="desktop-folder-grid">
+                  {openFolder.children.length === 0 ? (
+                    <div className="desktop-status">This folder is empty.</div>
+                  ) : openFolder.children.map((entry) => (
+                    <DesktopTile
+                      entry={entry}
+                      editMode={editMode}
+                      folderId={openFolder.id}
+                      key={entry.id}
+                      onClick={clickEntry}
+                      onContextMenu={openContextMenu}
+                      onPointerDown={startLongPress}
+                      onPointerEnd={clearLongPress}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </section>
+          </div>
+        )}
+
+        <DragOverlay>
+          {activeEntry && (
+            <div className="desktop-drag-overlay">
+              <DesktopTileVisual entry={activeEntry} />
+            </div>
+          )}
+        </DragOverlay>
+      </DndContext>
 
       {menu && (
         <DesktopMenu
@@ -387,14 +454,14 @@ function DesktopPage() {
           sourceFolderId={menu.folderId}
           x={menu.x}
           y={menu.y}
-          onClose={() => setMenu(null)}
+          onClose={closeMenu}
           onOpen={(item) => {
             openEntry(item);
-            setMenu(null);
+            closeMenu();
           }}
           onStartEditMode={() => {
             setEditMode(true);
-            setMenu(null);
+            closeMenu();
           }}
           onCreateFolder={createFolderWith}
           onMoveToFolder={moveToFolder}
@@ -415,40 +482,68 @@ function DesktopTile(props: {
   onClick: (entry: LauncherEntry) => void;
   onContextMenu: (event: React.MouseEvent<HTMLElement>, itemId: string, folderId?: string) => void;
   onPointerDown: (event: React.PointerEvent<HTMLElement>, itemId: string, folderId?: string) => void;
-  onPointerUp: () => void;
-  onDragStart: (itemId: string, folderId?: string) => void;
-  onDrop: (event: React.DragEvent<HTMLElement>, itemId: string, folderId?: string) => void;
+  onPointerEnd: () => void;
 }) {
+  const {
+    attributes,
+    isDragging,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+  } = useSortable({
+    id: props.entry.id,
+    data: { folderId: props.folderId || "", kind: props.entry.kind },
+    disabled: !props.editMode,
+  });
+  const style = {
+    opacity: isDragging ? 0.34 : undefined,
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+  const dragListeners = props.editMode ? listeners : undefined;
+  const dragAttributes = props.editMode ? attributes : undefined;
+
   return (
     <button
       className={`desktop-tile${props.editMode ? " editing" : ""}`}
-      type="button"
-      draggable={props.editMode}
+      data-launcher-id={props.entry.id}
+      ref={setNodeRef}
+      style={style}
       title={props.entry.title}
+      type="button"
       onClick={() => props.onClick(props.entry)}
       onContextMenu={(event) => props.onContextMenu(event, props.entry.id, props.folderId)}
-      onPointerDown={(event) => props.onPointerDown(event, props.entry.id, props.folderId)}
-      onPointerUp={props.onPointerUp}
-      onPointerLeave={props.onPointerUp}
-      onDragStart={() => props.onDragStart(props.entry.id, props.folderId)}
-      onDragOver={(event) => event.preventDefault()}
-      onDrop={(event) => props.onDrop(event, props.entry.id, props.folderId)}
+      onPointerDown={props.editMode ? undefined : (event) => props.onPointerDown(event, props.entry.id, props.folderId)}
+      onPointerUp={props.editMode ? undefined : props.onPointerEnd}
+      onPointerLeave={props.editMode ? undefined : props.onPointerEnd}
+      onPointerCancel={props.editMode ? undefined : props.onPointerEnd}
+      {...dragAttributes}
+      {...dragListeners}
     >
-      {props.entry.kind === "folder" ? (
+      <DesktopTileVisual entry={props.entry} />
+    </button>
+  );
+}
+
+function DesktopTileVisual({ entry }: { entry: LauncherEntry }) {
+  return (
+    <>
+      {entry.kind === "folder" ? (
         <span className="desktop-icon desktop-folder-icon" aria-hidden="true">
-          {props.entry.children.slice(0, 4).map((child) => (
+          {entry.children.slice(0, 4).map((child) => (
             <span className="desktop-folder-dot" key={child.id} style={{ background: child.kind === "folder" ? "#dfe5eb" : child.color }}>
               {child.kind === "folder" ? "" : child.mark.slice(0, 1)}
             </span>
           ))}
         </span>
       ) : (
-        <span className={props.entry.kind === "app" && props.entry.app.iconDataUrl ? "desktop-icon image" : "desktop-icon"} style={{ background: props.entry.color }} aria-hidden="true">
-          {props.entry.kind === "app" && props.entry.app.iconDataUrl ? <img src={props.entry.app.iconDataUrl} alt="" /> : props.entry.mark}
+        <span className={entry.kind === "app" && entry.app.iconDataUrl ? "desktop-icon image" : "desktop-icon"} style={{ background: entry.color }} aria-hidden="true">
+          {entry.kind === "app" && entry.app.iconDataUrl ? <img src={entry.app.iconDataUrl} alt="" /> : entry.mark}
         </span>
       )}
-      <span className="desktop-label">{props.entry.title}</span>
-    </button>
+      <span className="desktop-label">{entry.title}</span>
+    </>
   );
 }
 
@@ -520,9 +615,10 @@ async function loadLayout(): Promise<LauncherLayout> {
   };
 }
 
-function dropPlacementFor(element: HTMLElement, x: number): DropPlacement {
-  const rect = element.getBoundingClientRect();
-  const ratio = rect.width > 0 ? (x - rect.left) / rect.width : 0.5;
+function dropPlacementFor(activeRect: ClientRect | null, overRect: ClientRect): DropPlacement {
+  if (!activeRect) return "inside";
+  const activeCenterX = activeRect.left + activeRect.width / 2;
+  const ratio = overRect.width > 0 ? (activeCenterX - overRect.left) / overRect.width : 0.5;
   if (ratio < 0.24) return "before";
   if (ratio > 0.76) return "after";
   return "inside";
@@ -534,6 +630,10 @@ function insertRelative(ids: string[], itemId: string, targetId: string, placeme
   if (index < 0) return [...next, itemId];
   next.splice(placement === "after" ? index + 1 : index, 0, itemId);
   return next;
+}
+
+function stringData(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
 }
 
 function appInitial(name: string): string {
