@@ -149,13 +149,15 @@ class WebDavSyncManager(
             if (startUrl.isBlank()) return@forEach
             val known = knownRecords[startUrl]
             val iconDataUrl = webAppRepository.iconDataUrl(webApp)
+            val iconSource = webAppRepository.iconSource(webApp)
             val changed = known == null ||
                 known.deletedAt != null ||
                 known.name != webApp.name ||
                 known.scopeUrl != webApp.scopeUrl ||
                 known.themeColor != webApp.themeColor ||
                 known.displayMode != webApp.displayMode ||
-                known.iconDataUrl != iconDataUrl
+                known.iconDataUrl != iconDataUrl ||
+                known.iconSource != iconSource
             records[startUrl] = SyncWebAppRecord(
                 id = webApp.id,
                 name = webApp.name.ifBlank { startUrl },
@@ -168,7 +170,8 @@ class WebDavSyncManager(
                 updatedAt = if (changed) now else known.updatedAt,
                 deletedAt = null,
                 sourceDeviceId = if (changed) deviceId else known.sourceDeviceId,
-                iconDataUrl = iconDataUrl
+                iconDataUrl = iconDataUrl,
+                iconSource = iconSource
             )
         }
 
@@ -217,14 +220,16 @@ class WebDavSyncManager(
                 current.name != record.name ||
                 current.scopeUrl != record.scopeUrl ||
                 current.themeColor != record.themeColor ||
-                current.displayMode != record.displayMode
+                current.displayMode != record.displayMode ||
+                webAppRepository.iconDataUrl(current) != record.iconDataUrl ||
+                webAppRepository.iconSource(current) != record.normalizedIconSource()
             ) {
                 imports += WebAppDefinition(
                     id = record.id.ifBlank { current?.id ?: UUID.randomUUID().toString() },
                     name = record.name.ifBlank { record.startUrl },
                     startUrl = record.startUrl,
                     scopeUrl = record.scopeUrl,
-                    iconPath = faviconStore.saveIconDataUrl(record.startUrl, record.iconDataUrl),
+                    iconPath = saveSyncedWebAppIcon(record),
                     themeColor = record.themeColor,
                     displayMode = record.displayMode.ifBlank { "standalone" },
                     createdAt = record.createdAt.takeIf { it > 0 } ?: record.updatedAt,
@@ -235,6 +240,13 @@ class WebDavSyncManager(
         val imported = if (imports.isEmpty()) 0 else webAppRepository.mergeImported(imports)
         return ApplyCounts(imported = imported, removed = removed)
     }
+
+    private fun saveSyncedWebAppIcon(record: SyncWebAppRecord): String? =
+        when (record.normalizedIconSource()) {
+            "custom" -> faviconStore.saveCustomIconDataUrl(record.id.ifBlank { record.startUrl }, record.iconDataUrl)
+            "site" -> faviconStore.saveIconDataUrl(record.startUrl, record.iconDataUrl)
+            else -> null
+        }
 
     private companion object {
         const val MANIFEST_FILE = "manifest.json"
@@ -425,8 +437,15 @@ private data class SyncWebAppRecord(
     override val updatedAt: Long,
     override val deletedAt: Long?,
     val sourceDeviceId: String,
-    val iconDataUrl: String?
-) : SyncRecord
+    val iconDataUrl: String?,
+    val iconSource: String?
+) : SyncRecord {
+    fun normalizedIconSource(): String =
+        when (iconSource) {
+            "custom", "site", "title" -> iconSource
+            else -> if (iconDataUrl.isNullOrBlank()) "title" else "custom"
+        }
+}
 
 private interface SyncRecord {
     val updatedAt: Long
@@ -513,7 +532,8 @@ private fun parseWebAppRecords(array: JSONArray): List<SyncWebAppRecord> =
                     updatedAt = updatedAt,
                     deletedAt = item.optNullableLong("deletedAt"),
                     sourceDeviceId = item.optString("sourceDeviceId"),
-                    iconDataUrl = item.optString("iconDataUrl").ifBlank { null }
+                    iconDataUrl = item.optString("iconDataUrl").ifBlank { null },
+                    iconSource = item.optString("iconSource").ifBlank { null }
                 )
             )
         }
@@ -566,6 +586,7 @@ private fun webAppsArray(records: Collection<SyncWebAppRecord>): JSONArray =
                     .put("deletedAt", record.deletedAt)
                     .put("sourceDeviceId", record.sourceDeviceId)
                     .put("iconDataUrl", record.iconDataUrl)
+                    .put("iconSource", record.iconSource)
             )
         }
     }
@@ -577,7 +598,7 @@ private fun manifestDocument(config: WebDavSyncConfig, now: Long): JSONObject =
         .put("updatedAt", now)
         .put("syncRoot", "HyperBrowserSync")
         .put("lastWriter", config.deviceId)
-        .put("files", JSONArray().put("bookmarks.json").put("webapps.json").put("devices/"))
+        .put("files", JSONArray().put("bookmarks.json").put("webapps.json").put("launcher.json").put("devices/"))
 
 private fun deviceDocument(config: WebDavSyncConfig, now: Long): JSONObject =
     JSONObject()

@@ -46,6 +46,9 @@ object HyperBridge {
         "apps.open",
         "apps.pin",
         "apps.edit",
+        "apps.update",
+        "apps.icon.choose",
+        "apps.icon.update",
         "apps.delete",
         "panel.extensions"
     )

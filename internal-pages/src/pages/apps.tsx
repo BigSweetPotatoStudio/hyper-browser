@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { WebAppEditorDialog, type LauncherAppChanges, type LauncherLabels } from "@hyper-launcher";
 import "../hyper-browser";
 import "../styles.css";
 import { readBootstrapData } from "../bootstrap";
@@ -11,6 +12,7 @@ function AppsPage() {
   const [failed, setFailed] = useState(false);
   const [menuApp, setMenuApp] = useState<WebAppItem | null>(null);
   const [deletingApp, setDeletingApp] = useState<WebAppItem | null>(null);
+  const [editingApp, setEditingApp] = useState<WebAppItem | null>(null);
   const [query, setQuery] = useState("");
 
   function loadApps(showLoading = true) {
@@ -31,6 +33,67 @@ function AppsPage() {
 
   const items = apps || [];
   const visibleItems = filterApps(items, query);
+  const editorLabels = useMemo<LauncherLabels>(() => ({
+    loading: t("apps.loading"),
+    emptyDesktop: t("apps.empty"),
+    loadAppsError: t("apps.failed"),
+    loadLayoutError: t("apps.failed"),
+    folder: t("home.folder"),
+    folderEmpty: t("home.folderEmpty"),
+    open: t("home.open"),
+    editHomeScreen: t("home.editHomeScreen"),
+    done: t("home.done"),
+    newFolder: t("home.newFolder"),
+    renameFolder: t("home.renameFolder"),
+    unpackFolder: t("home.unpackFolder"),
+    moveToDesktop: t("home.moveToDesktop"),
+    moveToDock: t("home.moveToDock"),
+    moveToFolder: (name: string) => t("home.moveToFolder", { name }),
+    pinApp: t("apps.pin"),
+    editApp: t("apps.editTitle"),
+    editIcon: t("apps.editIcon"),
+    appName: t("common.name"),
+    appUrl: t("common.url"),
+    deleteApp: t("common.delete"),
+    iconTitle: t("apps.editIcon"),
+    iconLetter: t("apps.iconLetter"),
+    iconBackground: t("apps.iconBackground"),
+    iconPreset: t("apps.iconPreset"),
+    iconSourceTitle: t("apps.iconSourceTitle"),
+    iconSite: t("apps.iconSite"),
+    iconTitleFallback: t("apps.iconTitleFallback"),
+    iconDefaultLibrary: t("apps.iconDefaultLibrary"),
+    iconChooseImage: t("apps.iconChooseImage"),
+    iconSelectedImage: t("apps.iconSelectedImage"),
+    iconPresetLabels: {
+      news: t("apps.iconPresetNews"),
+      video: t("apps.iconPresetVideo"),
+      music: t("apps.iconPresetMusic"),
+      shop: t("apps.iconPresetShop"),
+      chat: t("apps.iconPresetChat"),
+      docs: t("apps.iconPresetDocs"),
+      work: t("apps.iconPresetWork"),
+      star: t("apps.iconPresetStar"),
+    },
+    iconUpload: t("apps.iconUpload"),
+    iconUseImage: t("apps.iconUseImage"),
+    iconReset: t("apps.iconReset"),
+    cancel: t("common.cancel"),
+    save: t("common.save"),
+    deleteFailed: t("apps.failed"),
+    editFailed: t("apps.failed"),
+    iconUpdateFailed: t("apps.iconUpdateFailed"),
+  }), []);
+
+  function saveEditingApp(app: WebAppItem, changes: LauncherAppChanges) {
+    window.hyperBrowser.updateApp(app.id, changes.name, changes.startUrl, changes.iconDataUrl)
+      .then((items) => {
+        setApps(items);
+        setFailed(false);
+        setEditingApp(null);
+      })
+      .catch(() => loadApps(false));
+  }
 
   return (
     <div className="apps-page">
@@ -77,13 +140,7 @@ function AppsPage() {
             setMenuApp(null);
           }}
           onEdit={() => {
-            const appId = menuApp.id;
-            window.hyperBrowser.editApp(appId)
-              .then((items) => {
-                setApps(items);
-                setFailed(false);
-              })
-              .catch(() => loadApps(false));
+            setEditingApp(menuApp);
             setMenuApp(null);
           }}
           onDelete={() => {
@@ -101,6 +158,15 @@ function AppsPage() {
             setApps((current) => (current || []).filter((app) => app.id !== deletingApp.id));
             setDeletingApp(null);
           }}
+        />
+      )}
+      {editingApp && (
+        <WebAppEditorDialog
+          app={editingApp}
+          labels={editorLabels}
+          onClose={() => setEditingApp(null)}
+          onChooseImage={() => window.hyperBrowser.chooseAppIcon(editingApp.id)}
+          onSave={(changes) => saveEditingApp(editingApp, changes)}
         />
       )}
     </div>

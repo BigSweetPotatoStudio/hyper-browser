@@ -120,6 +120,8 @@ internal fun List<WebAppDefinition>.toWebAppsJsonString(app: HyperBrowserApp): S
                 .put("scopeUrl", webApp.scopeUrl)
                 .put("iconPath", webApp.iconPath)
                 .put("iconDataUrl", app.webApps.iconDataUrl(webApp))
+                .put("siteIconDataUrl", app.webApps.siteIconDataUrl(webApp))
+                .put("iconSource", app.webApps.iconSource(webApp))
                 .put("themeColor", webApp.themeColor)
                 .put("displayMode", webApp.displayMode)
                 .put("createdAt", webApp.createdAt)

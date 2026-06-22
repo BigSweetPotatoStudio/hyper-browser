@@ -5,10 +5,12 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ImageDecoder
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
 import android.net.Uri
+import android.os.Build
 import android.util.Base64
 import androidx.core.content.ContextCompat
 import com.dadigua.hyperbrowser.webapp.WebAppIconPreset
@@ -17,7 +19,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
@@ -81,8 +82,7 @@ class FaviconRepository(private val context: Context) {
     }
 
     suspend fun saveCustomIconFromUri(key: String, uri: Uri): String? = withContext(Dispatchers.IO) {
-        val bytes = readContentBytes(uri, MAX_CUSTOM_ICON_INPUT_BYTES) ?: return@withContext null
-        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@withContext null
+        val bitmap = decodeCustomIconUri(uri) ?: return@withContext null
         saveCustomIconBitmap(key, bitmap)
     }
 
@@ -132,7 +132,7 @@ class FaviconRepository(private val context: Context) {
         if (!iconDataUrl.startsWith("data:image/", ignoreCase = true) || commaIndex <= 0) return null
         val encoded = iconDataUrl.substring(commaIndex + 1)
         val bytes = runCatching { Base64.decode(encoded, Base64.DEFAULT) }.getOrNull() ?: return null
-        if (bytes.isEmpty() || bytes.size > 1_500_000) return null
+        if (bytes.isEmpty() || bytes.size > MAX_CUSTOM_ICON_INPUT_BYTES) return null
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
     }
 
@@ -181,22 +181,6 @@ class FaviconRepository(private val context: Context) {
                 draw(canvas)
             }
         return output
-    }
-
-    private fun readContentBytes(uri: Uri, maxBytes: Int): ByteArray? {
-        val output = ByteArrayOutputStream()
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            val buffer = ByteArray(16 * 1024)
-            var total = 0
-            while (true) {
-                val read = input.read(buffer)
-                if (read <= 0) break
-                total += read
-                if (total > maxBytes) return null
-                output.write(buffer, 0, read)
-            }
-        } ?: return null
-        return output.toByteArray().takeIf { it.isNotEmpty() }
     }
 
     private fun findIconCandidates(pageUrl: String): List<String> {
@@ -256,6 +240,51 @@ class FaviconRepository(private val context: Context) {
     private fun downloadText(url: String, maxBytes: Long): String? {
         val bytes = downloadBytes(url, maxBytes) ?: return null
         return bytes.toString(Charsets.UTF_8)
+    }
+
+    private fun decodeCustomIconUri(uri: Uri): Bitmap? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            runCatching {
+                val source = ImageDecoder.createSource(context.contentResolver, uri)
+                ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    val width = info.size.width
+                    val height = info.size.height
+                    val maxSide = maxOf(width, height)
+                    if (width > 0 && height > 0 && maxSide > MAX_CUSTOM_ICON_DECODE_SIDE) {
+                        val scale = MAX_CUSTOM_ICON_DECODE_SIDE.toFloat() / maxSide.toFloat()
+                        decoder.setTargetSize(
+                            maxOf(1, (width * scale).toInt()),
+                            maxOf(1, (height * scale).toInt())
+                        )
+                    }
+                }
+            }.getOrNull()
+        } else {
+            decodeCustomIconUriCompat(uri)
+        }
+
+    private fun decodeCustomIconUriCompat(uri: Uri): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, bounds)
+        } ?: return null
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, MAX_CUSTOM_ICON_DECODE_SIDE)
+        }
+        return context.contentResolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, options)
+        }
+    }
+
+    private fun sampleSizeFor(width: Int, height: Int, maxSide: Int): Int {
+        var sampleSize = 1
+        while (maxOf(width / sampleSize, height / sampleSize) > maxSide) {
+            sampleSize *= 2
+        }
+        return sampleSize
     }
 
     private fun downloadBytes(url: String, maxBytes: Long): ByteArray? {
@@ -326,6 +355,7 @@ class FaviconRepository(private val context: Context) {
 
     private companion object {
         const val CUSTOM_ICON_SIZE = 512
+        const val MAX_CUSTOM_ICON_DECODE_SIDE = 1024
         const val MAX_CUSTOM_ICON_INPUT_BYTES = 8 * 1024 * 1024
         const val FAVICON_USER_AGENT = "Mozilla/5.0 (Android 14; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0"
         val linkTagRegex = Regex("""<link\b[^>]*>""", RegexOption.IGNORE_CASE)

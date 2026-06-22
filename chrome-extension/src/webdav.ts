@@ -62,7 +62,7 @@ export class WebDavClient {
       updatedAt: Date.now(),
       syncRoot: "HyperBrowserSync",
       lastWriter: this.settings.deviceId,
-      files: ["bookmarks.json", "webapps.json", "devices/"],
+      files: ["bookmarks.json", "webapps.json", "launcher.json", "devices/"],
     });
   }
 

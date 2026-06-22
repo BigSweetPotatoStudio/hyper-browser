@@ -452,6 +452,42 @@ private fun BrowserScreen(
     fun webAppsItemsResponse(): JSONObject =
         okItems(app.webApps.observeAll().value.toWebAppsJsonString(app))
 
+    var pendingWebAppIconPickResult by remember { mutableStateOf<GeckoResult<Any>?>(null) }
+    var pendingWebAppIconPickKey by remember { mutableStateOf<String?>(null) }
+    val webAppIconBridgeLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        val result = pendingWebAppIconPickResult ?: return@rememberLauncherForActivityResult
+        val key = pendingWebAppIconPickKey
+        pendingWebAppIconPickResult = null
+        pendingWebAppIconPickKey = null
+        if (uri == null) {
+            completeBridgeResult(result, okData(JSONObject().put("iconDataUrl", JSONObject.NULL)))
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            runCatching {
+                val iconPath = faviconStore.saveCustomIconFromUri(key ?: uri.toString(), uri)
+                    ?: error(context.getString(R.string.webapp_icon_choose_failed))
+                val iconDataUrl = faviconStore.iconDataUrl(iconPath)
+                    ?: error(context.getString(R.string.webapp_icon_choose_failed))
+                okData(JSONObject().put("iconDataUrl", iconDataUrl))
+            }.fold(
+                onSuccess = { response ->
+                    completeBridgeResult(result, response)
+                },
+                onFailure = { throwable ->
+                    completeBridgeResult(
+                        result,
+                        JSONObject()
+                            .put("ok", false)
+                            .put("error", throwable.message ?: context.getString(R.string.webapp_icon_choose_failed))
+                    )
+                }
+            )
+        }
+    }
+
     fun handleHyperBridgeMessage(message: JSONObject): GeckoResult<Any> {
         val payload = message.optJSONObject("payload") ?: JSONObject()
         val response = when (message.optString("type")) {
@@ -635,6 +671,59 @@ private fun BrowserScreen(
                 val result = GeckoResult<Any>()
                 pendingHyperCommand = HyperCommand.Apps.Edit(id, result)
                 return result
+            }
+            "apps.update" -> {
+                val id = payload.optString("id")
+                if (id.isBlank()) return bridgeError(context.getString(R.string.webapp_not_found))
+                val cleanUrl = normalizeWebAppUrl(payload.optString("startUrl"))
+                    ?: return bridgeError(context.getString(R.string.webapp_update_failed))
+                val cleanName = cleanWebAppName(context, payload.optString("name"), cleanUrl)
+                val hasIconDataUrl = payload.has("iconDataUrl")
+                val iconDataUrl = payload.optString("iconDataUrl").ifBlank { null }
+                val updated = runBlocking {
+                    val updatedDetails = app.webApps.update(id, cleanName, cleanUrl) ?: return@runBlocking null
+                    if (!hasIconDataUrl) {
+                        updatedDetails
+                    } else if (iconDataUrl == null) {
+                        app.webApps.resetIconToSite(id)
+                    } else {
+                        val iconPath = faviconStore.saveCustomIconDataUrl(cleanUrl, iconDataUrl)
+                            ?: return@runBlocking null
+                        app.webApps.updateIcon(id, iconPath)
+                    } ?: updatedDetails
+                } ?: return bridgeError(context.getString(R.string.webapp_update_failed))
+                okItems(app.webApps.observeAll().value.map { if (it.id == id) updated else it }.toWebAppsJsonString(app))
+            }
+            "apps.icon.choose" -> {
+                val id = payload.optString("id")
+                if (id.isBlank()) return bridgeError(context.getString(R.string.webapp_not_found))
+                val webApp = app.webApps.observeAll().value.firstOrNull { it.id == id }
+                    ?: return bridgeError(context.getString(R.string.webapp_not_found))
+                if (pendingWebAppIconPickResult != null) {
+                    return bridgeError(context.getString(R.string.webapp_icon_choose_failed))
+                }
+                val result = GeckoResult<Any>()
+                pendingWebAppIconPickResult = result
+                pendingWebAppIconPickKey = webApp.id.ifBlank { webApp.startUrl }
+                scope.launch { webAppIconBridgeLauncher.launch("image/*") }
+                return result
+            }
+            "apps.icon.update" -> {
+                val id = payload.optString("id")
+                if (id.isBlank()) return bridgeError(context.getString(R.string.webapp_not_found))
+                val webApp = app.webApps.observeAll().value.firstOrNull { it.id == id }
+                    ?: return bridgeError(context.getString(R.string.webapp_not_found))
+                val iconDataUrl = payload.optString("iconDataUrl").ifBlank { null }
+                val updated = runBlocking {
+                    if (iconDataUrl == null) {
+                        app.webApps.resetIconToSite(id)
+                    } else {
+                        val iconPath = faviconStore.saveCustomIconDataUrl(webApp.startUrl, iconDataUrl)
+                            ?: return@runBlocking null
+                        app.webApps.updateIcon(id, iconPath)
+                    }
+                } ?: return bridgeError(context.getString(R.string.webapp_icon_failed))
+                okItems(app.webApps.observeAll().value.map { if (it.id == id) updated else it }.toWebAppsJsonString(app))
             }
             "apps.delete" -> {
                 pendingHyperCommand = HyperCommand.Apps.Delete(payload.optString("id"))
@@ -947,32 +1036,6 @@ private fun BrowserScreen(
         pendingWebAppEditResult = null
     }
 
-    fun normalizeWebAppUrl(input: String): String? {
-        val trimmed = input.trim()
-        if (trimmed.isBlank()) return null
-        val normalized = if (
-            trimmed.startsWith("http://", ignoreCase = true) ||
-            trimmed.startsWith("https://", ignoreCase = true)
-        ) {
-            trimmed
-        } else if (trimmed.contains(".") && !trimmed.any { it.isWhitespace() }) {
-            "https://$trimmed"
-        } else {
-            trimmed
-        }
-        return normalized.takeIf {
-            it.startsWith("http://", ignoreCase = true) ||
-                it.startsWith("https://", ignoreCase = true)
-        }
-    }
-
-    fun cleanWebAppName(name: String, url: String): String =
-        name.trim().ifBlank {
-            Uri.parse(url).host.orEmpty().removePrefix("www.").ifBlank {
-                context.getString(R.string.browser_search_source_webapp)
-            }
-        }
-
     suspend fun selectedIconPath(dialog: WebAppDetailsDialogState, key: String): String? =
         when (val selection = dialog.selectedIcon) {
             WebAppIconSelection.Site -> dialog.siteIconPath
@@ -993,7 +1056,7 @@ private fun BrowserScreen(
                     runCatching {
                         val cleanUrl = normalizeWebAppUrl(dialog.startUrl)
                             ?: error(context.getString(R.string.webapp_update_failed))
-                        val cleanName = cleanWebAppName(dialog.name, cleanUrl)
+                        val cleanName = cleanWebAppName(context, dialog.name, cleanUrl)
                         val iconPath = selectedIconPath(dialog, cleanUrl)
                         if (dialog.selectedIcon != WebAppIconSelection.Site && iconPath == null) {
                             error(context.getString(R.string.webapp_icon_update_failed))
@@ -1027,7 +1090,7 @@ private fun BrowserScreen(
                     runCatching {
                         val cleanUrl = normalizeWebAppUrl(dialog.startUrl)
                             ?: error(context.getString(R.string.webapp_update_failed))
-                        val cleanName = cleanWebAppName(dialog.name, cleanUrl)
+                        val cleanName = cleanWebAppName(context, dialog.name, cleanUrl)
                         val updatedDetails = app.webApps.update(webAppId, cleanName, cleanUrl)
                             ?: error(context.getString(R.string.webapp_not_found))
                         if (dialog.selectedIcon == WebAppIconSelection.Site) {
@@ -1866,6 +1929,32 @@ private fun shortcutRequestMessage(context: Context, result: PinnedShortcutReque
         PinnedShortcutRequestResult.Unsupported -> context.getString(R.string.shortcut_request_unsupported)
         PinnedShortcutRequestResult.Failed -> context.getString(R.string.shortcut_request_failed)
         PinnedShortcutRequestResult.WebAppNotFound -> context.getString(R.string.webapp_not_found)
+    }
+
+private fun normalizeWebAppUrl(input: String): String? {
+    val trimmed = input.trim()
+    if (trimmed.isBlank()) return null
+    val normalized = if (
+        trimmed.startsWith("http://", ignoreCase = true) ||
+        trimmed.startsWith("https://", ignoreCase = true)
+    ) {
+        trimmed
+    } else if (trimmed.contains(".") && !trimmed.any { it.isWhitespace() }) {
+        "https://$trimmed"
+    } else {
+        trimmed
+    }
+    return normalized.takeIf {
+        it.startsWith("http://", ignoreCase = true) ||
+            it.startsWith("https://", ignoreCase = true)
+    }
+}
+
+private fun cleanWebAppName(context: Context, name: String, url: String): String =
+    name.trim().ifBlank {
+        Uri.parse(url).host.orEmpty().removePrefix("www.").ifBlank {
+            context.getString(R.string.browser_search_source_webapp)
+        }
     }
 
 private fun addressSecurityLevel(

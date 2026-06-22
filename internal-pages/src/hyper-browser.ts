@@ -25,6 +25,8 @@ type WebAppItem = {
   scopeUrl: string;
   iconPath?: string | null;
   iconDataUrl?: string | null;
+  siteIconDataUrl?: string | null;
+  iconSource?: "custom" | "site" | "title";
   themeColor: number;
   displayMode: string;
   createdAt: number;
@@ -157,6 +159,9 @@ type HyperBridgeMessageType =
   | "apps.open"
   | "apps.pin"
   | "apps.edit"
+  | "apps.update"
+  | "apps.icon.choose"
+  | "apps.icon.update"
   | "apps.delete"
   | "panel.extensions";
 
@@ -213,6 +218,9 @@ type HyperBrowserApi = {
   openApp(id: string): void;
   pinApp(id: string): void;
   editApp(id: string): Promise<WebAppItem[]>;
+  updateApp(id: string, name: string, startUrl: string, iconDataUrl?: string | null): Promise<WebAppItem[]>;
+  chooseAppIcon(id: string): Promise<string | null>;
+  updateAppIcon(id: string, iconDataUrl: string | null): Promise<WebAppItem[]>;
   deleteApp(id: string): void;
 };
 
@@ -262,8 +270,8 @@ function requestData<T>(type: HyperBridgeMessageType): Promise<T[]> {
   return requestItems<T>(type);
 }
 
-function requestObject<T>(type: HyperBridgeMessageType): Promise<T> {
-  return send(type).then((response) => response.data as T);
+function requestObject<T>(type: HyperBridgeMessageType, payload?: BridgePayload): Promise<T> {
+  return send(type, payload).then((response) => response.data as T);
 }
 
 window.hyperBrowser = {
@@ -398,6 +406,18 @@ window.hyperBrowser = {
   },
   editApp(id) {
     return requestItems<WebAppItem>("apps.edit", { id });
+  },
+  updateApp(id, name, startUrl, iconDataUrl) {
+    const payload: BridgePayload = { id, name, startUrl };
+    if (iconDataUrl !== undefined) payload.iconDataUrl = iconDataUrl || "";
+    return requestItems<WebAppItem>("apps.update", payload);
+  },
+  chooseAppIcon(id) {
+    return requestObject<{ iconDataUrl?: string | null }>("apps.icon.choose", { id })
+      .then((result) => result.iconDataUrl || null);
+  },
+  updateAppIcon(id, iconDataUrl) {
+    return requestItems<WebAppItem>("apps.icon.update", { id, iconDataUrl: iconDataUrl || "" });
   },
   deleteApp(id) {
     command("apps.delete", { id });

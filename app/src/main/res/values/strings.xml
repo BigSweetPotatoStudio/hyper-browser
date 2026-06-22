@@ -193,6 +193,7 @@
     <string name="webdav_sync_failed">WebDAV sync failed.</string>
     <string name="webapp_updated">Updated %1$s.</string>
     <string name="webapp_not_found">WebApp not found.</string>
+    <string name="webapp_icon_failed">Unable to save WebApp icon.</string>
     <string name="webapp_update_failed">Update failed.</string>
     <string name="webapp_deleted">WebApp deleted.</string>
     <string name="webapp_delete_failed">Delete failed.</string>

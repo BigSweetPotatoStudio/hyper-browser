@@ -14,7 +14,17 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@hyper-launcher": ["../shared/launcher/src/index.tsx"],
+      "@hyper-launcher/*": ["../shared/launcher/src/*"],
+      "react": ["node_modules/@types/react/index.d.ts"],
+      "react/jsx-runtime": ["node_modules/@types/react/jsx-runtime.d.ts"],
+      "@dnd-kit/core": ["node_modules/@dnd-kit/core/dist/index.d.ts"],
+      "@dnd-kit/sortable": ["node_modules/@dnd-kit/sortable/dist/index.d.ts"],
+      "@dnd-kit/utilities": ["node_modules/@dnd-kit/utilities/dist/index.d.ts"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", "../shared/launcher/src"]
 }

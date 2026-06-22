@@ -81,10 +81,27 @@ class WebAppRepository(
     }
 
     fun iconDataUrl(webApp: WebAppDefinition): String? {
-        val icon = webAppIconBitmap(webApp, 192) ?: return null
-        val output = ByteArrayOutputStream()
-        icon.compress(Bitmap.CompressFormat.PNG, 100, output)
-        return "data:image/png;base64,${Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)}"
+        val icon = rawWebAppIconBitmap(webApp, 192) ?: return null
+        return bitmapDataUrl(icon)
+    }
+
+    fun siteIconDataUrl(webApp: WebAppDefinition): String? {
+        val currentIconPath = faviconStore.existingIconPath(siteModeIconPath(webApp.iconPath))
+        val siteIconPath = if (faviconStore.isCustomIconPath(currentIconPath)) {
+            faviconStore.cachedIconPath(webApp.startUrl)
+        } else {
+            currentIconPath ?: faviconStore.cachedIconPath(webApp.startUrl)
+        }
+        return faviconStore.iconDataUrl(siteIconPath)
+    }
+
+    fun iconSource(webApp: WebAppDefinition): String {
+        val currentIconPath = faviconStore.existingIconPath(siteModeIconPath(webApp.iconPath))
+        return when {
+            faviconStore.isCustomIconPath(currentIconPath) -> "custom"
+            currentIconPath != null || faviconStore.cachedIconPath(webApp.startUrl) != null -> "site"
+            else -> "title"
+        }
     }
 
     suspend fun installFromPage(
@@ -219,7 +236,7 @@ class WebAppRepository(
 
     fun applyTaskDescription(activity: Activity, webApp: WebAppDefinition) {
         @Suppress("DEPRECATION")
-        val icon = webAppIconBitmap(webApp, 96)
+        val icon = badgedWebAppIconBitmap(webApp, 96)
             ?: BitmapFactory.decodeResource(activity.resources, R.mipmap.ic_launcher)
         @Suppress("DEPRECATION")
         activity.setTaskDescription(ActivityManager.TaskDescription(webApp.name, icon, webApp.themeColor))
@@ -269,7 +286,7 @@ class WebAppRepository(
     }
 
     private fun shortcutIcon(webApp: WebAppDefinition): Icon =
-        webAppIconBitmap(webApp, 192)
+        badgedWebAppIconBitmap(webApp, 192)
             ?.let { Icon.createWithBitmap(it) }
             ?: Icon.createWithResource(context, R.mipmap.ic_launcher)
 
@@ -304,14 +321,31 @@ class WebAppRepository(
 
     private fun shortcutId(id: String): String = "webapp-$id"
 
-    private fun webAppIconBitmap(webApp: WebAppDefinition, size: Int): Bitmap? {
-        val siteIconPath = iconPathFor(webApp)
-            ?: return BrowserIconComposer.defaultWebAppIcon(webApp.name, webApp.startUrl, size)
-        return BrowserIconComposer.badgedSiteIcon(
-            context,
-            siteIconPath,
-            size
-        )
+    private fun rawWebAppIconBitmap(webApp: WebAppDefinition, size: Int): Bitmap? {
+        val iconPath = iconPathFor(webApp)
+        val bitmap = iconPath?.let { BitmapFactory.decodeFile(it) }
+        if (bitmap != null && !bitmap.isRecycled) return normalizeBitmap(bitmap, size)
+        return BrowserIconComposer.defaultWebAppIcon(webApp.name, webApp.startUrl, size)
+    }
+
+    private fun badgedWebAppIconBitmap(webApp: WebAppDefinition, size: Int): Bitmap? {
+        val rawIcon = rawWebAppIconBitmap(webApp, size) ?: return null
+        return BrowserIconComposer.badgedSiteIcon(context, rawIcon, size)
+    }
+
+    private fun normalizeBitmap(source: Bitmap, size: Int): Bitmap? {
+        if (source.isRecycled || size <= 0) return null
+        val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(output)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
+        canvas.drawBitmap(source, null, android.graphics.RectF(0f, 0f, size.toFloat(), size.toFloat()), paint)
+        return output
+    }
+
+    private fun bitmapDataUrl(bitmap: Bitmap): String {
+        val output = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+        return "data:image/png;base64,${Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)}"
     }
 
     private fun scopeFor(url: String): String {

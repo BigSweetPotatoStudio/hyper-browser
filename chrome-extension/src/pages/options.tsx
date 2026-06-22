@@ -94,7 +94,7 @@ function OptionsPage() {
             <input className="input" type="text" value={settings.deviceName} onChange={(event) => update("deviceName", event.currentTarget.value)} />
           </label>
         </div>
-        <p className="message">Remote files are stored under HyperBrowserSync/bookmarks.json, webapps.json, manifest.json, and devices/.</p>
+        <p className="message">Remote files are stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, manifest.json, and devices/.</p>
         <div className="actions">
           <button className="button" type="button" disabled={busy} onClick={save}>Save</button>
           <button className="button primary" type="button" disabled={busy || !settings.webDavUrl.trim()} onClick={sync}>

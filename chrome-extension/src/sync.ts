@@ -61,7 +61,14 @@ export async function saveRemoteWebApp(input: Partial<WebAppRecord> & { name: st
     const now = Date.now();
     const startUrl = input.startUrl.trim();
     if (!startUrl) throw new Error("Start URL is required.");
-    const existing = records[startUrl];
+    const previousKey = input.id
+      ? Object.keys(records).find((key) => records[key].id === input.id)
+      : undefined;
+    const existing = records[startUrl] || (previousKey ? records[previousKey] : undefined);
+    if (previousKey && previousKey !== startUrl) delete records[previousKey];
+    const hasIconDataUrl = Object.prototype.hasOwnProperty.call(input, "iconDataUrl");
+    const iconDataUrl = hasIconDataUrl ? input.iconDataUrl ?? null : existing?.iconDataUrl ?? null;
+    const iconSource = input.iconSource || existing?.iconSource || (iconDataUrl ? "custom" : "title");
     records[startUrl] = {
       id: input.id || existing?.id || crypto.randomUUID(),
       name: input.name.trim() || startUrl,
@@ -74,7 +81,8 @@ export async function saveRemoteWebApp(input: Partial<WebAppRecord> & { name: st
       updatedAt: now,
       deletedAt: null,
       sourceDeviceId: settings.deviceId,
-      iconDataUrl: input.iconDataUrl ?? existing?.iconDataUrl ?? null,
+      iconDataUrl,
+      iconSource,
     };
   });
 }

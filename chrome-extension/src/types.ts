@@ -38,6 +38,7 @@ export type WebAppRecord = {
   deletedAt: number | null;
   sourceDeviceId: string;
   iconDataUrl?: string | null;
+  iconSource?: "custom" | "site" | "title";
 };
 
 export type SyncMetadata = {
