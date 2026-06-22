@@ -69,6 +69,8 @@ import com.dadigua.hyperbrowser.gecko.GeckoRuntimeProvider
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.HyperCommand
 import com.dadigua.hyperbrowser.gecko.HyperRoute
+import com.dadigua.hyperbrowser.sync.WebDavAutoSyncCoordinator
+import com.dadigua.hyperbrowser.sync.WebDavRemoteCheckResult
 import com.dadigua.hyperbrowser.sync.WebDavSyncManager
 import com.dadigua.hyperbrowser.ui.FullscreenSystemBarsEffect
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
@@ -212,6 +214,7 @@ private fun BrowserScreen(
     val downloadHandler = remember { DownloadHandler(app, downloadStore) }
     val updateManager = remember { AppUpdateManager(app, UpdateSettingsStore(app)) }
     val scope = rememberCoroutineScope()
+    val webDavAutoSync = remember { WebDavAutoSyncCoordinator(profileStore, webDavSyncManager, scope) }
     val thumbnailRefreshRequests = remember { MutableSharedFlow<String>(extraBufferCapacity = 16) }
     var message by remember { mutableStateOf<String?>(null) }
     var checkedUpdate by remember { mutableStateOf<AvailableUpdate?>(null) }
@@ -258,6 +261,20 @@ private fun BrowserScreen(
 
     fun canClearDownload(entry: BrowserDownloadEntry): Boolean =
         entry.id != AppUpdateManager.APP_UPDATE_DOWNLOAD_ID
+
+    fun markWebDavDirty() {
+        webDavAutoSync.markDirty()
+    }
+
+    fun removeBookmarkAndSync(url: String) {
+        profileStore.removeBookmark(url)
+        markWebDavDirty()
+    }
+
+    fun editBookmarkAndSync(oldUrl: String, title: String, url: String) {
+        profileStore.editBookmark(oldUrl, title, url)
+        markWebDavDirty()
+    }
 
     fun retryDownload(entry: BrowserDownloadEntry) {
         scope.launch {
@@ -452,6 +469,15 @@ private fun BrowserScreen(
     fun webAppsItemsResponse(): JSONObject =
         okItems(app.webApps.observeAll().value.toWebAppsJsonString(app))
 
+    fun webDavRemoteCheckResponse(result: WebDavRemoteCheckResult): JSONObject =
+        okData(
+            JSONObject()
+                .put("changed", result.changed)
+                .put("synced", result.synced)
+                .put("updatedAt", result.updatedAt)
+                .put("syncResult", result.syncResult?.toJson() ?: JSONObject.NULL)
+        )
+
     var pendingWebAppIconPickResult by remember { mutableStateOf<GeckoResult<Any>?>(null) }
     var pendingWebAppIconPickKey by remember { mutableStateOf<String?>(null) }
     val webAppIconBridgeLauncher = rememberLauncherForActivityResult(
@@ -590,6 +616,24 @@ private fun BrowserScreen(
                     }
                 )
             }
+            "sync.webdav.checkRemote" -> {
+                val result = GeckoResult<Any>()
+                val pageLastSeenUpdatedAt = payload.optString("lastSeenUpdatedAt").toLongOrNull() ?: 0L
+                scope.launch {
+                    val response = runCatching {
+                        webDavAutoSync.checkRemoteChangesForPage(pageLastSeenUpdatedAt)
+                    }.fold(
+                        onSuccess = { remoteCheckResult -> webDavRemoteCheckResponse(remoteCheckResult) },
+                        onFailure = { throwable ->
+                            JSONObject()
+                                .put("ok", false)
+                                .put("error", throwable.message ?: context.getString(R.string.webdav_sync_failed))
+                        }
+                    )
+                    completeBridgeResult(result, response)
+                }
+                return result
+            }
             "backup.export" -> {
                 scope.launch { exportBackupLauncher.launch(defaultBackupFileName()) }
                 okData(JSONObject().put("message", context.getString(R.string.backup_choose_save_location)))
@@ -692,6 +736,7 @@ private fun BrowserScreen(
                         app.webApps.updateIcon(id, iconPath)
                     } ?: updatedDetails
                 } ?: return bridgeError(context.getString(R.string.webapp_update_failed))
+                markWebDavDirty()
                 okItems(app.webApps.observeAll().value.map { if (it.id == id) updated else it }.toWebAppsJsonString(app))
             }
             "apps.icon.choose" -> {
@@ -723,6 +768,7 @@ private fun BrowserScreen(
                         app.webApps.updateIcon(id, iconPath)
                     }
                 } ?: return bridgeError(context.getString(R.string.webapp_icon_failed))
+                markWebDavDirty()
                 okItems(app.webApps.observeAll().value.map { if (it.id == id) updated else it }.toWebAppsJsonString(app))
             }
             "apps.delete" -> {
@@ -1068,6 +1114,7 @@ private fun BrowserScreen(
                         )
                     }
                         .onSuccess {
+                            markWebDavDirty()
                             message = context.getString(
                                 R.string.webapp_installed_with_shortcut,
                                 it.webApp.name,
@@ -1102,6 +1149,7 @@ private fun BrowserScreen(
                         } ?: updatedDetails
                     }
                         .onSuccess { updated ->
+                            markWebDavDirty()
                             completeBridgeResult(pendingWebAppEditResult, webAppsItemsResponse())
                             pendingWebAppEditResult = null
                             message = context.getString(R.string.webapp_updated, updated.name)
@@ -1123,6 +1171,7 @@ private fun BrowserScreen(
     LaunchedEffect(Unit) {
         runCatching { app.extensions.refreshInstalledFromRuntime() }
         runCatching { app.webApps.refreshMissingIcons() }
+        webDavAutoSync.checkRemoteChanges()
     }
 
     fun showPanel(panel: BrowserPanel) {
@@ -1296,6 +1345,9 @@ private fun BrowserScreen(
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START || event == Lifecycle.Event.ON_RESUME) {
+                webDavAutoSync.checkRemoteChanges()
+            }
             if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
                 tabs.forEach { tab -> tab.flushSessionState() }
                 persistBrowserTabsForLifecycle()
@@ -1458,10 +1510,10 @@ private fun BrowserScreen(
                 controller.load(command.url)
             }
             is HyperCommand.Bookmarks.Remove -> {
-                profileStore.removeBookmark(command.url)
+                removeBookmarkAndSync(command.url)
             }
             is HyperCommand.Bookmarks.Edit -> {
-                profileStore.editBookmark(command.oldUrl, command.title, command.url)
+                editBookmarkAndSync(command.oldUrl, command.title, command.url)
             }
             is HyperCommand.History.Open -> {
                 tab.input = command.url
@@ -1502,6 +1554,7 @@ private fun BrowserScreen(
                     runCatching { app.webApps.delete(command.id) }
                         .onSuccess {
                             message = if (it) {
+                                markWebDavDirty()
                                 context.getString(R.string.webapp_deleted)
                             } else {
                                 context.getString(R.string.webapp_not_found)
@@ -1581,7 +1634,7 @@ private fun BrowserScreen(
                         closePanel()
                         message = null
                     },
-                    onRemove = profileStore::removeBookmark
+                    onRemove = ::removeBookmarkAndSync
                 )
             } else if (showHistory) {
                 HistoryPage(
@@ -1790,6 +1843,7 @@ private fun BrowserScreen(
                             if (currentPageUrl.isBlank() || currentPageIsInternal) return@toggleBookmark
                             optimisticBookmarkState = currentPageUrl to !currentPageBookmarked
                             profileStore.toggleBookmark(currentPageUrl, pageState.title, currentIconPath)
+                            markWebDavDirty()
                         },
                         onShowBookmarks = {
                             tab.input = GeckoSessionController.BOOKMARKS_URL
@@ -1819,6 +1873,7 @@ private fun BrowserScreen(
                                     runCatching { app.webApps.delete(webApp.id) }
                                         .onSuccess {
                                             message = if (it) {
+                                                markWebDavDirty()
                                                 context.getString(R.string.webapp_uninstalled, webApp.name)
                                             } else {
                                                 context.getString(R.string.webapp_not_found)

@@ -12,6 +12,11 @@ export type LauncherLayoutSyncSettings = {
   clientName: string;
 };
 
+export type RemoteSyncManifest = {
+  updatedAt: number;
+  lastWriter: string;
+};
+
 type RemoteLauncherDocument = {
   type: "hyper-browser-launcher";
   schemaVersion: number;
@@ -125,6 +130,18 @@ export async function syncLauncherLayout(
   }
 
   throw lastConflict instanceof Error ? lastConflict : new Error("Unable to sync launcher layout.");
+}
+
+export async function readRemoteSyncManifest(settings: LauncherLayoutSyncSettings): Promise<RemoteSyncManifest | null> {
+  const client = new LauncherWebDavClient(settings);
+  const remote = await client.getJson<Partial<RemoteSyncManifest>>("manifest.json");
+  if (!remote) return null;
+  const updatedAt = validTimestamp(remote.data.updatedAt);
+  if (!updatedAt) return null;
+  return {
+    updatedAt,
+    lastWriter: typeof remote.data.lastWriter === "string" ? remote.data.lastWriter : "",
+  };
 }
 
 function launcherDocument(layout: LauncherLayout, settings: LauncherLayoutSyncSettings, updatedAt: number): RemoteLauncherDocument {

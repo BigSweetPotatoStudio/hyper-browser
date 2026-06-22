@@ -18,6 +18,7 @@ const internalPageMessageTypes = new Set([
   "settings.openBatteryOptimization",
   "sync.webdav.update",
   "sync.webdav.run",
+  "sync.webdav.checkRemote",
   "backup.export",
   "backup.import",
   "update.check",

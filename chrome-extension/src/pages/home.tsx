@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
 import { syncLauncherLayout } from "@hyper-launcher/webdav-layout";
@@ -13,6 +13,7 @@ const systemEntries: LauncherSystemEntry[] = [
   { id: "system:history", kind: "system", title: "History", mark: "H", color: "#fbbc04", action: "history" },
   { id: "system:extensions", kind: "system", title: "Extensions", mark: "Ex", color: "#ea4335", action: "extensions" },
 ];
+const REMOTE_POLL_MS = 30000;
 
 function ChromeHomePage() {
   const launcherVariant = new URLSearchParams(window.location.search).get("variant") === "mobile" ? "mobile" : "desktop";
@@ -21,6 +22,8 @@ function ChromeHomePage() {
   const [syncState, setSyncState] = useState<LauncherSyncState>("idle");
   const [syncMessage, setSyncMessage] = useState("");
   const [layoutRevision, setLayoutRevision] = useState(0);
+  const remoteCheckRunning = useRef(false);
+  const syncRunning = useRef(false);
 
   useEffect(() => {
     loadSettings()
@@ -55,7 +58,9 @@ function ChromeHomePage() {
     updateAppIcon: (app, iconDataUrl) => sendCommand<WebAppRecord[]>("webapps.save", { ...app, iconDataUrl }),
   }), []);
 
-  async function runSync() {
+  const runSync = useCallback(async (options: { refreshLauncher?: boolean } = {}) => {
+    if (syncRunning.current) return;
+    syncRunning.current = true;
     setSyncState("syncing");
     setSyncMessage("Syncing...");
     try {
@@ -79,7 +84,7 @@ function ChromeHomePage() {
       }, {
         deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
       });
-      if (layoutResult.direction === "pull") setLayoutRevision((current) => current + 1);
+      if (layoutResult.direction === "pull" || options.refreshLauncher) setLayoutRevision((current) => current + 1);
       setSyncState("success");
       setSyncMessage(syncResultMessage(result));
     } catch (syncError) {
@@ -87,15 +92,57 @@ function ChromeHomePage() {
       setSyncState(isWebDavConfigError(syncError) ? "needs-settings" : "error");
       setSyncMessage(text);
       if (isWebDavConfigError(syncError)) setSettingsOpen(true);
+    } finally {
+      syncRunning.current = false;
     }
-  }
+  }, []);
+
+  const checkRemoteChanges = useCallback(async () => {
+    if (remoteCheckRunning.current || document.visibilityState !== "visible") return;
+    remoteCheckRunning.current = true;
+    try {
+      if (syncRunning.current) return;
+      const result = await sendCommand<{ changed: boolean; synced: boolean; updatedAt: number }>("remote.check");
+      if (result.changed || result.synced) setLayoutRevision((current) => current + 1);
+    } catch (error) {
+      console.warn("Remote sync check failed.", error);
+    } finally {
+      remoteCheckRunning.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    checkRemoteChanges();
+    const interval = window.setInterval(() => {
+      checkRemoteChanges();
+    }, REMOTE_POLL_MS);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") checkRemoteChanges();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [checkRemoteChanges]);
+
+  useEffect(() => {
+    const onMessage = (message: { type?: string }) => {
+      if (message?.type === "remote.synced") setLayoutRevision((current) => current + 1);
+    };
+    chrome.runtime.onMessage.addListener(onMessage);
+    return () => chrome.runtime.onMessage.removeListener(onMessage);
+  }, []);
 
   return (
     <>
       <LauncherPage
-        key={layoutRevision}
         platform={platform}
         storage={launcherLayoutStorage}
+        refreshToken={layoutRevision}
+        onLayoutChanged={() => {
+          sendCommand("launcher.syncSoon").catch(() => undefined);
+        }}
         topActions={(
           <LauncherSyncActions
             labels={{
@@ -109,7 +156,7 @@ function ChromeHomePage() {
             settingsConfigured={settingsConfigured}
             state={syncState}
             onOpenSettings={() => setSettingsOpen(true)}
-            onSync={runSync}
+            onSync={() => runSync()}
           />
         )}
         variant={launcherVariant}

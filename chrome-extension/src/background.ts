@@ -1,13 +1,42 @@
 import { appendWebAppToLauncher, syncLauncherLayoutNow } from "./launcher-layout";
-import { loadSettings } from "./storage";
-import { addBookmarkToSyncFolder, deleteRemoteWebApp, loadRemoteWebApps, saveRemoteWebApp, syncNow } from "./sync";
+import { loadRemoteSyncState, loadSettings, saveRemoteSyncState } from "./storage";
+import { addBookmarkToSyncFolder, deleteRemoteWebApp, loadRemoteWebApps, readRemoteSyncManifest, saveRemoteWebApp, syncNow } from "./sync";
 
 const MAX_CAPTURED_ICON_BYTES = 1024 * 1024;
 const CAPTURED_ICON_SIZE = 128;
+const AUTO_SYNC_DEBOUNCE_MS = 1800;
+const REMOTE_SYNC_ALARM = "hyper-browser-remote-sync";
+const REMOTE_SYNC_ALARM_MINUTES = 1;
+
+let launcherSyncTimer: ReturnType<typeof setTimeout> | null = null;
+let launcherSyncRunning = false;
+let launcherSyncPending = false;
+let bookmarkSyncTimer: ReturnType<typeof setTimeout> | null = null;
+let bookmarkSyncRunning = false;
+let bookmarkSyncPending = false;
+let bookmarkEventMuteDepth = 0;
+let remoteCheckRunning = false;
 
 chrome.runtime.onInstalled.addListener(() => {
   loadSettings().catch(console.error);
+  ensureRemoteSyncAlarm();
 });
+
+chrome.runtime.onStartup.addListener(() => {
+  ensureRemoteSyncAlarm();
+  checkRemoteChanges({ notifyPages: true }).catch(console.error);
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === REMOTE_SYNC_ALARM) {
+    checkRemoteChanges({ notifyPages: true }).catch(console.error);
+  }
+});
+
+chrome.bookmarks.onCreated.addListener(() => scheduleBookmarkAutoSync());
+chrome.bookmarks.onChanged.addListener(() => scheduleBookmarkAutoSync());
+chrome.bookmarks.onMoved.addListener(() => scheduleBookmarkAutoSync());
+chrome.bookmarks.onRemoved.addListener(() => scheduleBookmarkAutoSync());
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || typeof message.type !== "string") return false;
@@ -22,7 +51,12 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     case "settings.get":
       return loadSettings();
     case "sync.run":
-      return syncNow();
+      return runBookmarkSyncNow();
+    case "launcher.syncSoon":
+      scheduleLauncherAutoSync();
+      return null;
+    case "remote.check":
+      return checkRemoteChanges({ notifyPages: false });
     case "current.addWebApp": {
       const page = await getCurrentHttpPage();
       const iconDataUrl = await capturePageIcon(await getPageIconCandidates(page)).catch(() => null);
@@ -41,7 +75,7 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     }
     case "current.addBookmark": {
       const page = await getCurrentHttpPage();
-      return addBookmarkToSyncFolder(page);
+      return withBookmarkEventsMuted(() => addBookmarkToSyncFolder(page));
     }
     case "webapps.list":
       return loadRemoteWebApps();
@@ -61,6 +95,116 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     default:
       throw new Error("Unknown command.");
   }
+}
+
+function ensureRemoteSyncAlarm() {
+  chrome.alarms.create(REMOTE_SYNC_ALARM, {
+    delayInMinutes: REMOTE_SYNC_ALARM_MINUTES,
+    periodInMinutes: REMOTE_SYNC_ALARM_MINUTES,
+  });
+}
+
+function scheduleLauncherAutoSync() {
+  if (launcherSyncTimer) clearTimeout(launcherSyncTimer);
+  launcherSyncTimer = setTimeout(() => {
+    launcherSyncTimer = null;
+    runLauncherAutoSync().catch(console.error);
+  }, AUTO_SYNC_DEBOUNCE_MS);
+}
+
+async function runLauncherAutoSync(): Promise<void> {
+  if (launcherSyncRunning) {
+    launcherSyncPending = true;
+    return;
+  }
+  launcherSyncRunning = true;
+  try {
+    do {
+      launcherSyncPending = false;
+      const settings = await loadSettings();
+      if (!settings.webDavUrl.trim()) return;
+      await syncLauncherLayoutNow();
+    } while (launcherSyncPending);
+  } finally {
+    launcherSyncRunning = false;
+  }
+}
+
+function scheduleBookmarkAutoSync() {
+  if (bookmarkEventMuteDepth > 0) return;
+  if (bookmarkSyncTimer) clearTimeout(bookmarkSyncTimer);
+  bookmarkSyncTimer = setTimeout(() => {
+    bookmarkSyncTimer = null;
+    runBookmarkAutoSync().catch(console.error);
+  }, AUTO_SYNC_DEBOUNCE_MS);
+}
+
+async function runBookmarkAutoSync(): Promise<void> {
+  if (bookmarkSyncRunning) {
+    bookmarkSyncPending = true;
+    return;
+  }
+  bookmarkSyncRunning = true;
+  try {
+    do {
+      bookmarkSyncPending = false;
+      const settings = await loadSettings();
+      if (!settings.webDavUrl.trim()) return;
+      await withBookmarkEventsMuted(() => syncNow());
+    } while (bookmarkSyncPending);
+  } finally {
+    bookmarkSyncRunning = false;
+  }
+}
+
+async function runBookmarkSyncNow() {
+  if (bookmarkSyncTimer) {
+    clearTimeout(bookmarkSyncTimer);
+    bookmarkSyncTimer = null;
+  }
+  return withBookmarkEventsMuted(() => syncNow());
+}
+
+async function withBookmarkEventsMuted<T>(operation: () => Promise<T>): Promise<T> {
+  bookmarkEventMuteDepth += 1;
+  try {
+    return await operation();
+  } finally {
+    bookmarkEventMuteDepth = Math.max(0, bookmarkEventMuteDepth - 1);
+  }
+}
+
+async function checkRemoteChanges(options: { notifyPages: boolean } = { notifyPages: false }): Promise<{ changed: boolean; synced: boolean; updatedAt: number }> {
+  if (remoteCheckRunning) return { changed: false, synced: false, updatedAt: 0 };
+  remoteCheckRunning = true;
+  try {
+    const settings = await loadSettings();
+    if (!settings.webDavUrl.trim()) return { changed: false, synced: false, updatedAt: 0 };
+    const manifest = await readRemoteSyncManifest(settings);
+    if (!manifest) return { changed: false, synced: false, updatedAt: 0 };
+    const state = await loadRemoteSyncState();
+    if (manifest.updatedAt <= state.manifestUpdatedAt) {
+      return { changed: false, synced: false, updatedAt: manifest.updatedAt };
+    }
+    if (manifest.lastWriter === settings.deviceId) {
+      await saveRemoteSyncState({ manifestUpdatedAt: manifest.updatedAt });
+      return { changed: false, synced: false, updatedAt: manifest.updatedAt };
+    }
+
+    await runBookmarkSyncNow();
+    await syncLauncherLayoutNow();
+    await saveRemoteSyncState({ manifestUpdatedAt: manifest.updatedAt });
+    if (options.notifyPages) notifyRemoteSynced(manifest.updatedAt);
+    return { changed: true, synced: true, updatedAt: manifest.updatedAt };
+  } finally {
+    remoteCheckRunning = false;
+  }
+}
+
+function notifyRemoteSynced(updatedAt: number): void {
+  chrome.runtime.sendMessage({ type: "remote.synced", updatedAt }, () => {
+    void chrome.runtime.lastError;
+  });
 }
 
 type CurrentHttpPage = {

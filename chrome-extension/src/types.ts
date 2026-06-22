@@ -54,3 +54,8 @@ export type SyncResult = {
   folderTitle: string;
   attemptCount: number;
 };
+
+export type RemoteSyncManifest = {
+  updatedAt: number;
+  lastWriter: string;
+};

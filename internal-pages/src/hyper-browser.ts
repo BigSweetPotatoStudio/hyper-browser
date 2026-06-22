@@ -83,6 +83,13 @@ type WebDavSyncResult = {
   settings?: BrowserSettings;
 };
 
+type WebDavRemoteCheckResult = {
+  changed: boolean;
+  synced: boolean;
+  updatedAt: number;
+  syncResult?: WebDavSyncResult;
+};
+
 type UpdateAsset = {
   abi: string;
   url: string;
@@ -143,6 +150,7 @@ type HyperBridgeMessageType =
   | "settings.openBatteryOptimization"
   | "sync.webdav.update"
   | "sync.webdav.run"
+  | "sync.webdav.checkRemote"
   | "backup.export"
   | "backup.import"
   | "update.check"
@@ -200,6 +208,7 @@ type HyperBrowserApi = {
   openBatteryOptimizationSettings(): Promise<BatteryOptimizationState>;
   updateWebDavSyncSettings(settings: WebDavSyncSettings): Promise<BrowserSettings>;
   runWebDavSync(): Promise<WebDavSyncResult>;
+  checkWebDavRemoteChanges(lastSeenUpdatedAt?: number): Promise<WebDavRemoteCheckResult>;
   exportBackup(): Promise<BackupActionResult>;
   importBackup(): Promise<BackupActionResult>;
   checkUpdate(ignoreSkipped?: boolean): Promise<UpdateCheckResult>;
@@ -351,6 +360,10 @@ window.hyperBrowser = {
   runWebDavSync() {
     return send("sync.webdav.run").then((response) => response.data as WebDavSyncResult);
   },
+  checkWebDavRemoteChanges(lastSeenUpdatedAt = 0) {
+    return send("sync.webdav.checkRemote", { lastSeenUpdatedAt: String(Math.max(0, lastSeenUpdatedAt || 0)) })
+      .then((response) => response.data as WebDavRemoteCheckResult);
+  },
   exportBackup() {
     return send("backup.export").then((response) => response.data as BackupActionResult);
   },
@@ -424,4 +437,4 @@ window.hyperBrowser = {
   }
 };
 
-export type { AvailableUpdate, BackupActionResult, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem, WebDavSyncResult, WebDavSyncSettings };
+export type { AvailableUpdate, BackupActionResult, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem, WebDavRemoteCheckResult, WebDavSyncResult, WebDavSyncSettings };

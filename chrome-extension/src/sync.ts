@@ -1,5 +1,5 @@
 import { loadMetadata, loadSettings, saveMetadata, saveSettings } from "./storage";
-import type { BookmarkRecord, SyncDocument, SyncMetadata, SyncResult, SyncSettings, WebAppRecord } from "./types";
+import type { BookmarkRecord, RemoteSyncManifest, SyncDocument, SyncMetadata, SyncResult, SyncSettings, WebAppRecord } from "./types";
 import { WebDavClient, WebDavConflictError } from "./webdav";
 
 const BOOKMARKS_FILE = "bookmarks.json";
@@ -16,21 +16,26 @@ export async function syncNow(): Promise<SyncResult> {
   for (let attempt = 1; attempt <= MAX_SYNC_ATTEMPTS; attempt += 1) {
     const metadata = await loadMetadata();
     const remote = await client.getJson<SyncDocument<BookmarkRecord>>(BOOKMARKS_FILE);
+    const remoteRecords = remote?.data.items || [];
     const localRecords = await collectLocalBookmarkRecords(settings, metadata);
     const merged = mergeRecords(
-      indexBookmarks(remote?.data.items || []),
+      indexBookmarks(remoteRecords),
       indexBookmarks(localRecords),
     );
+    const mergedItems = Object.values(merged);
+    const remoteChanged = !sameBookmarkRecords(remoteRecords, mergedItems);
 
     try {
-      await client.putJson(BOOKMARKS_FILE, bookmarksDocument(Object.values(merged)), remote?.etag);
-      await client.putManifest();
+      if (remoteChanged) {
+        await client.putJson(BOOKMARKS_FILE, bookmarksDocument(mergedItems), remote?.etag);
+        await client.putManifest();
+      }
       await client.putDeviceState();
-      const applied = await applyBookmarkRecords(settings, Object.values(merged));
+      const applied = await applyBookmarkRecords(settings, mergedItems);
       await saveMetadata({ bookmarks: merged });
       return {
-        bookmarkCount: Object.values(merged).filter((item) => !item.deletedAt).length,
-        deletedBookmarkCount: Object.values(merged).filter((item) => !!item.deletedAt).length,
+        bookmarkCount: mergedItems.filter((item) => !item.deletedAt).length,
+        deletedBookmarkCount: mergedItems.filter((item) => !!item.deletedAt).length,
         importedBookmarkCount: applied.imported,
         removedBookmarkCount: applied.removed,
         syncedAt: Date.now(),
@@ -51,9 +56,22 @@ export async function syncNow(): Promise<SyncResult> {
 export async function loadRemoteWebApps(): Promise<WebAppRecord[]> {
   const settings = await loadSettings();
   const client = new WebDavClient(settings);
-  await client.ensureCollections();
   const remote = await client.getJson<SyncDocument<WebAppRecord>>(WEBAPPS_FILE);
   return (remote?.data.items || []).filter((item) => !item.deletedAt);
+}
+
+export async function readRemoteSyncManifest(settings?: SyncSettings): Promise<RemoteSyncManifest | null> {
+  settings = settings || await loadSettings();
+  if (!settings.webDavUrl.trim()) return null;
+  const client = new WebDavClient(settings);
+  const remote = await client.getJson<Partial<RemoteSyncManifest>>("manifest.json");
+  if (!remote) return null;
+  const updatedAt = normalizeTimestamp(remote.data.updatedAt);
+  if (!updatedAt) return null;
+  return {
+    updatedAt,
+    lastWriter: typeof remote.data.lastWriter === "string" ? remote.data.lastWriter : "",
+  };
 }
 
 export async function saveRemoteWebApp(input: Partial<WebAppRecord> & { name: string; startUrl: string }): Promise<WebAppRecord[]> {
@@ -242,6 +260,26 @@ function mergeRecords(remote: Record<string, BookmarkRecord>, local: Record<stri
   return result;
 }
 
+function sameBookmarkRecords(left: BookmarkRecord[], right: BookmarkRecord[]): boolean {
+  return recordListSignature(left, bookmarkRecordSignature) === recordListSignature(right, bookmarkRecordSignature);
+}
+
+function recordListSignature<T>(items: T[], signature: (item: T) => unknown): string {
+  return JSON.stringify(items.map(signature).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
+}
+
+function bookmarkRecordSignature(item: BookmarkRecord) {
+  return {
+    url: item.url,
+    title: item.title,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    deletedAt: item.deletedAt,
+    sourceDeviceId: item.sourceDeviceId,
+    iconDataUrl: item.iconDataUrl || null,
+  };
+}
+
 function chooseLatest<T extends { updatedAt: number; deletedAt: number | null }>(left?: T, right?: T): T {
   if (!left && !right) throw new Error("Missing records.");
   if (!left) return right!;
@@ -249,6 +287,10 @@ function chooseLatest<T extends { updatedAt: number; deletedAt: number | null }>
   if (right.updatedAt > left.updatedAt) return right;
   if (left.updatedAt > right.updatedAt) return left;
   return right.deletedAt && !left.deletedAt ? right : left;
+}
+
+function normalizeTimestamp(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function bookmarksDocument(items: BookmarkRecord[]): SyncDocument<BookmarkRecord> {

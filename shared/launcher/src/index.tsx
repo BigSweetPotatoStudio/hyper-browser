@@ -267,6 +267,8 @@ export type LauncherPageProps = {
   className?: string;
   variant?: "desktop" | "mobile";
   topActions?: React.ReactNode;
+  refreshToken?: unknown;
+  onLayoutChanged?: (layout: LauncherLayout) => void;
 };
 
 type MenuState = {
@@ -313,7 +315,7 @@ type ResolvedDropTarget = {
   slotDropId?: string;
 };
 
-export function LauncherPage({ platform, storage, labels: labelOverrides, className = "", variant = "desktop", topActions }: LauncherPageProps) {
+export function LauncherPage({ platform, storage, labels: labelOverrides, className = "", variant = "desktop", topActions, refreshToken, onLayoutChanged }: LauncherPageProps) {
   const labels = useMemo<LauncherLabels>(() => ({ ...defaultLabels, ...labelOverrides }), [labelOverrides]);
   const gridMetrics = useDesktopGridMetrics(variant);
   const [apps, setApps] = useState<LauncherApp[]>([]);
@@ -360,7 +362,7 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
     return () => {
       cancelled = true;
     };
-  }, [deprecatedEntryIds, gridMetrics, labels.folder, labels.loadAppsError, labels.loadLayoutError, platform, storage]);
+  }, [deprecatedEntryIds, gridMetrics, labels.folder, labels.loadAppsError, labels.loadLayoutError, platform, refreshToken, storage]);
 
   useEffect(() => {
     if (loading) return;
@@ -450,7 +452,11 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
   const activeEntry = activeId ? resolveEntry(activeId) : undefined;
 
   function commitLayout(updater: (current: LauncherLayout) => LauncherLayout) {
-    setLayout((current) => ({ ...pruneEmptyFolders(removeDeprecatedEntryIds(updater(current), deprecatedEntryIds)), version: LAYOUT_VERSION, gridColumns: gridMetrics.columns, updatedAt: Date.now() }));
+    setLayout((current) => {
+      const next = { ...pruneEmptyFolders(removeDeprecatedEntryIds(updater(current), deprecatedEntryIds)), version: LAYOUT_VERSION, gridColumns: gridMetrics.columns, updatedAt: Date.now() };
+      onLayoutChanged?.(next);
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -1836,13 +1842,18 @@ function useDesktopGridMetrics(variant: LauncherPageProps["variant"]): DesktopGr
   const [metrics, setMetrics] = useState<DesktopGridMetrics>(() => calculateDesktopGridMetrics(variant));
   useEffect(() => {
     function update() {
-      setMetrics(calculateDesktopGridMetrics(variant));
+      const next = calculateDesktopGridMetrics(variant);
+      setMetrics((current) => sameDesktopGridMetrics(current, next) ? current : next);
     }
     update();
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
   }, [variant]);
   return metrics;
+}
+
+function sameDesktopGridMetrics(left: DesktopGridMetrics, right: DesktopGridMetrics): boolean {
+  return left.columns === right.columns && left.rows === right.rows && left.capacity === right.capacity;
 }
 
 function calculateDesktopGridMetrics(variant: LauncherPageProps["variant"]): DesktopGridMetrics {

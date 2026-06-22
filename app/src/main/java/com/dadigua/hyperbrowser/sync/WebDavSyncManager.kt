@@ -42,21 +42,31 @@ class WebDavSyncManager(
         repeat(MAX_SYNC_ATTEMPTS) { attempt ->
             val remoteBookmarks = client.getJson(BOOKMARKS_FILE)
             val remoteWebApps = client.getJson(WEBAPPS_FILE)
+            val remoteBookmarkRecords = parseBookmarkRecords(remoteBookmarks?.body)
+            val remoteWebAppRecords = parseWebAppRecords(remoteWebApps?.body)
             val localBookmarks = localBookmarkRecords(known.bookmarks, config.deviceId, now)
             val localWebApps = localWebAppRecords(known.webApps, config.deviceId, now)
             val mergedBookmarks = mergeByKey(
-                parseBookmarkRecords(remoteBookmarks?.body).associateBy { it.url },
+                remoteBookmarkRecords.associateBy { it.url },
                 localBookmarks.associateBy { it.url }
             )
             val mergedWebApps = mergeByKey(
-                parseWebAppRecords(remoteWebApps?.body).associateBy { it.startUrl },
+                remoteWebAppRecords.associateBy { it.startUrl },
                 localWebApps.associateBy { it.startUrl }
             )
+            val bookmarksChanged = !sameBookmarkRecords(remoteBookmarkRecords, mergedBookmarks.values)
+            val webAppsChanged = !sameWebAppRecords(remoteWebAppRecords, mergedWebApps.values)
 
             try {
-                client.putJson(BOOKMARKS_FILE, bookmarksDocument(mergedBookmarks.values).toString(2), remoteBookmarks?.etag)
-                client.putJson(WEBAPPS_FILE, webAppsDocument(mergedWebApps.values).toString(2), remoteWebApps?.etag)
-                client.putJson(MANIFEST_FILE, manifestDocument(config, now).toString(2), null)
+                if (bookmarksChanged) {
+                    client.putJson(BOOKMARKS_FILE, bookmarksDocument(mergedBookmarks.values).toString(2), remoteBookmarks?.etag)
+                }
+                if (webAppsChanged) {
+                    client.putJson(WEBAPPS_FILE, webAppsDocument(mergedWebApps.values).toString(2), remoteWebApps?.etag)
+                }
+                if (bookmarksChanged || webAppsChanged) {
+                    client.putJson(MANIFEST_FILE, manifestDocument(config, now).toString(2), null)
+                }
                 client.putJson("devices/android-${safeSegment(config.deviceId)}.json", deviceDocument(config, now).toString(2), null)
 
                 val appliedBookmarks = applyBookmarks(mergedBookmarks.values)
@@ -83,6 +93,12 @@ class WebDavSyncManager(
             }
         }
         throw lastConflict ?: IOException("WebDAV sync failed.")
+    }
+
+    suspend fun readManifest(settings: BrowserSettings): WebDavSyncManifest? = withContext(Dispatchers.IO) {
+        val config = WebDavSyncConfig.from(settings)
+        val client = WebDavClient(config)
+        parseManifest(client.getJson(MANIFEST_FILE)?.body)
     }
 
     private fun localBookmarkRecords(
@@ -248,6 +264,22 @@ class WebDavSyncManager(
             else -> null
         }
 
+    private fun parseManifest(body: String?): WebDavSyncManifest? {
+        if (body.isNullOrBlank()) return null
+        return runCatching {
+            val item = JSONObject(body)
+            val updatedAt = item.optLong("updatedAt", 0L)
+            if (updatedAt <= 0L) {
+                null
+            } else {
+                WebDavSyncManifest(
+                    updatedAt = updatedAt,
+                    lastWriter = item.optString("lastWriter")
+                )
+            }
+        }.getOrNull()
+    }
+
     private companion object {
         const val MANIFEST_FILE = "manifest.json"
         const val BOOKMARKS_FILE = "bookmarks.json"
@@ -255,6 +287,11 @@ class WebDavSyncManager(
         const val MAX_SYNC_ATTEMPTS = 3
     }
 }
+
+data class WebDavSyncManifest(
+    val updatedAt: Long,
+    val lastWriter: String
+)
 
 data class WebDavSyncResult(
     val bookmarkCount: Int,
@@ -470,6 +507,18 @@ private fun <T : SyncRecord> mergeByKey(remote: Map<String, T>, local: Map<Strin
         merged?.let { key to it }
     }.toMap()
 }
+
+private fun sameBookmarkRecords(
+    left: Collection<SyncBookmarkRecord>,
+    right: Collection<SyncBookmarkRecord>
+): Boolean =
+    left.associateBy { it.url } == right.associateBy { it.url }
+
+private fun sameWebAppRecords(
+    left: Collection<SyncWebAppRecord>,
+    right: Collection<SyncWebAppRecord>
+): Boolean =
+    left.associateBy { it.startUrl } == right.associateBy { it.startUrl }
 
 private fun parseBookmarkRecords(raw: String?): List<SyncBookmarkRecord> {
     if (raw.isNullOrBlank()) return emptyList()

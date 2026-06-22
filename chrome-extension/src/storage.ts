@@ -39,6 +39,20 @@ export async function saveMetadata(metadata: SyncMetadata): Promise<void> {
   await storageSet({ metadata });
 }
 
+export async function loadRemoteSyncState(): Promise<{ manifestUpdatedAt: number }> {
+  const result = await storageGet<{ remoteSyncState?: { manifestUpdatedAt?: number } }>("remoteSyncState");
+  const manifestUpdatedAt = result.remoteSyncState?.manifestUpdatedAt;
+  return {
+    manifestUpdatedAt: typeof manifestUpdatedAt === "number" && Number.isFinite(manifestUpdatedAt) && manifestUpdatedAt > 0
+      ? manifestUpdatedAt
+      : 0,
+  };
+}
+
+export async function saveRemoteSyncState(state: { manifestUpdatedAt: number }): Promise<void> {
+  await storageSet({ remoteSyncState: state });
+}
+
 export function storageGet<T>(keys: string | string[] | Record<string, unknown> | null): Promise<T> {
   return new Promise((resolve) => chrome.storage.local.get(keys, (items) => resolve(items as T)));
 }
