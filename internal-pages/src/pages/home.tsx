@@ -303,6 +303,7 @@ function HomePage() {
     event.preventDefault();
     clearGesture();
     setDraggingId(null);
+    if (editMode) return;
     setMenu({ itemId, folderId, x: event.clientX, y: event.clientY });
   }
 

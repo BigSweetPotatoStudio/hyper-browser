@@ -176,6 +176,7 @@ function DesktopPage() {
   function openContextMenu(event: React.MouseEvent<HTMLElement>, itemId: string, folderId?: string) {
     event.preventDefault();
     stopLongPress();
+    if (editMode) return;
     setMenu({ itemId, folderId, x: event.clientX, y: event.clientY });
   }
 
