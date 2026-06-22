@@ -58,12 +58,17 @@ function OptionsPage() {
     <main className="shell">
       <header className="header">
         <div>
-          <h1 className="title">Hyper Browser Sync</h1>
+          <h1 className="title">Hyper Browser Companion</h1>
           <p className="subtitle">Sync one Chrome bookmark folder with Hyper Browser through WebDAV.</p>
         </div>
-        <button className="button" type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("webapps.html") })}>
-          WebApps
-        </button>
+        <div className="actions compact">
+          <button className="button" type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("home.html") })}>
+            Home
+          </button>
+          <button className="button" type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("webapps.html") })}>
+            WebApps
+          </button>
+        </div>
       </header>
 
       <section className="panel">

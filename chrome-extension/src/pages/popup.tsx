@@ -21,9 +21,10 @@ function Popup() {
 
   return (
     <main className="popup">
-      <h1 className="title">Hyper Browser Sync</h1>
-      <p className="subtitle">Chrome folder to WebDAV</p>
+      <h1 className="title">Hyper Browser Companion</h1>
+      <p className="subtitle">Desktop launcher and WebDAV tools</p>
       <div className="actions">
+        <button className="button primary" type="button" onClick={() => sendCommand("open.home")}>Home</button>
         <button className="button primary" type="button" disabled={busy} onClick={sync}>
           {busy ? "Syncing..." : "Sync now"}
         </button>

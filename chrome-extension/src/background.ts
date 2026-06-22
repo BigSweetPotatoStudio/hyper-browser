@@ -28,6 +28,9 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     case "open.options":
       await chrome.runtime.openOptionsPage();
       return null;
+    case "open.home":
+      await chrome.tabs.create({ url: chrome.runtime.getURL("home.html") });
+      return null;
     case "open.webapps":
       await chrome.tabs.create({ url: chrome.runtime.getURL("webapps.html") });
       return null;
