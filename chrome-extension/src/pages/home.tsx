@@ -5,6 +5,7 @@ import {
   DndContext,
   DragEndEvent,
   DragOverlay,
+  DragOverEvent,
   DragStartEvent,
   pointerWithin,
   PointerSensor,
@@ -26,11 +27,14 @@ import type { SyncResult, SyncSettings, WebAppRecord } from "../types";
 import { sendCommand } from "./bridge";
 
 const LAYOUT_STORAGE_KEY = "launcherLayout";
+const LAYOUT_VERSION = 2;
 const LONG_PRESS_MS = 540;
 const DESKTOP_DROP_ID = "drop:desktop";
 const DOCK_DROP_ID = "drop:dock";
 const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"] as const;
 const DROP_ZONE_IDS = new Set<string>([DESKTOP_DROP_ID, DOCK_DROP_ID]);
+const DESKTOP_CELL_WIDTH = 116;
+const DESKTOP_CELL_HEIGHT = 125;
 
 type SystemAction = "chrome" | "bookmarks" | "history" | "extensions";
 
@@ -69,9 +73,15 @@ type FolderEntry = {
 type LauncherEntry = SystemEntry | AppEntry | FolderEntry;
 
 type LauncherLayout = {
-  order: string[];
+  version: typeof LAYOUT_VERSION;
+  pages: string[][];
   dock: string[];
   folders: FolderLayout[];
+};
+
+type StoredLauncherLayout = Partial<LauncherLayout> & {
+  order?: string[];
+  version?: number;
 };
 
 type LauncherContainer = "desktop" | "dock" | "folder";
@@ -86,9 +96,22 @@ type MenuState = {
 
 type DropPlacement = "before" | "inside" | "after";
 
+type DesktopGridMetrics = {
+  columns: number;
+  rows: number;
+  capacity: number;
+};
+
+type DropPreview = {
+  id: string;
+  placement: DropPlacement;
+};
+
+type SyncState = "idle" | "syncing" | "success" | "error" | "needs-settings";
+
 function DesktopPage() {
   const [apps, setApps] = useState<WebAppRecord[]>([]);
-  const [layout, setLayout] = useState<LauncherLayout>({ order: [], dock: [...DEFAULT_DOCK_ENTRY_IDS], folders: [] });
+  const [layout, setLayout] = useState<LauncherLayout>({ version: LAYOUT_VERSION, pages: [[]], dock: [...DEFAULT_DOCK_ENTRY_IDS], folders: [] });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -96,8 +119,14 @@ function DesktopPage() {
   const [openFolderId, setOpenFolderId] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [dropPreview, setDropPreview] = useState<DropPreview | null>(null);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [settingsConfigured, setSettingsConfigured] = useState(false);
+  const [syncState, setSyncState] = useState<SyncState>("idle");
+  const [syncMessage, setSyncMessage] = useState("");
   const longPressTimer = useRef<number | null>(null);
   const suppressClickForId = useRef<string | null>(null);
+  const gridMetrics = useDesktopGridMetrics();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   useEffect(() => {
@@ -122,6 +151,12 @@ function DesktopPage() {
       } finally {
         if (!cancelled) setLoading(false);
       }
+
+      loadSettings()
+        .then((settings) => {
+          if (!cancelled) setSettingsConfigured(!!settings.webDavUrl.trim());
+        })
+        .catch(() => undefined);
     }
     loadDesktop();
     return () => {
@@ -178,22 +213,38 @@ function DesktopPage() {
     .map((id) => folderEntries.get(id) || availableEntries.get(id))
     .filter((item): item is LauncherEntry => !!item), [availableEntries, dockIds, folderEntries]);
 
-  const desktopEntries = useMemo(() => {
+  const visibleDesktopIds = useMemo(() => {
     const allIds = [...availableEntries.keys(), ...folderEntries.keys()];
-    const visibleIds = allIds.filter((id) => !containedIds.has(id) && !dockIds.includes(id));
-    const ordered = [
-      ...layout.order.filter((id) => visibleIds.includes(id)),
-      ...visibleIds.filter((id) => !layout.order.includes(id)),
-    ];
-    return ordered
-      .map((id) => folderEntries.get(id) || availableEntries.get(id))
-      .filter((item): item is LauncherEntry => !!item);
-  }, [availableEntries, containedIds, dockIds, folderEntries, layout.order]);
+    return allIds.filter((id) => !containedIds.has(id) && !dockIds.includes(id));
+  }, [availableEntries, containedIds, dockIds, folderEntries]);
 
-  const desktopIds = useMemo(() => desktopEntries.map((entry) => entry.id), [desktopEntries]);
+  const desktopPages = useMemo(
+    () => normalizeDesktopPages(layout.pages, visibleDesktopIds, gridMetrics.capacity),
+    [gridMetrics.capacity, layout.pages, visibleDesktopIds],
+  );
+  const pageCount = desktopPages.length;
+  const currentPageIndex = Math.min(pageIndex, pageCount - 1);
+  const desktopIds = desktopPages[currentPageIndex] || [];
+  const desktopEntries = useMemo(() => desktopIds
+      .map((id) => folderEntries.get(id) || availableEntries.get(id))
+      .filter((item): item is LauncherEntry => !!item), [availableEntries, desktopIds, folderEntries]);
+
   const openFolder = openFolderId ? folderEntries.get(openFolderId) : undefined;
   const openFolderIds = openFolder?.childIds || [];
   const activeEntry = activeId ? resolveEntry(activeId) : undefined;
+
+  useEffect(() => {
+    if (pageIndex < pageCount) return;
+    setPageIndex(Math.max(0, pageCount - 1));
+  }, [pageCount, pageIndex]);
+
+  useEffect(() => {
+    if (loading) return;
+    setLayout((current) => {
+      const nextPages = normalizeDesktopPages(current.pages, visibleDesktopIds, gridMetrics.capacity);
+      return samePages(current.pages, nextPages) ? current : { ...current, pages: nextPages };
+    });
+  }, [gridMetrics.capacity, loading, visibleDesktopIds]);
 
   function resolveEntry(id: string): LauncherEntry | undefined {
     return folderEntries.get(id) || availableEntries.get(id);
@@ -272,6 +323,23 @@ function DesktopPage() {
     const draggedId = String(event.active.id);
     suppressClickForId.current = draggedId;
     setActiveId(draggedId);
+    setDropPreview(null);
+  }
+
+  function handleDragOver(event: DragOverEvent) {
+    if (!editMode || !event.over) {
+      setDropPreview(null);
+      return;
+    }
+    const targetId = String(event.over.id);
+    if (targetId === String(event.active.id) || DROP_ZONE_IDS.has(targetId)) {
+      setDropPreview(null);
+      return;
+    }
+    setDropPreview({
+      id: targetId,
+      placement: dropPlacementFor(event.active.rect.current.translated, event.over.rect),
+    });
   }
 
   function handleDragEnd(event: DragEndEvent) {
@@ -283,6 +351,7 @@ function DesktopPage() {
     const targetContainer = containerData(event.over?.data.current?.container);
     const placement = event.over ? dropPlacementFor(event.active.rect.current.translated, event.over.rect) : "inside";
     setActiveId(null);
+    setDropPreview(null);
     if (!targetId || draggedId === targetId) return;
     handleDrop(draggedId, sourceContainer, sourceFolderId, targetId, targetContainer, targetFolderId, placement);
   }
@@ -350,7 +419,8 @@ function DesktopPage() {
 
   function moveToDesktopNear(itemId: string, targetId: string, placement: DropPlacement) {
     setLayout((current) => ({
-      order: insertRelative(desktopIds, itemId, targetId, placement),
+      ...current,
+      pages: insertIntoDesktopPage(current.pages, currentPageIndex, itemId, targetId, placement, gridMetrics.capacity),
       dock: current.dock.filter((id) => id !== itemId),
       folders: removeChildFromFolders(current.folders, itemId),
     }));
@@ -359,7 +429,8 @@ function DesktopPage() {
 
   function moveToDesktopEnd(itemId: string) {
     setLayout((current) => ({
-      order: [...desktopIds.filter((id) => id !== itemId), itemId],
+      ...current,
+      pages: appendToDesktopPage(current.pages, currentPageIndex, itemId, gridMetrics.capacity),
       dock: current.dock.filter((id) => id !== itemId),
       folders: removeChildFromFolders(current.folders, itemId),
     }));
@@ -368,7 +439,8 @@ function DesktopPage() {
 
   function moveToDockNear(itemId: string, targetId: string, placement: DropPlacement) {
     setLayout((current) => ({
-      order: current.order.filter((id) => id !== itemId),
+      ...current,
+      pages: removeFromPages(current.pages, itemId),
       dock: insertRelative(dockIds, itemId, targetId, placement),
       folders: removeChildFromFolders(current.folders, itemId),
     }));
@@ -377,7 +449,8 @@ function DesktopPage() {
 
   function moveToDockEnd(itemId: string) {
     setLayout((current) => ({
-      order: current.order.filter((id) => id !== itemId),
+      ...current,
+      pages: removeFromPages(current.pages, itemId),
       dock: [...dockIds.filter((id) => id !== itemId), itemId],
       folders: removeChildFromFolders(current.folders, itemId),
     }));
@@ -387,7 +460,8 @@ function DesktopPage() {
   function moveToFolder(itemId: string, folderId: string) {
     if (itemId.startsWith("folder:")) return;
     setLayout((current) => ({
-      order: current.order.filter((id) => id !== itemId),
+      ...current,
+      pages: removeFromPages(current.pages, itemId),
       dock: current.dock.filter((id) => id !== itemId),
       folders: current.folders.map((folder) => {
         const childIds = folder.childIds.filter((id) => id !== itemId);
@@ -399,7 +473,8 @@ function DesktopPage() {
 
   function moveToDesktop(itemId: string) {
     setLayout((current) => ({
-      order: [...current.order.filter((id) => id !== itemId), itemId],
+      ...current,
+      pages: appendToDesktopPage(current.pages, currentPageIndex, itemId, gridMetrics.capacity),
       dock: current.dock.filter((id) => id !== itemId),
       folders: removeChildFromFolders(current.folders, itemId),
     }));
@@ -408,7 +483,8 @@ function DesktopPage() {
 
   function moveToDock(itemId: string) {
     setLayout((current) => ({
-      order: current.order.filter((id) => id !== itemId),
+      ...current,
+      pages: removeFromPages(current.pages, itemId),
       dock: [...current.dock.filter((id) => id !== itemId), itemId],
       folders: removeChildFromFolders(current.folders, itemId),
     }));
@@ -420,11 +496,10 @@ function DesktopPage() {
     if (itemId.startsWith("folder:")) return;
     const folderId = `folder:${crypto.randomUUID()}`;
     setLayout((current) => ({
-      order: sourceContainer === "dock"
-        ? current.order.filter((id) => id !== itemId)
-        : (current.order.includes(itemId)
-          ? current.order.map((id) => (id === itemId ? folderId : id))
-          : [...desktopIds.filter((id) => id !== itemId), folderId]),
+      ...current,
+      pages: sourceContainer === "dock"
+        ? removeFromPages(current.pages, itemId)
+        : replaceInPagesOrAppend(current.pages, currentPageIndex, itemId, folderId, gridMetrics.capacity),
       dock: sourceContainer === "dock"
         ? current.dock.map((id) => (id === itemId ? folderId : id))
         : current.dock.filter((id) => id !== itemId),
@@ -445,7 +520,10 @@ function DesktopPage() {
     const nextIds = targetIds.filter((id) => id !== itemId && id !== targetId);
     nextIds.splice(Math.min(targetIndex, nextIds.length), 0, folderId);
     setLayout((current) => ({
-      order: targetContainer === "desktop" ? nextIds : current.order.filter((id) => id !== itemId && id !== targetId),
+      ...current,
+      pages: targetContainer === "desktop"
+        ? replacePairWithFolder(current.pages, currentPageIndex, itemId, targetId, folderId, gridMetrics.capacity)
+        : removeManyFromPages(current.pages, [itemId, targetId]),
       dock: targetContainer === "dock" ? nextIds : current.dock.filter((id) => id !== itemId && id !== targetId),
       folders: [
         ...current.folders.map((folder) => ({
@@ -474,7 +552,8 @@ function DesktopPage() {
     const folder = layout.folders.find((item) => item.id === folderId);
     if (!folder) return;
     setLayout((current) => ({
-      order: current.order.flatMap((id) => (id === folderId ? folder.childIds : [id])),
+      ...current,
+      pages: replaceInPagesWithMany(current.pages, folderId, folder.childIds, gridMetrics.capacity),
       dock: current.dock.flatMap((id) => (id === folderId ? folder.childIds : [id])),
       folders: current.folders.filter((item) => item.id !== folderId),
     }));
@@ -489,19 +568,54 @@ function DesktopPage() {
       .then(setApps)
       .catch((deleteError) => showToast(deleteError instanceof Error ? deleteError.message : "Unable to delete WebApp."));
     setLayout((current) => ({
-      order: current.order.filter((id) => id !== itemId),
+      ...current,
+      pages: removeFromPages(current.pages, itemId),
       dock: current.dock.filter((id) => id !== itemId),
       folders: removeChildFromFolders(current.folders, itemId),
     }));
     closeMenu();
   }
 
+  async function runSync() {
+    setSyncState("syncing");
+    setSyncMessage("Syncing...");
+    try {
+      const settings = await loadSettings();
+      const configured = !!settings.webDavUrl.trim();
+      setSettingsConfigured(configured);
+      if (!configured) {
+        setSyncState("needs-settings");
+        setSyncMessage("Set WebDAV URL first");
+        showToast("Set WebDAV URL before syncing.");
+        setSettingsOpen(true);
+        return;
+      }
+      const result = await sendCommand<SyncResult>("sync.run");
+      setSyncState("success");
+      setSyncMessage(syncResultMessage(result));
+      showToast("Sync complete.");
+    } catch (syncError) {
+      const text = syncError instanceof Error ? syncError.message : "Sync failed.";
+      setSyncState(isWebDavConfigError(syncError) ? "needs-settings" : "error");
+      setSyncMessage(text);
+      showToast(text);
+      if (isWebDavConfigError(syncError)) setSettingsOpen(true);
+    }
+  }
+
   return (
     <main className="desktop-page">
       <div className="desktop-commands">
+        {syncMessage && (
+          <button className={`desktop-sync-status ${syncState}`} type="button" onClick={() => syncState === "needs-settings" && setSettingsOpen(true)}>
+            {syncMessage}
+          </button>
+        )}
         {editMode && <button type="button" onClick={() => setEditMode(false)}>Done</button>}
         <button type="button" onClick={() => setSettingsOpen(true)}>Settings</button>
-        <button type="button" onClick={() => sendCommand("sync.run").catch((syncError) => showToast(syncError instanceof Error ? syncError.message : "Sync failed."))}>Sync</button>
+        <button type="button" disabled={syncState === "syncing"} title={settingsConfigured ? "Sync" : "Set up WebDAV before syncing"} onClick={runSync}>
+          {syncState === "syncing" ? "Syncing" : "Sync"}
+        </button>
       </div>
       {toast && (
         <button className="desktop-toast" type="button" onClick={() => setSettingsOpen(true)}>
@@ -512,16 +626,22 @@ function DesktopPage() {
       <DndContext
         sensors={sensors}
         collisionDetection={desktopCollisionDetection}
-        onDragCancel={() => setActiveId(null)}
+        onDragCancel={() => {
+          setActiveId(null);
+          setDropPreview(null);
+        }}
         onDragEnd={handleDragEnd}
+        onDragOver={handleDragOver}
         onDragStart={handleDragStart}
       >
         <SortableContext items={desktopIds} strategy={rectSortingStrategy}>
-          <DesktopDropGrid enabled={editMode && !openFolder}>
+          <DesktopDropGrid columns={gridMetrics.columns} enabled={editMode && !openFolder}>
             {loading && <div className="desktop-status">Loading desktop...</div>}
+            {!loading && desktopEntries.length === 0 && <div className="desktop-status">This page is empty.</div>}
             {desktopEntries.map((entry) => (
               <DesktopTile
                 container="desktop"
+                dropPreview={dropPreview}
                 entry={entry}
                 editMode={editMode}
                 folderId={undefined}
@@ -540,7 +660,10 @@ function DesktopPage() {
             <section className="desktop-folder" role="dialog" aria-modal="true" aria-label={openFolder.title} onClick={(event) => event.stopPropagation()}>
               <header className="desktop-folder-header">
                 <h2>{openFolder.title}</h2>
-                <button type="button" onClick={() => setOpenFolderId(null)}>Close</button>
+                <div className="desktop-folder-actions">
+                  {editMode && <button type="button" onClick={() => renameFolder(openFolder.id)}>Rename</button>}
+                  <button type="button" onClick={() => setOpenFolderId(null)}>Close</button>
+                </div>
               </header>
               <SortableContext items={openFolderIds} strategy={rectSortingStrategy}>
                 <div className="desktop-folder-grid">
@@ -549,6 +672,7 @@ function DesktopPage() {
                   ) : openFolder.children.map((entry) => (
                     <DesktopTile
                       container="folder"
+                      dropPreview={dropPreview}
                       entry={entry}
                       editMode={editMode}
                       folderId={openFolder.id}
@@ -567,6 +691,7 @@ function DesktopPage() {
 
         <SortableContext items={dockIds} strategy={rectSortingStrategy}>
           <DesktopDock
+            dropPreview={dropPreview}
             entries={dockEntries}
             editMode={editMode}
             onClick={clickEntry}
@@ -584,6 +709,21 @@ function DesktopPage() {
           )}
         </DragOverlay>
       </DndContext>
+
+      {pageCount > 1 && (
+        <div className="desktop-page-dots" aria-label="Desktop pages">
+          {desktopPages.map((page, index) => (
+            <button
+              aria-label={`Page ${index + 1}`}
+              aria-current={index === currentPageIndex ? "page" : undefined}
+              className={index === currentPageIndex ? "active" : ""}
+              key={`page-${index}-${page.length}`}
+              type="button"
+              onClick={() => setPageIndex(index)}
+            />
+          ))}
+        </div>
+      )}
 
       {menu && (
         <DesktopMenu
@@ -613,6 +753,15 @@ function DesktopPage() {
       )}
       {settingsOpen && (
         <SettingsDialog
+          onSettingsSaved={(settings) => setSettingsConfigured(!!settings.webDavUrl.trim())}
+          onSyncError={(message) => {
+            setSyncState(isWebDavConfigError(message) ? "needs-settings" : "error");
+            setSyncMessage(message);
+          }}
+          onSyncResult={(result) => {
+            setSyncState("success");
+            setSyncMessage(syncResultMessage(result));
+          }}
           onClose={() => setSettingsOpen(false)}
           onToast={showToast}
         />
@@ -621,7 +770,13 @@ function DesktopPage() {
   );
 }
 
-function SettingsDialog(props: { onClose: () => void; onToast: (message: string) => void }) {
+function SettingsDialog(props: {
+  onClose: () => void;
+  onSettingsSaved: (settings: SyncSettings) => void;
+  onSyncError: (message: string) => void;
+  onSyncResult: (result: SyncResult) => void;
+  onToast: (message: string) => void;
+}) {
   const [settings, setSettings] = useState<SyncSettings>(getDefaultSettings());
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -653,6 +808,7 @@ function SettingsDialog(props: { onClose: () => void; onToast: (message: string)
     saveSettings(next)
       .then(() => {
         setSettings(next);
+        props.onSettingsSaved(next);
         setMessage("Settings saved.");
         setError("");
       })
@@ -673,13 +829,18 @@ function SettingsDialog(props: { onClose: () => void; onToast: (message: string)
       .then(() => sendCommand<SyncResult>("sync.run"))
       .then((result) => {
         setMessage(`Synced ${result.bookmarkCount} bookmarks. Tombstones: ${result.deletedBookmarkCount}.`);
+        props.onSyncResult(result);
         return loadSettings();
       })
-      .then(setSettings)
+      .then((loaded) => {
+        setSettings(loaded);
+        props.onSettingsSaved(loaded);
+      })
       .catch((syncError) => {
         const text = syncError instanceof Error ? syncError.message : "Sync failed.";
         setMessage("");
         setError(text);
+        props.onSyncError(text);
         props.onToast(text);
       })
       .finally(() => setBusy(false));
@@ -729,6 +890,7 @@ function SettingsDialog(props: { onClose: () => void; onToast: (message: string)
 }
 
 function DesktopDock(props: {
+  dropPreview: DropPreview | null;
   entries: LauncherEntry[];
   editMode: boolean;
   onClick: (entry: LauncherEntry) => void;
@@ -745,6 +907,7 @@ function DesktopDock(props: {
     <nav className={`desktop-dock${isOver ? " desktop-dock-over" : ""}`} aria-label="Dock" ref={setNodeRef}>
       {props.entries.map((entry) => (
         <DockTile
+          dropPreview={props.dropPreview}
           editMode={props.editMode}
           entry={entry}
           key={entry.id}
@@ -758,14 +921,15 @@ function DesktopDock(props: {
   );
 }
 
-function DesktopDropGrid(props: { children: React.ReactNode; enabled: boolean }) {
+function DesktopDropGrid(props: { children: React.ReactNode; columns: number; enabled: boolean }) {
   const { setNodeRef, isOver } = useDroppable({
     id: DESKTOP_DROP_ID,
     data: { kind: "desktop" },
     disabled: !props.enabled,
   });
+  const style = { "--desktop-columns": String(props.columns) } as React.CSSProperties;
   return (
-    <section className={`desktop-grid${isOver ? " desktop-grid-over" : ""}`} aria-label="Hyper Browser desktop" ref={setNodeRef}>
+    <section className={`desktop-grid${isOver ? " desktop-grid-over" : ""}`} aria-label="Hyper Browser desktop" ref={setNodeRef} style={style}>
       {props.children}
     </section>
   );
@@ -786,6 +950,7 @@ function DesktopFolderScrim(props: { children: React.ReactNode; editMode: boolea
 
 function DesktopTile(props: {
   container: LauncherContainer;
+  dropPreview: DropPreview | null;
   entry: LauncherEntry;
   editMode: boolean;
   folderId?: string;
@@ -813,10 +978,11 @@ function DesktopTile(props: {
   };
   const dragListeners = props.editMode ? listeners : undefined;
   const dragAttributes = props.editMode ? attributes : undefined;
+  const dropClass = props.dropPreview?.id === props.entry.id ? ` drop-${props.dropPreview.placement}` : "";
 
   return (
     <button
-      className={`desktop-tile${props.editMode ? " editing" : ""}`}
+      className={`desktop-tile${props.editMode ? " editing" : ""}${dropClass}`}
       data-launcher-id={props.entry.id}
       ref={setNodeRef}
       style={style}
@@ -837,6 +1003,7 @@ function DesktopTile(props: {
 }
 
 function DockTile(props: {
+  dropPreview: DropPreview | null;
   entry: LauncherEntry;
   editMode: boolean;
   onClick: (entry: LauncherEntry) => void;
@@ -863,11 +1030,12 @@ function DockTile(props: {
   };
   const dragListeners = props.editMode ? listeners : undefined;
   const dragAttributes = props.editMode ? attributes : undefined;
+  const dropClass = props.dropPreview?.id === props.entry.id ? ` drop-${props.dropPreview.placement}` : "";
 
   return (
     <button
       aria-label={props.entry.title}
-      className={`desktop-dock-tile${props.editMode ? " editing" : ""}`}
+      className={`desktop-dock-tile${props.editMode ? " editing" : ""}${dropClass}`}
       data-launcher-id={props.entry.id}
       ref={setNodeRef}
       style={style}
@@ -988,13 +1156,20 @@ function DesktopMenu(props: {
 
 async function loadLayout(): Promise<LauncherLayout> {
   const stored = await chrome.storage.local.get(LAYOUT_STORAGE_KEY);
-  const value = stored[LAYOUT_STORAGE_KEY] as Partial<LauncherLayout> | undefined;
+  const value = stored[LAYOUT_STORAGE_KEY] as StoredLauncherLayout | undefined;
   const dock = Array.isArray(value?.dock) ? uniqueStrings(value.dock) : [...DEFAULT_DOCK_ENTRY_IDS];
   const dockSet = new Set(dock);
+  const legacyOrder = Array.isArray(value?.order)
+    ? uniqueStrings(value.order).filter((id) => !dockSet.has(id))
+    : [];
+  const pages = Array.isArray(value?.pages)
+    ? value.pages
+      .filter((page): page is string[] => Array.isArray(page))
+      .map((page) => uniqueStrings(page).filter((id) => !dockSet.has(id)))
+    : [];
   return {
-    order: Array.isArray(value?.order)
-      ? uniqueStrings(value.order).filter((id) => !dockSet.has(id))
-      : [],
+    version: LAYOUT_VERSION,
+    pages: pages.length > 0 ? normalizeDesktopPages(pages, [], Number.MAX_SAFE_INTEGER) : [legacyOrder],
     dock,
     folders: Array.isArray(value?.folders)
       ? value.folders
@@ -1006,6 +1181,139 @@ async function loadLayout(): Promise<LauncherLayout> {
         }))
       : [],
   };
+}
+
+function useDesktopGridMetrics(): DesktopGridMetrics {
+  const [metrics, setMetrics] = useState<DesktopGridMetrics>(() => calculateDesktopGridMetrics());
+  useEffect(() => {
+    function update() {
+      setMetrics(calculateDesktopGridMetrics());
+    }
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+  return metrics;
+}
+
+function calculateDesktopGridMetrics(): DesktopGridMetrics {
+  const narrow = window.innerWidth <= 680;
+  const topSafe = narrow ? 82 : 96;
+  const sideSafe = narrow ? 18 : 24;
+  const bottomSafe = narrow ? 132 : 150;
+  const width = Math.max(DESKTOP_CELL_WIDTH, window.innerWidth - sideSafe * 2);
+  const height = Math.max(DESKTOP_CELL_HEIGHT, window.innerHeight - topSafe - bottomSafe);
+  const columns = Math.max(1, Math.floor(width / DESKTOP_CELL_WIDTH));
+  const rows = Math.max(1, Math.floor(height / DESKTOP_CELL_HEIGHT));
+  return { columns, rows, capacity: columns * rows };
+}
+
+function normalizeDesktopPages(pages: string[][], visibleIds: string[], capacity: number): string[][] {
+  const visibleSet = new Set(visibleIds);
+  const hasVisibleSet = visibleSet.size > 0;
+  const seen = new Set<string>();
+  const nextPages = (pages.length > 0 ? pages : [[]]).map((page) => {
+    const cleanPage: string[] = [];
+    for (const id of page) {
+      if (seen.has(id)) continue;
+      if (hasVisibleSet && !visibleSet.has(id)) continue;
+      seen.add(id);
+      cleanPage.push(id);
+    }
+    return cleanPage;
+  });
+  for (const id of visibleIds) {
+    if (seen.has(id)) continue;
+    nextPages[nextPages.length - 1].push(id);
+    seen.add(id);
+  }
+  return rebalanceDesktopPages(nextPages, capacity);
+}
+
+function rebalanceDesktopPages(pages: string[][], capacity: number): string[][] {
+  const pageCapacity = Math.max(1, Math.floor(capacity));
+  const nextPages = pages.length > 0 ? pages.map((page) => [...page]) : [[]];
+  for (let index = 0; index < nextPages.length; index += 1) {
+    if (nextPages[index].length <= pageCapacity) continue;
+    const overflow = nextPages[index].splice(pageCapacity);
+    if (nextPages[index + 1]) {
+      nextPages[index + 1] = [...overflow, ...nextPages[index + 1]];
+    } else {
+      nextPages.push(overflow);
+    }
+  }
+  while (nextPages.length > 1 && nextPages[nextPages.length - 1].length === 0) {
+    nextPages.pop();
+  }
+  return nextPages.length > 0 ? nextPages : [[]];
+}
+
+function samePages(left: string[][], right: string[][]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((page, pageIndex) => page.length === right[pageIndex].length && page.every((id, idIndex) => id === right[pageIndex][idIndex]));
+}
+
+function removeFromPages(pages: string[][], itemId: string): string[][] {
+  return pages.map((page) => page.filter((id) => id !== itemId));
+}
+
+function removeManyFromPages(pages: string[][], itemIds: string[]): string[][] {
+  const itemSet = new Set(itemIds);
+  return pages.map((page) => page.filter((id) => !itemSet.has(id)));
+}
+
+function insertIntoDesktopPage(pages: string[][], pageIndex: number, itemId: string, targetId: string, placement: DropPlacement, capacity: number): string[][] {
+  const nextPages = removeFromPages(pages, itemId);
+  const targetPageIndex = nextPages.findIndex((page) => page.includes(targetId));
+  const resolvedPageIndex = targetPageIndex >= 0 ? targetPageIndex : Math.min(pageIndex, nextPages.length - 1);
+  const page = nextPages[resolvedPageIndex] || [];
+  const targetIndex = page.indexOf(targetId);
+  const insertIndex = targetIndex < 0 ? page.length : targetIndex + (placement === "after" ? 1 : 0);
+  const nextPage = [...page];
+  nextPage.splice(insertIndex, 0, itemId);
+  nextPages[resolvedPageIndex] = nextPage;
+  return rebalanceDesktopPages(nextPages, capacity);
+}
+
+function appendToDesktopPage(pages: string[][], pageIndex: number, itemId: string, capacity: number): string[][] {
+  const nextPages = removeFromPages(pages, itemId);
+  const resolvedPageIndex = Math.max(0, Math.min(pageIndex, nextPages.length - 1));
+  const page = nextPages[resolvedPageIndex] || [];
+  nextPages[resolvedPageIndex] = [...page, itemId];
+  return rebalanceDesktopPages(nextPages, capacity);
+}
+
+function replaceInPagesOrAppend(pages: string[][], pageIndex: number, itemId: string, replacementId: string, capacity: number): string[][] {
+  let replaced = false;
+  const nextPages = pages.map((page) => page.flatMap((id) => {
+    if (id !== itemId) return [id];
+    replaced = true;
+    return [replacementId];
+  }));
+  return replaced ? rebalanceDesktopPages(nextPages, capacity) : appendToDesktopPage(nextPages, pageIndex, replacementId, capacity);
+}
+
+function replacePairWithFolder(pages: string[][], pageIndex: number, itemId: string, targetId: string, folderId: string, capacity: number): string[][] {
+  const flatIds = pages.flat().filter((id) => id !== itemId && id !== targetId);
+  const targetIndex = Math.max(0, pages.flat().indexOf(targetId));
+  flatIds.splice(Math.min(targetIndex, flatIds.length), 0, folderId);
+  const nextPages = chunkIds(flatIds, capacity);
+  if (nextPages.length > 0) return nextPages;
+  return appendToDesktopPage([[]], pageIndex, folderId, capacity);
+}
+
+function replaceInPagesWithMany(pages: string[][], itemId: string, replacementIds: string[], capacity: number): string[][] {
+  const nextPages = pages.map((page) => page.flatMap((id) => (id === itemId ? replacementIds : [id])));
+  return rebalanceDesktopPages(nextPages, capacity);
+}
+
+function chunkIds(ids: string[], capacity: number): string[][] {
+  const pageCapacity = Math.max(1, Math.floor(capacity));
+  const pages: string[][] = [];
+  for (let index = 0; index < ids.length; index += pageCapacity) {
+    pages.push(ids.slice(index, index + pageCapacity));
+  }
+  return pages.length > 0 ? pages : [[]];
 }
 
 function dropPlacementFor(activeRect: ClientRect | null, overRect: ClientRect): DropPlacement {
@@ -1062,6 +1370,11 @@ function containerData(value: unknown): LauncherContainer | undefined {
 function isWebDavConfigError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error || "");
   return /webdav url is required/i.test(message);
+}
+
+function syncResultMessage(result: SyncResult): string {
+  const deleted = result.deletedBookmarkCount > 0 ? `, ${result.deletedBookmarkCount} deleted` : "";
+  return `Synced ${result.bookmarkCount} bookmarks${deleted}`;
 }
 
 function normalizeSettings(settings: SyncSettings): SyncSettings {
