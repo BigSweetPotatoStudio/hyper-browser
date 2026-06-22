@@ -65,9 +65,19 @@ type GestureState = {
   startY: number;
   lastX: number;
   lastY: number;
+  longPressed: boolean;
+  dragging: boolean;
   moved: boolean;
   menuOpened: boolean;
   timer: number;
+};
+
+type DropPlacement = "before" | "inside" | "after";
+
+type DropTarget = {
+  itemId: string;
+  folderId?: string;
+  placement: DropPlacement;
 };
 
 const emptyLayout: LauncherLayout = {
@@ -208,13 +218,14 @@ function HomePage() {
       startY: event.clientY,
       lastX: event.clientX,
       lastY: event.clientY,
+      longPressed: false,
+      dragging: false,
       moved: false,
       menuOpened: false,
       timer: window.setTimeout(() => {
         if (!gesture.current || gesture.current.itemId !== itemId) return;
-        gesture.current.menuOpened = true;
-        setDraggingId(null);
-        setMenu({ itemId, folderId, x: gesture.current.lastX, y: gesture.current.lastY });
+        gesture.current.longPressed = true;
+        setDraggingId(itemId);
       }, LONG_PRESS_MS),
     };
   }
@@ -225,32 +236,36 @@ function HomePage() {
     current.lastX = event.clientX;
     current.lastY = event.clientY;
     const distance = Math.hypot(event.clientX - current.startX, event.clientY - current.startY);
-    if (distance < DRAG_THRESHOLD_PX || current.menuOpened) return;
-    window.clearTimeout(current.timer);
+    if (current.menuOpened) return;
+    if (!current.longPressed) {
+      if (distance > DRAG_THRESHOLD_PX) {
+        window.clearTimeout(current.timer);
+        gesture.current = null;
+      }
+      return;
+    }
+    if (distance < DRAG_THRESHOLD_PX) return;
+    event.preventDefault();
     current.moved = true;
+    current.dragging = true;
     setMenu(null);
     setDraggingId(current.itemId);
-    const target = launcherTargetFromPoint(event.clientX, event.clientY);
-    if (!target || target.itemId === current.itemId) return;
-    if (current.folderId && target.folderId === current.folderId) {
-      moveInsideFolder(current.folderId, current.itemId, target.itemId);
-    } else if (!current.folderId && !target.folderId && !target.itemId.startsWith("folder:")) {
-      moveRootBefore(current.itemId, target.itemId);
-    }
   }
 
   function endPress(event: React.PointerEvent<HTMLElement>) {
     const current = gesture.current;
     if (!current || current.pointerId !== event.pointerId) return;
     window.clearTimeout(current.timer);
-    const target = launcherTargetFromPoint(event.clientX, event.clientY);
+    const target = launcherDropTargetFromPoint(event.clientX, event.clientY);
     setDraggingId(null);
     gesture.current = null;
 
-    if (current.moved) {
-      if (!current.itemId.startsWith("folder:") && target?.itemId.startsWith("folder:")) {
-        moveToFolder(current.itemId, target.itemId);
-      }
+    if (current.dragging) {
+      handleDrop(current.itemId, current.folderId, target);
+      return;
+    }
+    if (current.longPressed) {
+      setMenu({ itemId: current.itemId, folderId: current.folderId, x: current.lastX, y: current.lastY });
       return;
     }
     if (current.menuOpened) return;
@@ -265,20 +280,55 @@ function HomePage() {
     setMenu({ itemId, folderId, x: event.clientX, y: event.clientY });
   }
 
-  function moveRootBefore(itemId: string, beforeId: string) {
-    if (itemId === beforeId) return;
-    const nextOrder = moveBefore(rootIds.current, itemId, beforeId);
+  function handleDrop(itemId: string, sourceFolderId: string | undefined, target: DropTarget | null) {
+    if (!target || target.itemId === itemId) return;
+    const targetEntry = resolveEntry(target.itemId);
+    if (!targetEntry) return;
+    if (targetEntry.kind === "folder") {
+      if (!itemId.startsWith("folder:")) moveToFolder(itemId, targetEntry.id);
+      return;
+    }
+    if (!target.folderId && !itemId.startsWith("folder:") && target.placement === "inside") {
+      createFolderFromDrop(itemId, target.itemId);
+      return;
+    }
+    if (sourceFolderId && target.folderId === sourceFolderId) {
+      moveInsideFolderRelative(sourceFolderId, itemId, target.itemId, target.placement);
+      return;
+    }
+    if (sourceFolderId && !target.folderId) {
+      moveToDesktopNear(itemId, target.itemId, target.placement);
+      return;
+    }
+    if (!sourceFolderId && !target.folderId) {
+      moveRootRelative(itemId, target.itemId, target.placement);
+    }
+  }
+
+  function moveRootRelative(itemId: string, targetId: string, placement: DropPlacement) {
+    if (itemId === targetId) return;
+    const nextOrder = insertRelative(rootIds.current, itemId, targetId, placement);
     setLayout((current) => ({ ...current, order: nextOrder }));
   }
 
-  function moveInsideFolder(folderId: string, itemId: string, beforeId: string) {
-    if (itemId === beforeId) return;
+  function moveInsideFolderRelative(folderId: string, itemId: string, targetId: string, placement: DropPlacement) {
+    if (itemId === targetId) return;
     setLayout((current) => ({
       ...current,
       folders: current.folders.map((folder) => {
         if (folder.id !== folderId) return folder;
-        return { ...folder, childIds: moveBefore(folder.childIds, itemId, beforeId) };
+        return { ...folder, childIds: insertRelative(folder.childIds, itemId, targetId, placement) };
       }),
+    }));
+  }
+
+  function moveToDesktopNear(itemId: string, targetId: string, placement: DropPlacement) {
+    setLayout((current) => ({
+      order: insertRelative(rootIds.current, itemId, targetId, placement),
+      folders: current.folders.map((folder) => ({
+        ...folder,
+        childIds: folder.childIds.filter((id) => id !== itemId),
+      })),
     }));
   }
 
@@ -325,6 +375,28 @@ function HomePage() {
         ],
       };
     });
+    setOpenFolderId(folderId);
+    setMenu(null);
+  }
+
+  function createFolderFromDrop(itemId: string, targetId: string) {
+    if (itemId === targetId || itemId.startsWith("folder:") || targetId.startsWith("folder:")) return;
+    const folderId = `folder:${createId()}`;
+    const title = t("home.folder");
+    const rootOrder = rootIds.current;
+    const targetIndex = Math.max(0, rootOrder.indexOf(targetId));
+    const nextOrder = rootOrder.filter((id) => id !== itemId && id !== targetId);
+    nextOrder.splice(Math.min(targetIndex, nextOrder.length), 0, folderId);
+    setLayout((current) => ({
+      order: nextOrder,
+      folders: [
+        ...current.folders.map((folder) => ({
+          ...folder,
+          childIds: folder.childIds.filter((id) => id !== itemId && id !== targetId),
+        })),
+        { id: folderId, title, childIds: [targetId, itemId] },
+      ],
+    }));
     setOpenFolderId(folderId);
     setMenu(null);
   }
@@ -541,18 +613,26 @@ function LauncherMenu(props: {
   );
 }
 
-function launcherTargetFromPoint(x: number, y: number): { itemId: string; folderId?: string } | null {
+function launcherDropTargetFromPoint(x: number, y: number): DropTarget | null {
   const element = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-launcher-id]");
   const itemId = element?.dataset.launcherId;
   if (!element || !itemId) return null;
-  return { itemId, folderId: element.dataset.folderId || undefined };
+  return { itemId, folderId: element.dataset.folderId || undefined, placement: dropPlacementFor(element, x) };
 }
 
-function moveBefore(ids: string[], itemId: string, beforeId: string): string[] {
+function dropPlacementFor(element: HTMLElement, x: number): DropPlacement {
+  const rect = element.getBoundingClientRect();
+  const ratio = rect.width > 0 ? (x - rect.left) / rect.width : 0.5;
+  if (ratio < 0.24) return "before";
+  if (ratio > 0.76) return "after";
+  return "inside";
+}
+
+function insertRelative(ids: string[], itemId: string, targetId: string, placement: DropPlacement): string[] {
   const next = ids.filter((id) => id !== itemId);
-  const index = next.indexOf(beforeId);
+  const index = next.indexOf(targetId);
   if (index < 0) return [...next, itemId];
-  next.splice(index, 0, itemId);
+  next.splice(placement === "after" ? index + 1 : index, 0, itemId);
   return next;
 }
 
