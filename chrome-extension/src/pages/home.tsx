@@ -20,8 +20,9 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { getDefaultSettings, loadSettings, saveSettings } from "../storage";
 import "../styles.css";
-import type { WebAppRecord } from "../types";
+import type { SyncResult, SyncSettings, WebAppRecord } from "../types";
 import { sendCommand } from "./bridge";
 
 const LAYOUT_STORAGE_KEY = "launcherLayout";
@@ -89,8 +90,9 @@ function DesktopPage() {
   const [apps, setApps] = useState<WebAppRecord[]>([]);
   const [layout, setLayout] = useState<LauncherLayout>({ order: [], dock: [...DEFAULT_DOCK_ENTRY_IDS], folders: [] });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [toast, setToast] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [openFolderId, setOpenFolderId] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -105,18 +107,17 @@ function DesktopPage() {
         const nextLayout = await loadLayout();
         if (!cancelled) setLayout(nextLayout);
       } catch (loadError) {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load desktop layout.");
+        if (!cancelled) showToast(loadError instanceof Error ? loadError.message : "Unable to load desktop layout.");
       }
 
       try {
         const records = await sendCommand<WebAppRecord[]>("webapps.list");
         if (!cancelled) {
           setApps(records);
-          setError("");
         }
       } catch (loadError) {
         if (!cancelled && !isWebDavConfigError(loadError)) {
-          setError(loadError instanceof Error ? loadError.message : "Unable to load WebApps.");
+          showToast(loadError instanceof Error ? loadError.message : "Unable to load WebApps.");
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -132,6 +133,12 @@ function DesktopPage() {
     if (loading) return;
     chrome.storage.local.set({ [LAYOUT_STORAGE_KEY]: layout }).catch(console.error);
   }, [layout, loading]);
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = window.setTimeout(() => setToast(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
 
   const systemEntries = useMemo<SystemEntry[]>(() => ([
     { id: "system:chrome", kind: "system", title: "Chrome", mark: "C", color: "#4285f4", action: "chrome" },
@@ -208,6 +215,10 @@ function DesktopPage() {
       extensions: "chrome://extensions/",
     };
     chrome.tabs.create({ url: urls[entry.action] });
+  }
+
+  function showToast(message: string) {
+    setToast(message);
   }
 
   function startLongPress(event: React.PointerEvent<HTMLElement>, itemId: string, sourceContainer: LauncherContainer, folderId?: string) {
@@ -476,7 +487,7 @@ function DesktopPage() {
     if (!entry || entry.kind !== "app") return;
     sendCommand<WebAppRecord[]>("webapps.delete", { startUrl: entry.app.startUrl })
       .then(setApps)
-      .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : "Unable to delete WebApp."));
+      .catch((deleteError) => showToast(deleteError instanceof Error ? deleteError.message : "Unable to delete WebApp."));
     setLayout((current) => ({
       order: current.order.filter((id) => id !== itemId),
       dock: current.dock.filter((id) => id !== itemId),
@@ -489,12 +500,12 @@ function DesktopPage() {
     <main className="desktop-page">
       <div className="desktop-commands">
         {editMode && <button type="button" onClick={() => setEditMode(false)}>Done</button>}
-        <button type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })}>Settings</button>
-        <button type="button" onClick={() => sendCommand("sync.run").catch((syncError) => setError(syncError instanceof Error ? syncError.message : "Sync failed."))}>Sync</button>
+        <button type="button" onClick={() => setSettingsOpen(true)}>Settings</button>
+        <button type="button" onClick={() => sendCommand("sync.run").catch((syncError) => showToast(syncError instanceof Error ? syncError.message : "Sync failed."))}>Sync</button>
       </div>
-      {error && (
-        <button className="desktop-notice" type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })}>
-          {error}
+      {toast && (
+        <button className="desktop-toast" type="button" onClick={() => setSettingsOpen(true)}>
+          {toast}
         </button>
       )}
 
@@ -600,7 +611,120 @@ function DesktopPage() {
           onDeleteApp={deleteApp}
         />
       )}
+      {settingsOpen && (
+        <SettingsDialog
+          onClose={() => setSettingsOpen(false)}
+          onToast={showToast}
+        />
+      )}
     </main>
+  );
+}
+
+function SettingsDialog(props: { onClose: () => void; onToast: (message: string) => void }) {
+  const [settings, setSettings] = useState<SyncSettings>(getDefaultSettings());
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadSettings()
+      .then((loaded) => {
+        if (!cancelled) setSettings(loaded);
+      })
+      .catch((loadError) => {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load settings.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function update<K extends keyof SyncSettings>(key: K, value: SyncSettings[K]) {
+    setSettings((current) => ({ ...current, [key]: value }));
+    setMessage("");
+    setError("");
+  }
+
+  function save() {
+    const next = normalizeSettings(settings);
+    setBusy(true);
+    saveSettings(next)
+      .then(() => {
+        setSettings(next);
+        setMessage("Settings saved.");
+        setError("");
+      })
+      .catch((saveError) => {
+        const text = saveError instanceof Error ? saveError.message : "Unable to save settings.";
+        setError(text);
+        props.onToast(text);
+      })
+      .finally(() => setBusy(false));
+  }
+
+  function sync() {
+    const next = normalizeSettings(settings);
+    setBusy(true);
+    setMessage("Syncing...");
+    setError("");
+    saveSettings(next)
+      .then(() => sendCommand<SyncResult>("sync.run"))
+      .then((result) => {
+        setMessage(`Synced ${result.bookmarkCount} bookmarks. Tombstones: ${result.deletedBookmarkCount}.`);
+        return loadSettings();
+      })
+      .then(setSettings)
+      .catch((syncError) => {
+        const text = syncError instanceof Error ? syncError.message : "Sync failed.";
+        setMessage("");
+        setError(text);
+        props.onToast(text);
+      })
+      .finally(() => setBusy(false));
+  }
+
+  return (
+    <div className="settings-scrim" onClick={props.onClose}>
+      <section className="settings-dialog" role="dialog" aria-modal="true" aria-label="Settings" onClick={(event) => event.stopPropagation()}>
+        <header className="settings-dialog-header">
+          <h2>Settings</h2>
+          <button type="button" onClick={props.onClose}>Close</button>
+        </header>
+        <div className="grid">
+          <label className="field full">
+            <span className="label">WebDAV address</span>
+            <input className="input" type="url" placeholder="https://example.com/dav" value={settings.webDavUrl} onChange={(event) => update("webDavUrl", event.currentTarget.value)} />
+          </label>
+          <label className="field">
+            <span className="label">Username</span>
+            <input className="input" type="text" autoComplete="username" value={settings.username} onChange={(event) => update("username", event.currentTarget.value)} />
+          </label>
+          <label className="field">
+            <span className="label">Password or app token</span>
+            <input className="input" type="password" autoComplete="current-password" value={settings.password} onChange={(event) => update("password", event.currentTarget.value)} />
+          </label>
+          <label className="field">
+            <span className="label">Chrome folder title</span>
+            <input className="input" type="text" value={settings.folderTitle} onChange={(event) => update("folderTitle", event.currentTarget.value)} />
+          </label>
+          <label className="field">
+            <span className="label">Device name</span>
+            <input className="input" type="text" value={settings.deviceName} onChange={(event) => update("deviceName", event.currentTarget.value)} />
+          </label>
+        </div>
+        <div className="actions">
+          <button className="button" type="button" disabled={busy} onClick={save}>Save</button>
+          <button className="button primary" type="button" disabled={busy || !settings.webDavUrl.trim()} onClick={sync}>
+            {busy ? "Working..." : "Save and sync"}
+          </button>
+        </div>
+        {settings.deviceId && <p className="message">Device ID: {settings.deviceId}</p>}
+        {message && <p className="message">{message}</p>}
+        {error && <p className="error">{error}</p>}
+      </section>
+    </div>
   );
 }
 
@@ -938,6 +1062,16 @@ function containerData(value: unknown): LauncherContainer | undefined {
 function isWebDavConfigError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error || "");
   return /webdav url is required/i.test(message);
+}
+
+function normalizeSettings(settings: SyncSettings): SyncSettings {
+  return {
+    ...settings,
+    webDavUrl: settings.webDavUrl.trim(),
+    username: settings.username.trim(),
+    folderTitle: settings.folderTitle.trim() || "Hyper Browser",
+    deviceName: settings.deviceName.trim() || "Chrome",
+  };
 }
 
 function appInitial(name: string): string {
