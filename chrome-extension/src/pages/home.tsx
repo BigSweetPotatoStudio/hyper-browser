@@ -27,6 +27,8 @@ import { sendCommand } from "./bridge";
 const LAYOUT_STORAGE_KEY = "launcherLayout";
 const LONG_PRESS_MS = 540;
 const DESKTOP_DROP_ID = "drop:desktop";
+const DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"] as const;
+const DOCK_ENTRY_ID_SET = new Set<string>(DOCK_ENTRY_IDS);
 
 type SystemAction = "chrome" | "bookmarks" | "history" | "extensions";
 
@@ -149,18 +151,22 @@ function DesktopPage() {
     id: folder.id,
     kind: "folder",
     title: folder.title || "Folder",
-    childIds: folder.childIds.filter((id) => availableEntries.has(id)),
+    childIds: folder.childIds.filter((id) => availableEntries.has(id) && !DOCK_ENTRY_ID_SET.has(id)),
     children: folder.childIds
       .map((id) => availableEntries.get(id))
-      .filter((item): item is SystemEntry | AppEntry => !!item),
+      .filter((item): item is SystemEntry | AppEntry => !!item && !DOCK_ENTRY_ID_SET.has(item.id))
   })), [availableEntries, layout.folders]);
+
+  const dockEntries = useMemo(() => DOCK_ENTRY_IDS
+    .map((id) => availableEntries.get(id))
+    .filter((item): item is SystemEntry | AppEntry => !!item), [availableEntries]);
 
   const folderEntries = useMemo(() => new Map(folders.map((folder) => [folder.id, folder] as const)), [folders]);
   const containedIds = useMemo(() => new Set(folders.flatMap((folder) => folder.childIds)), [folders]);
 
   const desktopEntries = useMemo(() => {
     const allIds = [...availableEntries.keys(), ...folderEntries.keys()];
-    const visibleIds = allIds.filter((id) => !containedIds.has(id));
+    const visibleIds = allIds.filter((id) => !containedIds.has(id) && !DOCK_ENTRY_ID_SET.has(id));
     const ordered = [
       ...layout.order.filter((id) => visibleIds.includes(id)),
       ...visibleIds.filter((id) => !layout.order.includes(id)),
@@ -493,6 +499,8 @@ function DesktopPage() {
         </DragOverlay>
       </DndContext>
 
+      <DesktopDock entries={dockEntries} editMode={editMode} onClick={clickEntry} />
+
       {menu && (
         <DesktopMenu
           folders={folders}
@@ -518,6 +526,25 @@ function DesktopPage() {
         />
       )}
     </main>
+  );
+}
+
+function DesktopDock(props: { entries: Array<SystemEntry | AppEntry>; editMode: boolean; onClick: (entry: SystemEntry | AppEntry) => void }) {
+  return (
+    <nav className="desktop-dock" aria-label="Dock">
+      {props.entries.map((entry) => (
+        <button
+          className={`desktop-dock-tile${props.editMode ? " editing" : ""}`}
+          key={entry.id}
+          title={entry.title}
+          type="button"
+          aria-label={entry.title}
+          onClick={() => props.onClick(entry)}
+        >
+          <DesktopIconVisual entry={entry} />
+        </button>
+      ))}
+    </nav>
   );
 }
 
@@ -610,12 +637,18 @@ function DesktopTileVisual({ entry }: { entry: LauncherEntry }) {
           ))}
         </span>
       ) : (
-        <span className={entry.kind === "app" && entry.app.iconDataUrl ? "desktop-icon image" : "desktop-icon"} style={{ background: entry.color }} aria-hidden="true">
-          {entry.kind === "app" && entry.app.iconDataUrl ? <img src={entry.app.iconDataUrl} alt="" /> : entry.mark}
-        </span>
+        <DesktopIconVisual entry={entry} />
       )}
       <span className="desktop-label">{entry.title}</span>
     </>
+  );
+}
+
+function DesktopIconVisual({ entry }: { entry: SystemEntry | AppEntry }) {
+  return (
+    <span className={entry.kind === "app" && entry.app.iconDataUrl ? "desktop-icon image" : "desktop-icon"} style={{ background: entry.color }} aria-hidden="true">
+      {entry.kind === "app" && entry.app.iconDataUrl ? <img src={entry.app.iconDataUrl} alt="" /> : entry.mark}
+    </span>
   );
 }
 
@@ -674,14 +707,16 @@ async function loadLayout(): Promise<LauncherLayout> {
   const stored = await chrome.storage.local.get(LAYOUT_STORAGE_KEY);
   const value = stored[LAYOUT_STORAGE_KEY] as Partial<LauncherLayout> | undefined;
   return {
-    order: Array.isArray(value?.order) ? value.order.filter((id): id is string => typeof id === "string") : [],
+    order: Array.isArray(value?.order)
+      ? value.order.filter((id): id is string => typeof id === "string" && !DOCK_ENTRY_ID_SET.has(id))
+      : [],
     folders: Array.isArray(value?.folders)
       ? value.folders
         .filter((folder): folder is FolderLayout => typeof folder?.id === "string" && Array.isArray(folder.childIds))
         .map((folder) => ({
           id: folder.id,
           title: typeof folder.title === "string" ? folder.title : "Folder",
-          childIds: folder.childIds.filter((id): id is string => typeof id === "string"),
+          childIds: folder.childIds.filter((id): id is string => typeof id === "string" && !DOCK_ENTRY_ID_SET.has(id)),
         }))
       : [],
   };
