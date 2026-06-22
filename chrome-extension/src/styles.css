@@ -172,8 +172,13 @@ button:disabled {
 
 .desktop-page {
   position: relative;
+  --desktop-top-safe: 96px;
+  --desktop-side-safe: 24px;
+  --desktop-bottom-safe: 150px;
+  height: 100vh;
   min-height: 100vh;
-  padding: 18px 24px 132px;
+  overflow: hidden;
+  padding: 0;
   color: #fff;
   background:
     linear-gradient(145deg, rgba(66, 104, 130, 0.96), rgba(20, 27, 45, 0.96) 48%, rgba(132, 30, 45, 0.9)),
@@ -275,8 +280,15 @@ button:disabled {
 }
 
 .desktop-grid {
-  min-height: calc(100vh - 150px);
+  position: fixed;
+  top: var(--desktop-top-safe);
+  right: var(--desktop-side-safe);
+  bottom: var(--desktop-bottom-safe);
+  left: var(--desktop-side-safe);
+  min-height: 0;
+  overflow: auto;
   border-radius: 18px;
+  scrollbar-width: thin;
 }
 
 .desktop-grid-over {
@@ -561,12 +573,14 @@ button:disabled {
   }
 
   .desktop-page {
-    padding: 14px;
+    --desktop-top-safe: 82px;
+    --desktop-side-safe: 18px;
+    --desktop-bottom-safe: 132px;
   }
 
   .desktop-commands {
-    position: static;
+    top: 14px;
+    right: 14px;
     justify-content: flex-end;
-    margin-bottom: 14px;
   }
 }
