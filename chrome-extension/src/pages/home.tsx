@@ -132,6 +132,14 @@ type DropPreview = {
   slotDropId?: string;
 };
 
+type ResolvedDropTarget = {
+  targetId: string;
+  targetContainer?: LauncherContainer;
+  targetFolderId?: string;
+  targetCell?: DesktopCellPosition;
+  slotDropId?: string;
+};
+
 type SyncState = "idle" | "syncing" | "success" | "error" | "needs-settings";
 
 function DesktopPage() {
@@ -404,16 +412,18 @@ function DesktopPage() {
       setDropPreview(null);
       return;
     }
-    const targetId = String(event.over.id);
-    if (targetId === String(event.active.id) || DROP_ZONE_IDS.has(targetId)) {
+    const rawTargetId = String(event.over.id);
+    const resolvedTarget = resolveDropTarget(
+      rawTargetId,
+      containerData(event.over.data.current?.container),
+      stringData(event.over.data.current?.folderId),
+      cellData(event.over.data.current),
+    );
+    if (resolvedTarget.targetId === String(event.active.id) || DROP_ZONE_IDS.has(resolvedTarget.targetId)) {
       setDropPreview(null);
       return;
     }
-    const targetContainer = containerData(event.over.data.current?.container);
-    const targetFolderId = stringData(event.over.data.current?.folderId);
-    const targetCell = cellData(event.over.data.current);
-    const slotDropId = desktopSlotDropId(targetId, targetContainer, targetCell);
-    const placementRect = slotDropId ? rectForDropSlot(slotDropId) || event.over.rect : event.over.rect;
+    const placementRect = resolvedTarget.slotDropId ? rectForDropSlot(resolvedTarget.slotDropId) || event.over.rect : event.over.rect;
     const currentPointerX = dragPointerClientX(event, pointerX.current);
     pointerX.current = currentPointerX ?? pointerX.current;
     const placement = dropPlacementFor(currentPointerX, placementRect, event.active.rect.current.translated);
@@ -421,12 +431,12 @@ function DesktopPage() {
       String(event.active.id),
       containerData(event.active.data.current?.container),
       stringData(event.active.data.current?.folderId),
-      targetId,
-      targetContainer,
-      targetFolderId,
-      targetCell,
+      resolvedTarget.targetId,
+      resolvedTarget.targetContainer,
+      resolvedTarget.targetFolderId,
+      resolvedTarget.targetCell,
       placement,
-      slotDropId,
+      resolvedTarget.slotDropId,
     ));
   }
 
@@ -479,27 +489,61 @@ function DesktopPage() {
     return desktopSlots.find((slot) => slot.entry?.id === targetId)?.dropId;
   }
 
+  function resolveDropTarget(
+    targetId: string,
+    targetContainer: LauncherContainer | undefined,
+    targetFolderId: string | undefined,
+    targetCell: DesktopCellPosition | undefined,
+  ): ResolvedDropTarget {
+    const slotDropId = desktopSlotDropId(targetId, targetContainer, targetCell);
+    if (targetCell && targetContainer === "desktop") {
+      const slot = desktopSlots.find((item) => sameCellPosition(item, targetCell));
+      if (slot?.entry) {
+        return {
+          targetId: slot.entry.id,
+          targetContainer: "desktop",
+          targetFolderId: undefined,
+          targetCell: undefined,
+          slotDropId: slot.dropId,
+        };
+      }
+    }
+    return { targetId, targetContainer, targetFolderId, targetCell, slotDropId };
+  }
+
   function rectForDropSlot(slotDropId: string): DOMRect | null {
     return rectForDropSlotId(slotDropId);
   }
 
   function handleDragEnd(event: DragEndEvent) {
     const draggedId = String(event.active.id);
-    const targetId = event.over ? String(event.over.id) : "";
     const sourceFolderId = stringData(event.active.data.current?.folderId);
     const sourceContainer = containerData(event.active.data.current?.container);
-    const targetFolderId = stringData(event.over?.data.current?.folderId);
-    const targetContainer = containerData(event.over?.data.current?.container);
-    const targetCell = cellData(event.over?.data.current);
-    const targetSlotDropId = event.over ? desktopSlotDropId(targetId, targetContainer, targetCell) : undefined;
-    const placementRect = targetSlotDropId ? rectForDropSlot(targetSlotDropId) || event.over?.rect : event.over?.rect;
+    const resolvedTarget = event.over
+      ? resolveDropTarget(
+        String(event.over.id),
+        containerData(event.over.data.current?.container),
+        stringData(event.over.data.current?.folderId),
+        cellData(event.over.data.current),
+      )
+      : null;
+    const placementRect = resolvedTarget?.slotDropId ? rectForDropSlot(resolvedTarget.slotDropId) || event.over?.rect : event.over?.rect;
     const currentPointerX = dragPointerClientX(event, pointerX.current);
     pointerX.current = currentPointerX ?? pointerX.current;
     const placement = placementRect ? dropPlacementFor(currentPointerX, placementRect, event.active.rect.current.translated) : "inside";
     setActiveId(null);
     setDropPreview(null);
-    if (!targetId || draggedId === targetId) return;
-    handleDrop(draggedId, sourceContainer, sourceFolderId, targetId, targetContainer, targetFolderId, targetCell, placement);
+    if (!resolvedTarget || draggedId === resolvedTarget.targetId) return;
+    handleDrop(
+      draggedId,
+      sourceContainer,
+      sourceFolderId,
+      resolvedTarget.targetId,
+      resolvedTarget.targetContainer,
+      resolvedTarget.targetFolderId,
+      resolvedTarget.targetCell,
+      placement,
+    );
   }
 
   function handleDrop(
@@ -1110,7 +1154,7 @@ function DesktopCellSlot(props: {
       row: props.slot.row,
       column: props.slot.column,
     },
-    disabled: !props.editMode,
+    disabled: !props.editMode || !!props.slot.entry,
   });
   const isPreview = props.dropPreview?.slotDropId === props.slot.dropId || (props.dropPreview?.kind === "cell" && props.dropPreview.targetId === props.slot.dropId);
   const dropClass = isPreview ? ` drop-${props.dropPreview?.kind} drop-${props.dropPreview?.placement}` : "";
@@ -1480,6 +1524,10 @@ function sameCells(left: DesktopCell[], right: DesktopCell[], metrics: DesktopGr
     && cell.row === sortedRight[index].row
     && cell.column === sortedRight[index].column
   ));
+}
+
+function sameCellPosition(left: DesktopCellPosition, right: DesktopCellPosition): boolean {
+  return left.page === right.page && left.row === right.row && left.column === right.column;
 }
 
 function removeFromCells(cells: DesktopCell[], itemId: string): DesktopCell[] {
