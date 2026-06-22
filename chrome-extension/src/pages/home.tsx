@@ -1,15 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { LauncherPage, LauncherSyncActions, type LauncherLayout, type LauncherLayoutStorage, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
+import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
 import { syncLauncherLayout } from "@hyper-launcher/webdav-layout";
-import { getDefaultSettings, loadSettings, saveSettings, storageGet, storageSet } from "../storage";
+import { getDefaultSettings, loadSettings, saveSettings } from "../storage";
+import { DEFAULT_DOCK_ENTRY_IDS, DEPRECATED_ENTRY_IDS, launcherLayoutStorage } from "../launcher-layout";
 import "../styles.css";
 import type { SyncResult, SyncSettings, WebAppRecord } from "../types";
 import { sendCommand } from "./bridge";
-
-const LAYOUT_STORAGE_KEY = "launcherLayout";
-const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"];
-const DEPRECATED_ENTRY_IDS = ["system:chrome"];
 
 const systemEntries: LauncherSystemEntry[] = [
   { id: "system:bookmarks", kind: "system", title: "Bookmarks", mark: "B", color: "#34a853", action: "bookmarks" },
@@ -30,16 +27,6 @@ function ChromeHomePage() {
       .then((settings) => setSettingsConfigured(!!settings.webDavUrl.trim()))
       .catch(() => undefined);
   }, []);
-
-  const storage = useMemo<LauncherLayoutStorage>(() => ({
-    async load() {
-      const stored = await storageGet<Record<string, unknown>>(LAYOUT_STORAGE_KEY);
-      return stored[LAYOUT_STORAGE_KEY] as never;
-    },
-    save(layout: LauncherLayout) {
-      return storageSet({ [LAYOUT_STORAGE_KEY]: layout });
-    },
-  }), []);
 
   const platform = useMemo<LauncherPlatform>(() => ({
     systemEntries,
@@ -82,7 +69,7 @@ function ChromeHomePage() {
         return;
       }
       const result = await sendCommand<SyncResult>("sync.run");
-      const layoutResult = await syncLauncherLayout(storage, {
+      const layoutResult = await syncLauncherLayout(launcherLayoutStorage, {
         webDavUrl: settings.webDavUrl,
         username: settings.username,
         password: settings.password,
@@ -108,7 +95,7 @@ function ChromeHomePage() {
       <LauncherPage
         key={layoutRevision}
         platform={platform}
-        storage={storage}
+        storage={launcherLayoutStorage}
         topActions={(
           <LauncherSyncActions
             labels={{

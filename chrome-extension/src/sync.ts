@@ -87,6 +87,21 @@ export async function saveRemoteWebApp(input: Partial<WebAppRecord> & { name: st
   });
 }
 
+export async function addBookmarkToSyncFolder(input: { title: string; url: string }): Promise<SyncResult> {
+  let settings = await loadSettings();
+  settings = await ensureBookmarkFolder(settings);
+  const url = input.url.trim();
+  if (!isHttpUrl(url)) throw new Error("Current tab must be an http:// or https:// page.");
+  const title = input.title.trim() || hostLabel(url);
+  const existing = (await getFolderBookmarks(settings.folderId)).find((node) => node.url === url);
+  if (existing) {
+    if (existing.title !== title) await updateBookmark(existing.id, { title });
+  } else {
+    await createBookmark({ parentId: settings.folderId, title, url });
+  }
+  return syncNow();
+}
+
 export async function deleteRemoteWebApp(startUrl: string): Promise<WebAppRecord[]> {
   return updateRemoteWebApps((records, settings) => {
     const key = startUrl.trim();
@@ -272,6 +287,18 @@ function scopeFor(url: string): string {
   } catch {
     return url;
   }
+}
+
+function hostLabel(url: string): string {
+  try {
+    return new URL(url).hostname || url;
+  } catch {
+    return url;
+  }
+}
+
+function isHttpUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url);
 }
 
 function getBookmarkTree(): Promise<chrome.bookmarks.BookmarkTreeNode[]> {

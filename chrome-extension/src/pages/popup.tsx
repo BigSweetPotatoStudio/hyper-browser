@@ -4,32 +4,44 @@ import "../styles.css";
 import type { SyncResult } from "../types";
 import { sendCommand } from "./bridge";
 
+type PopupAction = "webapp" | "bookmark" | null;
+
 function Popup() {
   const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<PopupAction>(null);
 
-  function sync() {
-    setBusy(true);
-    setMessage("Syncing...");
-    sendCommand<SyncResult>("sync.run")
+  function addWebApp() {
+    setBusyAction("webapp");
+    setMessage("Adding WebApp...");
+    sendCommand("current.addWebApp")
+      .then(() => setMessage("WebApp added and synced."))
+      .catch((error) => setMessage(error instanceof Error ? error.message : "Unable to add WebApp."))
+      .finally(() => setBusyAction(null));
+  }
+
+  function addBookmark() {
+    setBusyAction("bookmark");
+    setMessage("Adding bookmark...");
+    sendCommand<SyncResult>("current.addBookmark")
       .then((result) => {
-        setMessage(`Synced ${result.bookmarkCount} bookmarks. Tombstones: ${result.deletedBookmarkCount}.`);
+        setMessage(`Bookmark added and synced ${result.bookmarkCount} bookmarks.`);
       })
-      .catch((error) => setMessage(error instanceof Error ? error.message : "Sync failed."))
-      .finally(() => setBusy(false));
+      .catch((error) => setMessage(error instanceof Error ? error.message : "Unable to add bookmark."))
+      .finally(() => setBusyAction(null));
   }
 
   return (
     <main className="popup">
       <h1 className="title">Hyper Browser Companion</h1>
       <p className="subtitle">Desktop launcher and WebDAV tools</p>
-      <div className="actions">
+      <div className="popup-actions">
         <button className="button primary" type="button" onClick={() => sendCommand("open.home")}>Home</button>
-        <button className="button primary" type="button" disabled={busy} onClick={sync}>
-          {busy ? "Syncing..." : "Sync now"}
+        <button className="button" type="button" disabled={!!busyAction} onClick={addWebApp}>
+          {busyAction === "webapp" ? "Adding..." : "Add WebApp"}
         </button>
-        <button className="button" type="button" onClick={() => sendCommand("open.options")}>Settings</button>
-        <button className="button" type="button" onClick={() => sendCommand("open.webapps")}>WebApps</button>
+        <button className="button" type="button" disabled={!!busyAction} onClick={addBookmark}>
+          {busyAction === "bookmark" ? "Adding..." : "Add bookmark"}
+        </button>
       </div>
       {message && <p className={message.toLowerCase().includes("failed") ? "error" : "message"}>{message}</p>}
     </main>
