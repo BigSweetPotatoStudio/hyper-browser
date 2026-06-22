@@ -215,6 +215,7 @@ function DesktopPage() {
     ...systemEntries.map((item) => [item.id, item] as const),
     ...appEntries.map((item) => [item.id, item] as const),
   ]), [appEntries, systemEntries]);
+  const availableEntryIds = useMemo(() => new Set(availableEntries.keys()), [availableEntries]);
 
   const folders = useMemo<FolderEntry[]>(() => layout.folders.map((folder) => ({
     id: folder.id,
@@ -260,6 +261,10 @@ function DesktopPage() {
   const openFolderIds = openFolder?.childIds || [];
   const activeEntry = activeId ? resolveEntry(activeId) : undefined;
 
+  function commitLayout(updater: (current: LauncherLayout) => LauncherLayout) {
+    setLayout((current) => pruneEmptyFolders(updater(current), availableEntryIds));
+  }
+
   useEffect(() => {
     if (pageIndex < pageCount) return;
     setPageIndex(Math.max(0, pageCount - 1));
@@ -268,10 +273,18 @@ function DesktopPage() {
   useEffect(() => {
     if (loading) return;
     setLayout((current) => {
-      const nextCells = normalizeDesktopCells(current.cells, visibleDesktopIds, gridMetrics);
-      return sameCells(current.cells, nextCells, gridMetrics) ? current : { ...current, cells: nextCells };
+      const pruned = pruneEmptyFolders(current, availableEntryIds);
+      const nextCells = normalizeDesktopCells(pruned.cells, visibleDesktopIds, gridMetrics);
+      const next = sameCells(pruned.cells, nextCells, gridMetrics) ? pruned : { ...pruned, cells: nextCells };
+      return next === current ? current : next;
     });
-  }, [gridMetrics, loading, visibleDesktopIds]);
+  }, [availableEntryIds, gridMetrics, loading, visibleDesktopIds]);
+
+  useEffect(() => {
+    if (openFolderId && !folderEntries.has(openFolderId)) {
+      setOpenFolderId(null);
+    }
+  }, [folderEntries, openFolderId]);
 
   function resolveEntry(id: string): LauncherEntry | undefined {
     return folderEntries.get(id) || availableEntries.get(id);
@@ -413,11 +426,7 @@ function DesktopPage() {
       return;
     }
     if (targetContainer === "dock") {
-      if (!itemId.startsWith("folder:") && placement === "inside") {
-        createFolderFromDrop(itemId, targetId, "dock");
-      } else {
-        moveToDockNear(itemId, targetId, placement);
-      }
+      moveToDockNear(itemId, targetId, placement === "inside" ? "after" : placement);
       return;
     }
     if (sourceFolderId && targetFolderId === sourceFolderId) {
@@ -425,7 +434,7 @@ function DesktopPage() {
       return;
     }
     if (!targetFolderId && !itemId.startsWith("folder:") && placement === "inside") {
-      createFolderFromDrop(itemId, targetId, "desktop");
+      createFolderFromDrop(itemId, targetId);
       return;
     }
     if (sourceContainer === "folder" && !targetFolderId) {
@@ -442,7 +451,7 @@ function DesktopPage() {
   }
 
   function moveInsideFolderRelative(folderId: string, itemId: string, targetId: string, placement: DropPlacement) {
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
       folders: current.folders.map((folder) => (
         folder.id === folderId ? { ...folder, childIds: insertRelative(folder.childIds, itemId, targetId, placement) } : folder
@@ -451,7 +460,7 @@ function DesktopPage() {
   }
 
   function moveToDesktopCell(itemId: string, position: DesktopCellPosition) {
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
       cells: placeItemAtCell(current.cells, itemId, position, gridMetrics),
       dock: current.dock.filter((id) => id !== itemId),
@@ -461,7 +470,7 @@ function DesktopPage() {
   }
 
   function moveToDesktopNear(itemId: string, targetId: string, placement: DropPlacement) {
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
       cells: insertNearDesktopCell(current.cells, itemId, targetId, placement, currentPageIndex, gridMetrics),
       dock: current.dock.filter((id) => id !== itemId),
@@ -471,7 +480,7 @@ function DesktopPage() {
   }
 
   function moveToDesktopEnd(itemId: string) {
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
       cells: appendToDesktopCells(current.cells, currentPageIndex, itemId, gridMetrics),
       dock: current.dock.filter((id) => id !== itemId),
@@ -481,7 +490,7 @@ function DesktopPage() {
   }
 
   function moveToDockNear(itemId: string, targetId: string, placement: DropPlacement) {
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
       cells: removeFromCells(current.cells, itemId),
       dock: insertRelative(dockIds, itemId, targetId, placement),
@@ -491,7 +500,7 @@ function DesktopPage() {
   }
 
   function moveToDockEnd(itemId: string) {
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
       cells: removeFromCells(current.cells, itemId),
       dock: [...dockIds.filter((id) => id !== itemId), itemId],
@@ -502,7 +511,7 @@ function DesktopPage() {
 
   function moveToFolder(itemId: string, folderId: string) {
     if (itemId.startsWith("folder:")) return;
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
       cells: removeFromCells(current.cells, itemId),
       dock: current.dock.filter((id) => id !== itemId),
@@ -515,7 +524,7 @@ function DesktopPage() {
   }
 
   function moveToDesktop(itemId: string) {
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
       cells: appendToDesktopCells(current.cells, currentPageIndex, itemId, gridMetrics),
       dock: current.dock.filter((id) => id !== itemId),
@@ -525,7 +534,7 @@ function DesktopPage() {
   }
 
   function moveToDock(itemId: string) {
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
       cells: removeFromCells(current.cells, itemId),
       dock: [...current.dock.filter((id) => id !== itemId), itemId],
@@ -538,7 +547,7 @@ function DesktopPage() {
   function createFolderWith(itemId: string, sourceContainer: LauncherContainer) {
     if (itemId.startsWith("folder:")) return;
     const folderId = `folder:${crypto.randomUUID()}`;
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
       cells: sourceContainer === "dock"
         ? removeFromCells(current.cells, itemId)
@@ -555,19 +564,13 @@ function DesktopPage() {
     closeMenu();
   }
 
-  function createFolderFromDrop(itemId: string, targetId: string, targetContainer: "desktop" | "dock") {
+  function createFolderFromDrop(itemId: string, targetId: string) {
     if (itemId === targetId || itemId.startsWith("folder:") || targetId.startsWith("folder:")) return;
     const folderId = `folder:${crypto.randomUUID()}`;
-    const targetIds = targetContainer === "dock" ? dockIds : desktopIds;
-    const targetIndex = Math.max(0, targetIds.indexOf(targetId));
-    const nextIds = targetIds.filter((id) => id !== itemId && id !== targetId);
-    nextIds.splice(Math.min(targetIndex, nextIds.length), 0, folderId);
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
-      cells: targetContainer === "desktop"
-        ? replaceCellPairWithFolder(current.cells, currentPageIndex, itemId, targetId, folderId, gridMetrics)
-        : removeManyFromCells(current.cells, [itemId, targetId]),
-      dock: targetContainer === "dock" ? nextIds : current.dock.filter((id) => id !== itemId && id !== targetId),
+      cells: replaceCellPairWithFolder(current.cells, currentPageIndex, itemId, targetId, folderId, gridMetrics),
+      dock: current.dock.filter((id) => id !== itemId && id !== targetId),
       folders: [
         ...current.folders.map((folder) => ({
           ...folder,
@@ -584,7 +587,7 @@ function DesktopPage() {
     const folder = layout.folders.find((item) => item.id === folderId);
     const title = window.prompt("Folder name", folder?.title || "Folder");
     if (!title) return;
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
       folders: current.folders.map((item) => (item.id === folderId ? { ...item, title: title.trim() || "Folder" } : item)),
     }));
@@ -594,7 +597,7 @@ function DesktopPage() {
   function unpackFolder(folderId: string) {
     const folder = layout.folders.find((item) => item.id === folderId);
     if (!folder) return;
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
       cells: replaceCellWithMany(current.cells, folderId, folder.childIds, gridMetrics),
       dock: current.dock.flatMap((id) => (id === folderId ? folder.childIds : [id])),
@@ -610,7 +613,7 @@ function DesktopPage() {
     sendCommand<WebAppRecord[]>("webapps.delete", { startUrl: entry.app.startUrl })
       .then(setApps)
       .catch((deleteError) => showToast(deleteError instanceof Error ? deleteError.message : "Unable to delete WebApp."));
-    setLayout((current) => ({
+    commitLayout((current) => ({
       ...current,
       cells: removeFromCells(current.cells, itemId),
       dock: current.dock.filter((id) => id !== itemId),
@@ -1515,6 +1518,37 @@ function insertRelative(ids: string[], itemId: string, targetId: string, placeme
 
 function removeChildFromFolders(folders: FolderLayout[], itemId: string): FolderLayout[] {
   return folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) }));
+}
+
+function pruneEmptyFolders(layout: LauncherLayout, availableEntryIds?: Set<string>): LauncherLayout {
+  const removedFolderIds = new Set<string>();
+  let changed = false;
+  const folders: FolderLayout[] = [];
+
+  for (const folder of layout.folders) {
+    const childIds = uniqueStrings(folder.childIds)
+      .filter((id) => !availableEntryIds || availableEntryIds.has(id));
+    const folderChanged = !sameStringList(childIds, folder.childIds);
+    if (childIds.length === 0) {
+      removedFolderIds.add(folder.id);
+      changed = true;
+      continue;
+    }
+    if (folderChanged) changed = true;
+    folders.push(folderChanged ? { ...folder, childIds } : folder);
+  }
+
+  if (removedFolderIds.size === 0 && !changed) return layout;
+  return {
+    ...layout,
+    cells: removedFolderIds.size > 0 ? layout.cells.filter((cell) => !removedFolderIds.has(cell.id)) : layout.cells,
+    dock: removedFolderIds.size > 0 ? layout.dock.filter((id) => !removedFolderIds.has(id)) : layout.dock,
+    folders,
+  };
+}
+
+function sameStringList(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function uniqueStrings(values: unknown[]): string[] {
