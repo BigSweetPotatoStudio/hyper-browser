@@ -115,7 +115,9 @@ function DesktopPage() {
           setError("");
         }
       } catch (loadError) {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load WebApps.");
+        if (!cancelled && !isWebDavConfigError(loadError)) {
+          setError(loadError instanceof Error ? loadError.message : "Unable to load WebApps.");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -490,6 +492,11 @@ function DesktopPage() {
         <button type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })}>Settings</button>
         <button type="button" onClick={() => sendCommand("sync.run").catch((syncError) => setError(syncError instanceof Error ? syncError.message : "Sync failed."))}>Sync</button>
       </div>
+      {error && (
+        <button className="desktop-notice" type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })}>
+          {error}
+        </button>
+      )}
 
       <DndContext
         sensors={sensors}
@@ -501,7 +508,6 @@ function DesktopPage() {
         <SortableContext items={desktopIds} strategy={rectSortingStrategy}>
           <DesktopDropGrid enabled={editMode && !openFolder}>
             {loading && <div className="desktop-status">Loading desktop...</div>}
-            {error && <button className="desktop-status" type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })}>{error}</button>}
             {desktopEntries.map((entry) => (
               <DesktopTile
                 container="desktop"
@@ -772,13 +778,19 @@ function DesktopTileVisual({ entry }: { entry: LauncherEntry }) {
 
 function DesktopLauncherIcon({ entry }: { entry: LauncherEntry }) {
   if (entry.kind === "folder") {
+    const previewChildren = entry.children.slice(0, 4);
     return (
       <span className="desktop-icon desktop-folder-icon" aria-hidden="true">
-        {entry.children.slice(0, 4).map((child) => (
-          <span className="desktop-folder-dot" key={child.id} style={{ background: child.kind === "folder" ? "#dfe5eb" : child.color }}>
-            {child.kind === "folder" ? "" : child.mark.slice(0, 1)}
-          </span>
-        ))}
+        {Array.from({ length: 4 }, (_, index) => {
+          const child = previewChildren[index];
+          return child ? (
+            <span className="desktop-folder-dot" key={child.id} style={{ background: child.kind === "folder" ? "#dfe5eb" : child.color }}>
+              {child.kind === "folder" ? "" : child.mark.slice(0, 1)}
+            </span>
+          ) : (
+            <span className="desktop-folder-dot placeholder" key={`empty-${index}`} />
+          );
+        })}
       </span>
     );
   }
@@ -921,6 +933,11 @@ function stringData(value: unknown): string | undefined {
 
 function containerData(value: unknown): LauncherContainer | undefined {
   return value === "desktop" || value === "dock" || value === "folder" ? value : undefined;
+}
+
+function isWebDavConfigError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /webdav url is required/i.test(message);
 }
 
 function appInitial(name: string): string {

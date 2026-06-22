@@ -200,6 +200,24 @@ button:disabled {
   font-weight: 650;
 }
 
+.desktop-notice {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  z-index: 7;
+  max-width: min(520px, calc(100vw - 340px));
+  min-height: 36px;
+  overflow: hidden;
+  border-radius: 999px;
+  padding: 0 16px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
 .desktop-grid,
 .desktop-folder-grid {
   display: grid;
@@ -306,6 +324,11 @@ button:disabled {
   border-radius: 16px;
 }
 
+.desktop-dock-tile .desktop-folder-icon {
+  --folder-dot-size: 20px;
+  padding: 7px;
+}
+
 @keyframes desktop-wiggle {
   from {
     transform: rotate(-1.2deg) translateY(0);
@@ -341,21 +364,32 @@ button:disabled {
 }
 
 .desktop-folder-icon {
-  grid-template-columns: repeat(2, 1fr);
-  gap: 5px;
+  --folder-dot-size: 22px;
+  grid-template-rows: repeat(2, var(--folder-dot-size));
+  grid-template-columns: repeat(2, var(--folder-dot-size));
+  gap: 4px;
+  place-content: center;
+  place-items: stretch;
   padding: 8px;
   background: rgba(255, 255, 255, 0.88);
 }
 
 .desktop-folder-dot {
   display: grid;
-  width: 100%;
-  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  width: var(--folder-dot-size);
+  height: var(--folder-dot-size);
   place-items: center;
   border-radius: 8px;
   color: #fff;
   font-size: 12px;
   font-weight: 760;
+}
+
+.desktop-folder-dot.placeholder {
+  background: rgba(38, 47, 57, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(38, 47, 57, 0.08);
 }
 
 .desktop-label {
