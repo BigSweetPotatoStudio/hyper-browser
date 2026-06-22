@@ -283,16 +283,10 @@ function DesktopPage() {
 
   return (
     <main className="desktop-page">
-      <header className="desktop-toolbar">
-        <div>
-          <h1>Hyper Browser Desktop</h1>
-          <p>WebApps, Chrome pages, and sync tools in one launcher.</p>
-        </div>
-        <div className="desktop-toolbar-actions">
-          <button type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })}>Settings</button>
-          <button type="button" onClick={() => sendCommand("sync.run").catch((syncError) => setError(syncError instanceof Error ? syncError.message : "Sync failed."))}>Sync</button>
-        </div>
-      </header>
+      <div className="desktop-commands">
+        <button type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })}>Settings</button>
+        <button type="button" onClick={() => sendCommand("sync.run").catch((syncError) => setError(syncError instanceof Error ? syncError.message : "Sync failed."))}>Sync</button>
+      </div>
 
       <section className="desktop-grid" aria-label="Hyper Browser desktop">
         {loading && <div className="desktop-status">Loading desktop...</div>}
