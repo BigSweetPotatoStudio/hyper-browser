@@ -273,8 +273,8 @@ function DesktopPage() {
     [currentPageIndex, desktopCells, gridMetrics.columns],
   );
   const desktopSortingStrategy = useMemo(
-    () => createDesktopSortingStrategy(desktopIds, activeId, dropPreview),
-    [activeId, desktopIds, dropPreview],
+    () => createDesktopSortingStrategy(desktopIds, desktopCells, gridMetrics, activeId, dropPreview),
+    [activeId, desktopCells, desktopIds, dropPreview, gridMetrics],
   );
   const desktopEntries = useMemo(() => desktopIds
       .map((id) => folderEntries.get(id) || availableEntries.get(id))
@@ -480,8 +480,7 @@ function DesktopPage() {
   }
 
   function rectForDropSlot(slotDropId: string): DOMRect | null {
-    const safeDropId = slotDropId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    return document.querySelector<HTMLElement>(`[data-drop-id="${safeDropId}"]`)?.getBoundingClientRect() || null;
+    return rectForDropSlotId(slotDropId);
   }
 
   function handleDragEnd(event: DragEndEvent) {
@@ -1509,7 +1508,9 @@ function insertNearDesktopCell(cells: DesktopCell[], itemId: string, targetId: s
   const targetCell = cells.find((cell) => cell.id === targetId);
   if (!targetCell) return appendToDesktopCells(cells, pageIndex, itemId, metrics);
   const targetIndex = globalCellIndex(targetCell, metrics);
-  return placeItemAtGlobalIndex(cells, itemId, targetIndex + (placement === "after" ? 1 : 0), metrics);
+  return placement === "after"
+    ? placeItemAtGlobalIndexBackward(cells, itemId, targetIndex, metrics)
+    : placeItemAtGlobalIndex(cells, itemId, targetIndex, metrics);
 }
 
 function replaceInCellsOrAppend(cells: DesktopCell[], pageIndex: number, itemId: string, replacementId: string, metrics: DesktopGridMetrics): DesktopCell[] {
@@ -1559,6 +1560,33 @@ function placeItemAtGlobalIndex(cells: DesktopCell[], itemId: string, targetInde
     .sort((left, right) => globalCellIndex(left, metrics) - globalCellIndex(right, metrics));
 }
 
+function placeItemAtGlobalIndexBackward(cells: DesktopCell[], itemId: string, targetIndex: number, metrics: DesktopGridMetrics): DesktopCell[] {
+  const occupied = new Map<number, string>();
+  for (const cell of cells) {
+    if (cell.id === itemId) continue;
+    occupied.set(globalCellIndex(cell, metrics), cell.id);
+  }
+  let cursor = Math.max(0, targetIndex);
+  let carry: string | undefined = itemId;
+  while (carry) {
+    const nextCarry = occupied.get(cursor);
+    occupied.set(cursor, carry);
+    carry = nextCarry;
+    cursor -= 1;
+    if (cursor >= 0 || !carry) continue;
+    cursor = targetIndex + 1;
+    while (carry) {
+      const nextForwardCarry = occupied.get(cursor);
+      occupied.set(cursor, carry);
+      carry = nextForwardCarry;
+      cursor += 1;
+    }
+  }
+  return Array.from(occupied.entries())
+    .map(([index, id]) => ({ ...globalIndexToCell(index, metrics), id }))
+    .sort((left, right) => globalCellIndex(left, metrics) - globalCellIndex(right, metrics));
+}
+
 function sortCells(cells: DesktopCell[], metrics: DesktopGridMetrics): DesktopCell[] {
   return [...cells].sort((left, right) => globalCellIndex(left, metrics) - globalCellIndex(right, metrics));
 }
@@ -1595,6 +1623,11 @@ function cellDropId(cell: DesktopCellPosition): string {
   return `drop:cell:${cell.page}:${cell.row}:${cell.column}`;
 }
 
+function rectForDropSlotId(slotDropId: string): DOMRect | null {
+  const safeDropId = slotDropId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return document.querySelector<HTMLElement>(`[data-drop-id="${safeDropId}"]`)?.getBoundingClientRect() || null;
+}
+
 function dropPlacementFor(pointerClientX: number | null, overRect: ClientRect, activeRect: ClientRect | null): DropPlacement {
   const fallbackX = activeRect ? activeRect.left + activeRect.width / 2 : overRect.left + overRect.width / 2;
   const clientX = typeof pointerClientX === "number" ? pointerClientX : fallbackX;
@@ -1608,20 +1641,31 @@ function normalizeInsertPlacement(placement: DropPlacement, insidePlacement: "be
   return placement === "inside" ? insidePlacement : placement;
 }
 
-function createDesktopSortingStrategy(items: string[], activeId: string | null, dropPreview: DropPreview | null): SortingStrategy {
+function createDesktopSortingStrategy(
+  items: string[],
+  cells: DesktopCell[],
+  metrics: DesktopGridMetrics,
+  activeId: string | null,
+  dropPreview: DropPreview | null,
+): SortingStrategy {
   if (!activeId || !dropPreview?.slotDropId) return rectSortingStrategy;
   if (dropPreview.kind === "folder") return stableSortingStrategy;
   if (dropPreview.kind !== "insert") return rectSortingStrategy;
-  if (!items.includes(activeId) || !items.includes(dropPreview.targetId)) return rectSortingStrategy;
+  if (!items.includes(dropPreview.targetId)) return rectSortingStrategy;
 
-  const previewOrder = insertRelative(items, activeId, dropPreview.targetId, dropPreview.placement);
-  if (!sameStringSet(previewOrder, items)) return rectSortingStrategy;
+  const targetCell = cells.find((cell) => cell.id === dropPreview.targetId);
+  if (!targetCell) return rectSortingStrategy;
+  const targetIndex = globalCellIndex(targetCell, metrics);
+  const previewCells = dropPreview.placement === "after"
+    ? placeItemAtGlobalIndexBackward(cells, activeId, targetIndex, metrics)
+    : placeItemAtGlobalIndex(cells, activeId, targetIndex, metrics);
+  const previewCellById = new Map(previewCells.map((cell) => [cell.id, cell]));
 
   return ({ rects, index }) => {
     const id = items[index];
-    const nextIndex = previewOrder.indexOf(id);
     const currentRect = rects[index];
-    const nextRect = rects[nextIndex];
+    const nextCell = previewCellById.get(id);
+    const nextRect = nextCell ? rectForDropSlotId(cellDropId(nextCell)) : null;
     if (!currentRect || !nextRect) return null;
     return {
       x: nextRect.left - currentRect.left,
@@ -1634,10 +1678,12 @@ function createDesktopSortingStrategy(items: string[], activeId: string | null, 
 
 const stableSortingStrategy: SortingStrategy = () => null;
 
-function sameStringSet(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false;
-  const seen = new Set(left);
-  return seen.size === left.length && right.every((value) => seen.has(value));
+function insertRelative(ids: string[], itemId: string, targetId: string, placement: DropPlacement): string[] {
+  const next = ids.filter((id) => id !== itemId);
+  const index = next.indexOf(targetId);
+  if (index < 0) return [...next, itemId];
+  next.splice(placement === "after" ? index + 1 : index, 0, itemId);
+  return next;
 }
 
 function dragPointerClientX(event: { activatorEvent: Event; delta: { x: number } }, fallback: number | null): number | null {
@@ -1671,14 +1717,6 @@ const desktopCollisionDetection: CollisionDetection = (args) => {
   const centerTargets = centerCollisions.filter((collision) => !DROP_ZONE_IDS.has(String(collision.id)));
   return centerTargets.length > 0 ? centerTargets : centerCollisions;
 };
-
-function insertRelative(ids: string[], itemId: string, targetId: string, placement: DropPlacement): string[] {
-  const next = ids.filter((id) => id !== itemId);
-  const index = next.indexOf(targetId);
-  if (index < 0) return [...next, itemId];
-  next.splice(placement === "after" ? index + 1 : index, 0, itemId);
-  return next;
-}
 
 function removeChildFromFolders(folders: FolderLayout[], itemId: string): FolderLayout[] {
   return folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) }));
