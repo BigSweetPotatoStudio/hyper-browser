@@ -459,7 +459,14 @@ function DesktopPage() {
     const itemIsFolder = itemId.startsWith("folder:");
 
     if (targetEntry.kind === "folder") {
-      return itemIsFolder ? null : { kind: "folder", targetId, placement: "inside", slotDropId };
+      if (placement === "inside") return itemIsFolder ? null : { kind: "folder", targetId, placement: "inside", slotDropId };
+      if (targetContainer === "dock") {
+        return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "after") };
+      }
+      if (!targetFolderId) {
+        return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "before"), slotDropId };
+      }
+      return null;
     }
     if (sourceFolderId && targetFolderId === sourceFolderId) {
       return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "before") };
@@ -572,7 +579,21 @@ function DesktopPage() {
     if (!targetEntry) return;
     const itemIsFolder = itemId.startsWith("folder:");
     if (targetEntry.kind === "folder") {
-      if (!itemIsFolder) moveToFolder(itemId, targetEntry.id);
+      if (placement === "inside") {
+        if (!itemIsFolder) moveToFolder(itemId, targetEntry.id);
+        return;
+      }
+      if (targetContainer === "dock") {
+        moveToDockNear(itemId, targetId, normalizeInsertPlacement(placement, "after"));
+        return;
+      }
+      if (sourceContainer === "folder" && !targetFolderId) {
+        moveToDesktopNear(itemId, targetId, normalizeInsertPlacement(placement, "before"));
+        return;
+      }
+      if (!targetFolderId) {
+        moveToDesktopNear(itemId, targetId, normalizeInsertPlacement(placement, "before"));
+      }
       return;
     }
     if (sourceFolderId && targetFolderId === sourceFolderId) {
