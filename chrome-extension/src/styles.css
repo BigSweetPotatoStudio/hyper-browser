@@ -321,6 +321,25 @@ button:disabled {
   outline-offset: 8px;
 }
 
+.desktop-cell-slot {
+  position: relative;
+  width: 98px;
+  height: 105px;
+  border-radius: 14px;
+}
+
+.desktop-cell-slot.editing {
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.045);
+}
+
+.desktop-cell-slot.cell-over {
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.36),
+    0 12px 26px rgba(0, 0, 0, 0.16);
+}
+
 .desktop-tile {
   position: relative;
   display: grid;
@@ -551,6 +570,13 @@ button:disabled {
   text-align: center;
 }
 
+.desktop-empty-status {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  align-self: start;
+  pointer-events: none;
+}
+
 .desktop-folder-scrim {
   position: fixed;
   inset: 0;
@@ -572,6 +598,19 @@ button:disabled {
   background: rgba(42, 48, 58, 0.72);
   color: #fff;
   box-shadow: 0 22px 60px rgba(0, 0, 0, 0.36);
+  animation: folder-open 160ms ease-out;
+}
+
+@keyframes folder-open {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
 .desktop-folder-header {

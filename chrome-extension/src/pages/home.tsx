@@ -27,7 +27,7 @@ import type { SyncResult, SyncSettings, WebAppRecord } from "../types";
 import { sendCommand } from "./bridge";
 
 const LAYOUT_STORAGE_KEY = "launcherLayout";
-const LAYOUT_VERSION = 2;
+const LAYOUT_VERSION = 3;
 const LONG_PRESS_MS = 540;
 const DESKTOP_DROP_ID = "drop:desktop";
 const DOCK_DROP_ID = "drop:dock";
@@ -72,15 +72,23 @@ type FolderEntry = {
 
 type LauncherEntry = SystemEntry | AppEntry | FolderEntry;
 
+type DesktopCell = {
+  id: string;
+  page: number;
+  row: number;
+  column: number;
+};
+
 type LauncherLayout = {
   version: typeof LAYOUT_VERSION;
-  pages: string[][];
+  cells: DesktopCell[];
   dock: string[];
   folders: FolderLayout[];
 };
 
 type StoredLauncherLayout = Partial<LauncherLayout> & {
   order?: string[];
+  pages?: string[][];
   version?: number;
 };
 
@@ -102,8 +110,20 @@ type DesktopGridMetrics = {
   capacity: number;
 };
 
+type DesktopCellPosition = {
+  page: number;
+  row: number;
+  column: number;
+};
+
+type DesktopSlot = DesktopCellPosition & {
+  dropId: string;
+  entry?: LauncherEntry;
+  index: number;
+};
+
 type DropPreview = {
-  id: string;
+  targetId: string;
   placement: DropPlacement;
 };
 
@@ -111,7 +131,7 @@ type SyncState = "idle" | "syncing" | "success" | "error" | "needs-settings";
 
 function DesktopPage() {
   const [apps, setApps] = useState<WebAppRecord[]>([]);
-  const [layout, setLayout] = useState<LauncherLayout>({ version: LAYOUT_VERSION, pages: [[]], dock: [...DEFAULT_DOCK_ENTRY_IDS], folders: [] });
+  const [layout, setLayout] = useState<LauncherLayout>({ version: LAYOUT_VERSION, cells: [], dock: [...DEFAULT_DOCK_ENTRY_IDS], folders: [] });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -218,16 +238,23 @@ function DesktopPage() {
     return allIds.filter((id) => !containedIds.has(id) && !dockIds.includes(id));
   }, [availableEntries, containedIds, dockIds, folderEntries]);
 
-  const desktopPages = useMemo(
-    () => normalizeDesktopPages(layout.pages, visibleDesktopIds, gridMetrics.capacity),
-    [gridMetrics.capacity, layout.pages, visibleDesktopIds],
+  const desktopCells = useMemo(
+    () => normalizeDesktopCells(layout.cells, visibleDesktopIds, gridMetrics),
+    [gridMetrics, layout.cells, visibleDesktopIds],
   );
-  const pageCount = desktopPages.length;
+  const pageCount = pageCountForCells(desktopCells);
   const currentPageIndex = Math.min(pageIndex, pageCount - 1);
-  const desktopIds = desktopPages[currentPageIndex] || [];
+  const desktopIds = useMemo(
+    () => desktopCells
+      .filter((cell) => cell.page === currentPageIndex)
+      .sort((left, right) => cellIndex(left, gridMetrics.columns) - cellIndex(right, gridMetrics.columns))
+      .map((cell) => cell.id),
+    [currentPageIndex, desktopCells, gridMetrics.columns],
+  );
   const desktopEntries = useMemo(() => desktopIds
       .map((id) => folderEntries.get(id) || availableEntries.get(id))
       .filter((item): item is LauncherEntry => !!item), [availableEntries, desktopIds, folderEntries]);
+  const desktopSlots = useMemo(() => buildDesktopSlots(desktopCells, currentPageIndex, gridMetrics, resolveEntry), [currentPageIndex, desktopCells, gridMetrics, availableEntries, folderEntries]);
 
   const openFolder = openFolderId ? folderEntries.get(openFolderId) : undefined;
   const openFolderIds = openFolder?.childIds || [];
@@ -241,10 +268,10 @@ function DesktopPage() {
   useEffect(() => {
     if (loading) return;
     setLayout((current) => {
-      const nextPages = normalizeDesktopPages(current.pages, visibleDesktopIds, gridMetrics.capacity);
-      return samePages(current.pages, nextPages) ? current : { ...current, pages: nextPages };
+      const nextCells = normalizeDesktopCells(current.cells, visibleDesktopIds, gridMetrics);
+      return sameCells(current.cells, nextCells, gridMetrics) ? current : { ...current, cells: nextCells };
     });
-  }, [gridMetrics.capacity, loading, visibleDesktopIds]);
+  }, [gridMetrics, loading, visibleDesktopIds]);
 
   function resolveEntry(id: string): LauncherEntry | undefined {
     return folderEntries.get(id) || availableEntries.get(id);
@@ -337,8 +364,8 @@ function DesktopPage() {
       return;
     }
     setDropPreview({
-      id: targetId,
-      placement: dropPlacementFor(event.active.rect.current.translated, event.over.rect),
+      targetId,
+      placement: targetId.startsWith("drop:cell:") ? "inside" : dropPlacementFor(event.active.rect.current.translated, event.over.rect),
     });
   }
 
@@ -349,11 +376,12 @@ function DesktopPage() {
     const sourceContainer = containerData(event.active.data.current?.container);
     const targetFolderId = stringData(event.over?.data.current?.folderId);
     const targetContainer = containerData(event.over?.data.current?.container);
+    const targetCell = cellData(event.over?.data.current);
     const placement = event.over ? dropPlacementFor(event.active.rect.current.translated, event.over.rect) : "inside";
     setActiveId(null);
     setDropPreview(null);
     if (!targetId || draggedId === targetId) return;
-    handleDrop(draggedId, sourceContainer, sourceFolderId, targetId, targetContainer, targetFolderId, placement);
+    handleDrop(draggedId, sourceContainer, sourceFolderId, targetId, targetContainer, targetFolderId, targetCell, placement);
   }
 
   function handleDrop(
@@ -363,8 +391,13 @@ function DesktopPage() {
     targetId: string,
     targetContainer: LauncherContainer | undefined,
     targetFolderId: string | undefined,
+    targetCell: DesktopCellPosition | undefined,
     placement: DropPlacement,
   ) {
+    if (targetCell) {
+      moveToDesktopCell(itemId, targetCell);
+      return;
+    }
     if (targetId === DESKTOP_DROP_ID) {
       moveToDesktopEnd(itemId);
       return;
@@ -417,10 +450,20 @@ function DesktopPage() {
     }));
   }
 
+  function moveToDesktopCell(itemId: string, position: DesktopCellPosition) {
+    setLayout((current) => ({
+      ...current,
+      cells: placeItemAtCell(current.cells, itemId, position, gridMetrics),
+      dock: current.dock.filter((id) => id !== itemId),
+      folders: removeChildFromFolders(current.folders, itemId),
+    }));
+    setOpenFolderId(null);
+  }
+
   function moveToDesktopNear(itemId: string, targetId: string, placement: DropPlacement) {
     setLayout((current) => ({
       ...current,
-      pages: insertIntoDesktopPage(current.pages, currentPageIndex, itemId, targetId, placement, gridMetrics.capacity),
+      cells: insertNearDesktopCell(current.cells, itemId, targetId, placement, currentPageIndex, gridMetrics),
       dock: current.dock.filter((id) => id !== itemId),
       folders: removeChildFromFolders(current.folders, itemId),
     }));
@@ -430,7 +473,7 @@ function DesktopPage() {
   function moveToDesktopEnd(itemId: string) {
     setLayout((current) => ({
       ...current,
-      pages: appendToDesktopPage(current.pages, currentPageIndex, itemId, gridMetrics.capacity),
+      cells: appendToDesktopCells(current.cells, currentPageIndex, itemId, gridMetrics),
       dock: current.dock.filter((id) => id !== itemId),
       folders: removeChildFromFolders(current.folders, itemId),
     }));
@@ -440,7 +483,7 @@ function DesktopPage() {
   function moveToDockNear(itemId: string, targetId: string, placement: DropPlacement) {
     setLayout((current) => ({
       ...current,
-      pages: removeFromPages(current.pages, itemId),
+      cells: removeFromCells(current.cells, itemId),
       dock: insertRelative(dockIds, itemId, targetId, placement),
       folders: removeChildFromFolders(current.folders, itemId),
     }));
@@ -450,7 +493,7 @@ function DesktopPage() {
   function moveToDockEnd(itemId: string) {
     setLayout((current) => ({
       ...current,
-      pages: removeFromPages(current.pages, itemId),
+      cells: removeFromCells(current.cells, itemId),
       dock: [...dockIds.filter((id) => id !== itemId), itemId],
       folders: removeChildFromFolders(current.folders, itemId),
     }));
@@ -461,7 +504,7 @@ function DesktopPage() {
     if (itemId.startsWith("folder:")) return;
     setLayout((current) => ({
       ...current,
-      pages: removeFromPages(current.pages, itemId),
+      cells: removeFromCells(current.cells, itemId),
       dock: current.dock.filter((id) => id !== itemId),
       folders: current.folders.map((folder) => {
         const childIds = folder.childIds.filter((id) => id !== itemId);
@@ -474,7 +517,7 @@ function DesktopPage() {
   function moveToDesktop(itemId: string) {
     setLayout((current) => ({
       ...current,
-      pages: appendToDesktopPage(current.pages, currentPageIndex, itemId, gridMetrics.capacity),
+      cells: appendToDesktopCells(current.cells, currentPageIndex, itemId, gridMetrics),
       dock: current.dock.filter((id) => id !== itemId),
       folders: removeChildFromFolders(current.folders, itemId),
     }));
@@ -484,7 +527,7 @@ function DesktopPage() {
   function moveToDock(itemId: string) {
     setLayout((current) => ({
       ...current,
-      pages: removeFromPages(current.pages, itemId),
+      cells: removeFromCells(current.cells, itemId),
       dock: [...current.dock.filter((id) => id !== itemId), itemId],
       folders: removeChildFromFolders(current.folders, itemId),
     }));
@@ -497,9 +540,9 @@ function DesktopPage() {
     const folderId = `folder:${crypto.randomUUID()}`;
     setLayout((current) => ({
       ...current,
-      pages: sourceContainer === "dock"
-        ? removeFromPages(current.pages, itemId)
-        : replaceInPagesOrAppend(current.pages, currentPageIndex, itemId, folderId, gridMetrics.capacity),
+      cells: sourceContainer === "dock"
+        ? removeFromCells(current.cells, itemId)
+        : replaceInCellsOrAppend(current.cells, currentPageIndex, itemId, folderId, gridMetrics),
       dock: sourceContainer === "dock"
         ? current.dock.map((id) => (id === itemId ? folderId : id))
         : current.dock.filter((id) => id !== itemId),
@@ -521,9 +564,9 @@ function DesktopPage() {
     nextIds.splice(Math.min(targetIndex, nextIds.length), 0, folderId);
     setLayout((current) => ({
       ...current,
-      pages: targetContainer === "desktop"
-        ? replacePairWithFolder(current.pages, currentPageIndex, itemId, targetId, folderId, gridMetrics.capacity)
-        : removeManyFromPages(current.pages, [itemId, targetId]),
+      cells: targetContainer === "desktop"
+        ? replaceCellPairWithFolder(current.cells, currentPageIndex, itemId, targetId, folderId, gridMetrics)
+        : removeManyFromCells(current.cells, [itemId, targetId]),
       dock: targetContainer === "dock" ? nextIds : current.dock.filter((id) => id !== itemId && id !== targetId),
       folders: [
         ...current.folders.map((folder) => ({
@@ -553,7 +596,7 @@ function DesktopPage() {
     if (!folder) return;
     setLayout((current) => ({
       ...current,
-      pages: replaceInPagesWithMany(current.pages, folderId, folder.childIds, gridMetrics.capacity),
+      cells: replaceCellWithMany(current.cells, folderId, folder.childIds, gridMetrics),
       dock: current.dock.flatMap((id) => (id === folderId ? folder.childIds : [id])),
       folders: current.folders.filter((item) => item.id !== folderId),
     }));
@@ -569,7 +612,7 @@ function DesktopPage() {
       .catch((deleteError) => showToast(deleteError instanceof Error ? deleteError.message : "Unable to delete WebApp."));
     setLayout((current) => ({
       ...current,
-      pages: removeFromPages(current.pages, itemId),
+      cells: removeFromCells(current.cells, itemId),
       dock: current.dock.filter((id) => id !== itemId),
       folders: removeChildFromFolders(current.folders, itemId),
     }));
@@ -635,22 +678,30 @@ function DesktopPage() {
         onDragStart={handleDragStart}
       >
         <SortableContext items={desktopIds} strategy={rectSortingStrategy}>
-          <DesktopDropGrid columns={gridMetrics.columns} enabled={editMode && !openFolder}>
+          <DesktopDropGrid columns={gridMetrics.columns} editMode={editMode} enabled={editMode && !openFolder}>
             {loading && <div className="desktop-status">Loading desktop...</div>}
-            {!loading && desktopEntries.length === 0 && <div className="desktop-status">This page is empty.</div>}
-            {desktopEntries.map((entry) => (
-              <DesktopTile
-                container="desktop"
+            {!loading && desktopEntries.length === 0 && !editMode && <div className="desktop-status desktop-empty-status">This page is empty.</div>}
+            {!loading && desktopSlots.map((slot) => (
+              <DesktopCellSlot
                 dropPreview={dropPreview}
-                entry={entry}
                 editMode={editMode}
-                folderId={undefined}
-                key={entry.id}
-                onClick={clickEntry}
-                onContextMenu={openContextMenu}
-                onPointerDown={startLongPress}
-                onPointerEnd={clearLongPress}
-              />
+                key={slot.dropId}
+                slot={slot}
+              >
+                {slot.entry && (
+                  <DesktopTile
+                    container="desktop"
+                    dropPreview={dropPreview}
+                    entry={slot.entry}
+                    editMode={editMode}
+                    folderId={undefined}
+                    onClick={clickEntry}
+                    onContextMenu={openContextMenu}
+                    onPointerDown={startLongPress}
+                    onPointerEnd={clearLongPress}
+                  />
+                )}
+              </DesktopCellSlot>
             ))}
           </DesktopDropGrid>
         </SortableContext>
@@ -712,12 +763,12 @@ function DesktopPage() {
 
       {pageCount > 1 && (
         <div className="desktop-page-dots" aria-label="Desktop pages">
-          {desktopPages.map((page, index) => (
+          {Array.from({ length: pageCount }, (_, index) => (
             <button
               aria-label={`Page ${index + 1}`}
               aria-current={index === currentPageIndex ? "page" : undefined}
               className={index === currentPageIndex ? "active" : ""}
-              key={`page-${index}-${page.length}`}
+              key={`page-${index}`}
               type="button"
               onClick={() => setPageIndex(index)}
             />
@@ -921,7 +972,7 @@ function DesktopDock(props: {
   );
 }
 
-function DesktopDropGrid(props: { children: React.ReactNode; columns: number; enabled: boolean }) {
+function DesktopDropGrid(props: { children: React.ReactNode; columns: number; editMode: boolean; enabled: boolean }) {
   const { setNodeRef, isOver } = useDroppable({
     id: DESKTOP_DROP_ID,
     data: { kind: "desktop" },
@@ -929,9 +980,38 @@ function DesktopDropGrid(props: { children: React.ReactNode; columns: number; en
   });
   const style = { "--desktop-columns": String(props.columns) } as React.CSSProperties;
   return (
-    <section className={`desktop-grid${isOver ? " desktop-grid-over" : ""}`} aria-label="Hyper Browser desktop" ref={setNodeRef} style={style}>
+    <section className={`desktop-grid${props.editMode ? " editing" : ""}${isOver ? " desktop-grid-over" : ""}`} aria-label="Hyper Browser desktop" ref={setNodeRef} style={style}>
       {props.children}
     </section>
+  );
+}
+
+function DesktopCellSlot(props: {
+  children: React.ReactNode;
+  dropPreview: DropPreview | null;
+  editMode: boolean;
+  slot: DesktopSlot;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: props.slot.dropId,
+    data: {
+      container: "desktop" satisfies LauncherContainer,
+      kind: "cell",
+      page: props.slot.page,
+      row: props.slot.row,
+      column: props.slot.column,
+    },
+    disabled: !props.editMode,
+  });
+  const isPreview = props.dropPreview?.targetId === props.slot.dropId;
+  return (
+    <div
+      className={`desktop-cell-slot${props.editMode ? " editing" : ""}${isOver || isPreview ? " cell-over" : ""}`}
+      data-cell={`${props.slot.page}:${props.slot.row}:${props.slot.column}`}
+      ref={setNodeRef}
+    >
+      {props.children}
+    </div>
   );
 }
 
@@ -978,7 +1058,7 @@ function DesktopTile(props: {
   };
   const dragListeners = props.editMode ? listeners : undefined;
   const dragAttributes = props.editMode ? attributes : undefined;
-  const dropClass = props.dropPreview?.id === props.entry.id ? ` drop-${props.dropPreview.placement}` : "";
+  const dropClass = props.dropPreview?.targetId === props.entry.id ? ` drop-${props.dropPreview.placement}` : "";
 
   return (
     <button
@@ -1030,7 +1110,7 @@ function DockTile(props: {
   };
   const dragListeners = props.editMode ? listeners : undefined;
   const dragAttributes = props.editMode ? attributes : undefined;
-  const dropClass = props.dropPreview?.id === props.entry.id ? ` drop-${props.dropPreview.placement}` : "";
+  const dropClass = props.dropPreview?.targetId === props.entry.id ? ` drop-${props.dropPreview.placement}` : "";
 
   return (
     <button
@@ -1159,6 +1239,7 @@ async function loadLayout(): Promise<LauncherLayout> {
   const value = stored[LAYOUT_STORAGE_KEY] as StoredLauncherLayout | undefined;
   const dock = Array.isArray(value?.dock) ? uniqueStrings(value.dock) : [...DEFAULT_DOCK_ENTRY_IDS];
   const dockSet = new Set(dock);
+  const metrics = calculateDesktopGridMetrics();
   const legacyOrder = Array.isArray(value?.order)
     ? uniqueStrings(value.order).filter((id) => !dockSet.has(id))
     : [];
@@ -1167,9 +1248,19 @@ async function loadLayout(): Promise<LauncherLayout> {
       .filter((page): page is string[] => Array.isArray(page))
       .map((page) => uniqueStrings(page).filter((id) => !dockSet.has(id)))
     : [];
+  const cells = Array.isArray(value?.cells)
+    ? value.cells
+      .filter((cell): cell is DesktopCell => (
+        typeof cell?.id === "string"
+        && Number.isInteger(cell.page)
+        && Number.isInteger(cell.row)
+        && Number.isInteger(cell.column)
+      ))
+      .filter((cell) => !dockSet.has(cell.id))
+    : [];
   return {
     version: LAYOUT_VERSION,
-    pages: pages.length > 0 ? normalizeDesktopPages(pages, [], Number.MAX_SAFE_INTEGER) : [legacyOrder],
+    cells: cells.length > 0 ? normalizeDesktopCells(cells, [], metrics) : (pages.length > 0 ? pagesToCells(pages, metrics) : idsToCells(legacyOrder, metrics, 0)),
     dock,
     folders: Array.isArray(value?.folders)
       ? value.folders
@@ -1208,112 +1299,188 @@ function calculateDesktopGridMetrics(): DesktopGridMetrics {
   return { columns, rows, capacity: columns * rows };
 }
 
-function normalizeDesktopPages(pages: string[][], visibleIds: string[], capacity: number): string[][] {
+function buildDesktopSlots(cells: DesktopCell[], page: number, metrics: DesktopGridMetrics, resolveEntry: (id: string) => LauncherEntry | undefined): DesktopSlot[] {
+  const entriesByIndex = new Map<number, LauncherEntry>();
+  for (const cell of cells) {
+    if (cell.page !== page) continue;
+    const entry = resolveEntry(cell.id);
+    if (entry) entriesByIndex.set(cellIndex(cell, metrics.columns), entry);
+  }
+  return Array.from({ length: metrics.capacity }, (_, index) => {
+    const position = indexToCell(index, metrics, page);
+    return {
+      ...position,
+      dropId: cellDropId(position),
+      entry: entriesByIndex.get(index),
+      index,
+    };
+  });
+}
+
+function normalizeDesktopCells(cells: DesktopCell[], visibleIds: string[], metrics: DesktopGridMetrics): DesktopCell[] {
   const visibleSet = new Set(visibleIds);
   const hasVisibleSet = visibleSet.size > 0;
   const seen = new Set<string>();
-  const nextPages = (pages.length > 0 ? pages : [[]]).map((page) => {
-    const cleanPage: string[] = [];
-    for (const id of page) {
-      if (seen.has(id)) continue;
-      if (hasVisibleSet && !visibleSet.has(id)) continue;
-      seen.add(id);
-      cleanPage.push(id);
-    }
-    return cleanPage;
-  });
+  const usedIndexes = new Set<number>();
+  const nextCells: DesktopCell[] = [];
+  for (const cell of cells) {
+    if (seen.has(cell.id)) continue;
+    if (hasVisibleSet && !visibleSet.has(cell.id)) continue;
+    const normalized = normalizeCell(cell, metrics);
+    let globalIndex = globalCellIndex(normalized, metrics);
+    while (usedIndexes.has(globalIndex)) globalIndex += 1;
+    const nextCell = globalIndexToCell(globalIndex, metrics);
+    nextCells.push({ ...nextCell, id: cell.id });
+    seen.add(cell.id);
+    usedIndexes.add(globalIndex);
+  }
   for (const id of visibleIds) {
     if (seen.has(id)) continue;
-    nextPages[nextPages.length - 1].push(id);
+    let globalIndex = 0;
+    while (usedIndexes.has(globalIndex)) globalIndex += 1;
+    const nextCell = globalIndexToCell(globalIndex, metrics);
+    nextCells.push({ ...nextCell, id });
     seen.add(id);
+    usedIndexes.add(globalIndex);
   }
-  return rebalanceDesktopPages(nextPages, capacity);
+  return sortCells(nextCells, metrics);
 }
 
-function rebalanceDesktopPages(pages: string[][], capacity: number): string[][] {
-  const pageCapacity = Math.max(1, Math.floor(capacity));
-  const nextPages = pages.length > 0 ? pages.map((page) => [...page]) : [[]];
-  for (let index = 0; index < nextPages.length; index += 1) {
-    if (nextPages[index].length <= pageCapacity) continue;
-    const overflow = nextPages[index].splice(pageCapacity);
-    if (nextPages[index + 1]) {
-      nextPages[index + 1] = [...overflow, ...nextPages[index + 1]];
-    } else {
-      nextPages.push(overflow);
-    }
-  }
-  while (nextPages.length > 1 && nextPages[nextPages.length - 1].length === 0) {
-    nextPages.pop();
-  }
-  return nextPages.length > 0 ? nextPages : [[]];
+function idsToCells(ids: string[], metrics: DesktopGridMetrics, startPage: number): DesktopCell[] {
+  return uniqueStrings(ids).map((id, index) => ({ ...indexToCell(index, metrics, startPage), id }));
 }
 
-function samePages(left: string[][], right: string[][]): boolean {
+function pagesToCells(pages: string[][], metrics: DesktopGridMetrics): DesktopCell[] {
+  return pages.flatMap((page, pageIndex) => idsToCells(page, metrics, pageIndex));
+}
+
+function pageCountForCells(cells: DesktopCell[]): number {
+  if (cells.length === 0) return 1;
+  return Math.max(1, Math.max(...cells.map((cell) => cell.page)) + 1);
+}
+
+function sameCells(left: DesktopCell[], right: DesktopCell[], metrics: DesktopGridMetrics): boolean {
   if (left.length !== right.length) return false;
-  return left.every((page, pageIndex) => page.length === right[pageIndex].length && page.every((id, idIndex) => id === right[pageIndex][idIndex]));
+  const sortedLeft = sortCells(left, metrics);
+  const sortedRight = sortCells(right, metrics);
+  return sortedLeft.every((cell, index) => (
+    cell.id === sortedRight[index].id
+    && cell.page === sortedRight[index].page
+    && cell.row === sortedRight[index].row
+    && cell.column === sortedRight[index].column
+  ));
 }
 
-function removeFromPages(pages: string[][], itemId: string): string[][] {
-  return pages.map((page) => page.filter((id) => id !== itemId));
+function removeFromCells(cells: DesktopCell[], itemId: string): DesktopCell[] {
+  return cells.filter((cell) => cell.id !== itemId);
 }
 
-function removeManyFromPages(pages: string[][], itemIds: string[]): string[][] {
+function removeManyFromCells(cells: DesktopCell[], itemIds: string[]): DesktopCell[] {
   const itemSet = new Set(itemIds);
-  return pages.map((page) => page.filter((id) => !itemSet.has(id)));
+  return cells.filter((cell) => !itemSet.has(cell.id));
 }
 
-function insertIntoDesktopPage(pages: string[][], pageIndex: number, itemId: string, targetId: string, placement: DropPlacement, capacity: number): string[][] {
-  const nextPages = removeFromPages(pages, itemId);
-  const targetPageIndex = nextPages.findIndex((page) => page.includes(targetId));
-  const resolvedPageIndex = targetPageIndex >= 0 ? targetPageIndex : Math.min(pageIndex, nextPages.length - 1);
-  const page = nextPages[resolvedPageIndex] || [];
-  const targetIndex = page.indexOf(targetId);
-  const insertIndex = targetIndex < 0 ? page.length : targetIndex + (placement === "after" ? 1 : 0);
-  const nextPage = [...page];
-  nextPage.splice(insertIndex, 0, itemId);
-  nextPages[resolvedPageIndex] = nextPage;
-  return rebalanceDesktopPages(nextPages, capacity);
+function placeItemAtCell(cells: DesktopCell[], itemId: string, position: DesktopCellPosition, metrics: DesktopGridMetrics): DesktopCell[] {
+  return placeItemAtGlobalIndex(cells, itemId, globalCellIndex(position, metrics), metrics);
 }
 
-function appendToDesktopPage(pages: string[][], pageIndex: number, itemId: string, capacity: number): string[][] {
-  const nextPages = removeFromPages(pages, itemId);
-  const resolvedPageIndex = Math.max(0, Math.min(pageIndex, nextPages.length - 1));
-  const page = nextPages[resolvedPageIndex] || [];
-  nextPages[resolvedPageIndex] = [...page, itemId];
-  return rebalanceDesktopPages(nextPages, capacity);
+function appendToDesktopCells(cells: DesktopCell[], pageIndex: number, itemId: string, metrics: DesktopGridMetrics): DesktopCell[] {
+  const occupied = new Set(removeFromCells(cells, itemId).map((cell) => globalCellIndex(cell, metrics)));
+  let globalIndex = pageIndex * metrics.capacity;
+  const pageEnd = globalIndex + metrics.capacity;
+  while (globalIndex < pageEnd && occupied.has(globalIndex)) globalIndex += 1;
+  while (occupied.has(globalIndex)) globalIndex += 1;
+  return placeItemAtGlobalIndex(cells, itemId, globalIndex, metrics);
 }
 
-function replaceInPagesOrAppend(pages: string[][], pageIndex: number, itemId: string, replacementId: string, capacity: number): string[][] {
+function insertNearDesktopCell(cells: DesktopCell[], itemId: string, targetId: string, placement: DropPlacement, pageIndex: number, metrics: DesktopGridMetrics): DesktopCell[] {
+  const targetCell = cells.find((cell) => cell.id === targetId);
+  if (!targetCell) return appendToDesktopCells(cells, pageIndex, itemId, metrics);
+  const targetIndex = globalCellIndex(targetCell, metrics);
+  return placeItemAtGlobalIndex(cells, itemId, targetIndex + (placement === "after" ? 1 : 0), metrics);
+}
+
+function replaceInCellsOrAppend(cells: DesktopCell[], pageIndex: number, itemId: string, replacementId: string, metrics: DesktopGridMetrics): DesktopCell[] {
   let replaced = false;
-  const nextPages = pages.map((page) => page.flatMap((id) => {
-    if (id !== itemId) return [id];
+  const nextCells = cells.map((cell) => {
+    if (cell.id !== itemId) return cell;
     replaced = true;
-    return [replacementId];
-  }));
-  return replaced ? rebalanceDesktopPages(nextPages, capacity) : appendToDesktopPage(nextPages, pageIndex, replacementId, capacity);
+    return { ...cell, id: replacementId };
+  });
+  return replaced ? sortCells(nextCells, metrics) : appendToDesktopCells(nextCells, pageIndex, replacementId, metrics);
 }
 
-function replacePairWithFolder(pages: string[][], pageIndex: number, itemId: string, targetId: string, folderId: string, capacity: number): string[][] {
-  const flatIds = pages.flat().filter((id) => id !== itemId && id !== targetId);
-  const targetIndex = Math.max(0, pages.flat().indexOf(targetId));
-  flatIds.splice(Math.min(targetIndex, flatIds.length), 0, folderId);
-  const nextPages = chunkIds(flatIds, capacity);
-  if (nextPages.length > 0) return nextPages;
-  return appendToDesktopPage([[]], pageIndex, folderId, capacity);
+function replaceCellPairWithFolder(cells: DesktopCell[], pageIndex: number, itemId: string, targetId: string, folderId: string, metrics: DesktopGridMetrics): DesktopCell[] {
+  const targetCell = cells.find((cell) => cell.id === targetId);
+  const nextCells = removeManyFromCells(cells, [itemId, targetId]);
+  if (targetCell) return placeItemAtGlobalIndex(nextCells, folderId, globalCellIndex(targetCell, metrics), metrics);
+  return appendToDesktopCells(nextCells, pageIndex, folderId, metrics);
 }
 
-function replaceInPagesWithMany(pages: string[][], itemId: string, replacementIds: string[], capacity: number): string[][] {
-  const nextPages = pages.map((page) => page.flatMap((id) => (id === itemId ? replacementIds : [id])));
-  return rebalanceDesktopPages(nextPages, capacity);
-}
-
-function chunkIds(ids: string[], capacity: number): string[][] {
-  const pageCapacity = Math.max(1, Math.floor(capacity));
-  const pages: string[][] = [];
-  for (let index = 0; index < ids.length; index += pageCapacity) {
-    pages.push(ids.slice(index, index + pageCapacity));
+function replaceCellWithMany(cells: DesktopCell[], itemId: string, replacementIds: string[], metrics: DesktopGridMetrics): DesktopCell[] {
+  const targetCell = cells.find((cell) => cell.id === itemId);
+  let nextCells = removeFromCells(cells, itemId);
+  let globalIndex = targetCell ? globalCellIndex(targetCell, metrics) : 0;
+  for (const replacementId of replacementIds) {
+    nextCells = placeItemAtGlobalIndex(nextCells, replacementId, globalIndex, metrics);
+    globalIndex += 1;
   }
-  return pages.length > 0 ? pages : [[]];
+  return sortCells(nextCells, metrics);
+}
+
+function placeItemAtGlobalIndex(cells: DesktopCell[], itemId: string, targetIndex: number, metrics: DesktopGridMetrics): DesktopCell[] {
+  const occupied = new Map<number, string>();
+  for (const cell of cells) {
+    if (cell.id === itemId) continue;
+    occupied.set(globalCellIndex(cell, metrics), cell.id);
+  }
+  let cursor = Math.max(0, targetIndex);
+  let carry: string | undefined = itemId;
+  while (carry) {
+    const nextCarry = occupied.get(cursor);
+    occupied.set(cursor, carry);
+    carry = nextCarry;
+    cursor += 1;
+  }
+  return Array.from(occupied.entries())
+    .map(([index, id]) => ({ ...globalIndexToCell(index, metrics), id }))
+    .sort((left, right) => globalCellIndex(left, metrics) - globalCellIndex(right, metrics));
+}
+
+function sortCells(cells: DesktopCell[], metrics: DesktopGridMetrics): DesktopCell[] {
+  return [...cells].sort((left, right) => globalCellIndex(left, metrics) - globalCellIndex(right, metrics));
+}
+
+function normalizeCell(cell: DesktopCell, metrics: DesktopGridMetrics): DesktopCell {
+  const page = Math.max(0, cell.page);
+  const row = Math.max(0, Math.min(metrics.rows - 1, cell.row));
+  const column = Math.max(0, Math.min(metrics.columns - 1, cell.column));
+  return { ...cell, page, row, column };
+}
+
+function cellIndex(cell: DesktopCellPosition, columns: number): number {
+  return cell.row * columns + cell.column;
+}
+
+function globalCellIndex(cell: DesktopCellPosition, metrics: DesktopGridMetrics): number {
+  return cell.page * metrics.capacity + cellIndex(cell, metrics.columns);
+}
+
+function indexToCell(index: number, metrics: DesktopGridMetrics, page: number): DesktopCellPosition {
+  return {
+    page,
+    row: Math.floor(index / metrics.columns),
+    column: index % metrics.columns,
+  };
+}
+
+function globalIndexToCell(index: number, metrics: DesktopGridMetrics): DesktopCellPosition {
+  const page = Math.floor(index / metrics.capacity);
+  return indexToCell(index % metrics.capacity, metrics, page);
+}
+
+function cellDropId(cell: DesktopCellPosition): string {
+  return `drop:cell:${cell.page}:${cell.row}:${cell.column}`;
 }
 
 function dropPlacementFor(activeRect: ClientRect | null, overRect: ClientRect): DropPlacement {
@@ -1365,6 +1532,18 @@ function stringData(value: unknown): string | undefined {
 
 function containerData(value: unknown): LauncherContainer | undefined {
   return value === "desktop" || value === "dock" || value === "folder" ? value : undefined;
+}
+
+function cellData(value: unknown): DesktopCellPosition | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const data = value as Record<string, unknown>;
+  if (data.kind !== "cell") return undefined;
+  if (!Number.isInteger(data.page) || !Number.isInteger(data.row) || !Number.isInteger(data.column)) return undefined;
+  return {
+    page: Math.max(0, Number(data.page)),
+    row: Math.max(0, Number(data.row)),
+    column: Math.max(0, Number(data.column)),
+  };
 }
 
 function isWebDavConfigError(error: unknown): boolean {
