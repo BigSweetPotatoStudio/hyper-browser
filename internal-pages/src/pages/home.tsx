@@ -7,6 +7,7 @@ import type { BrowserSettings, WebDavSyncResult } from "../hyper-browser";
 import "../styles.css";
 import { t } from "../i18n";
 import { createLauncherLayoutStorage } from "../launcher-layout-storage";
+import { checkAndroidWebDavRemoteChanges, runAndroidWebDavSync } from "../webdav-sync";
 
 const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"];
 const AUTO_SYNC_DEBOUNCE_MS = 1800;
@@ -42,13 +43,14 @@ function HomePage() {
         autoSyncPending.current = false;
         const settings = await window.hyperBrowser.requestSettingsData();
         if (!settings.webDavSyncEnabled || !isWebDavConfigured(settings)) return;
-        const result = await window.hyperBrowser.runWebDavSync();
+        const result = await runAndroidWebDavSync(settings);
+        const syncSettings = result.settings || settings;
         const layoutResult = await syncLauncherLayout(storage, {
-          webDavUrl: settings.webDavSyncUrl,
-          username: settings.webDavSyncUsername,
-          password: settings.webDavSyncPassword,
-          deviceId: settings.webDavSyncDeviceId,
-          deviceName: settings.webDavSyncDeviceName || "Hyper Browser Android",
+          webDavUrl: syncSettings.webDavSyncUrl,
+          username: syncSettings.webDavSyncUsername,
+          password: syncSettings.webDavSyncPassword,
+          deviceId: syncSettings.webDavSyncDeviceId,
+          deviceName: syncSettings.webDavSyncDeviceName || "Hyper Browser Android",
           clientName: "hyper-browser-android",
         }, await launcherSyncOptions());
         const importedWebApps = result.importedWebAppCount + result.removedWebAppCount > 0;
@@ -72,17 +74,18 @@ function HomePage() {
     try {
       const settings = await window.hyperBrowser.requestSettingsData();
       if (!settings.webDavSyncEnabled || !isWebDavConfigured(settings)) return;
-      const remoteCheck = await window.hyperBrowser.checkWebDavRemoteChanges(lastSeenRemoteUpdatedAt.current);
+      const remoteCheck = await checkAndroidWebDavRemoteChanges(lastSeenRemoteUpdatedAt.current);
       if (remoteCheck.updatedAt > 0) lastSeenRemoteUpdatedAt.current = remoteCheck.updatedAt;
+      const syncResult = remoteCheck.syncResult || null;
+      const syncSettings = syncResult?.settings || settings;
       const layoutResult = await syncLauncherLayout(storage, {
-        webDavUrl: settings.webDavSyncUrl,
-        username: settings.webDavSyncUsername,
-        password: settings.webDavSyncPassword,
-        deviceId: settings.webDavSyncDeviceId,
-        deviceName: settings.webDavSyncDeviceName || "Hyper Browser Android",
+        webDavUrl: syncSettings.webDavSyncUrl,
+        username: syncSettings.webDavSyncUsername,
+        password: syncSettings.webDavSyncPassword,
+        deviceId: syncSettings.webDavSyncDeviceId,
+        deviceName: syncSettings.webDavSyncDeviceName || "Hyper Browser Android",
         clientName: "hyper-browser-android",
       }, await launcherSyncOptions());
-      const syncResult = remoteCheck.syncResult || null;
       if (syncResult) {
         setSyncState("success");
         setSyncMessage(webDavSyncSummary(syncResult));
@@ -148,16 +151,26 @@ function HomePage() {
       if (action === "history") window.hyperBrowser.showHistory();
       if (action === "extensions") window.hyperBrowser.showExtensions();
     },
-    deleteApp: (app) => {
-      return window.hyperBrowser.deleteApp(app.id);
+    deleteApp: async (app) => {
+      const items = await window.hyperBrowser.deleteApp(app.id);
+      runAutoSync({ refreshLauncher: true });
+      return items;
     },
-    saveApp: (app, changes) => window.hyperBrowser.updateApp(app.id, changes.name, changes.startUrl, changes.iconDataUrl),
+    saveApp: async (app, changes) => {
+      const items = await window.hyperBrowser.updateApp(app.id, changes.name, changes.startUrl, changes.iconDataUrl);
+      runAutoSync({ refreshLauncher: true });
+      return items;
+    },
     chooseAppIcon: (app) => window.hyperBrowser.chooseAppIcon(app.id),
     pinApp: (app) => {
       window.hyperBrowser.pinApp(app.id);
     },
-    updateAppIcon: (app, iconDataUrl) => window.hyperBrowser.updateAppIcon(app.id, iconDataUrl),
-  }), [systemEntries]);
+    updateAppIcon: async (app, iconDataUrl) => {
+      const items = await window.hyperBrowser.updateAppIcon(app.id, iconDataUrl);
+      runAutoSync({ refreshLauncher: true });
+      return items;
+    },
+  }), [runAutoSync, systemEntries]);
 
   const labels = useMemo(() => ({
     loading: t("apps.loading"),
@@ -224,7 +237,7 @@ function HomePage() {
           window.hyperBrowser.showSettings();
           return null;
         }
-        return window.hyperBrowser.runWebDavSync();
+        return runAndroidWebDavSync(settings);
       })
       .then(async (result) => {
         if (!result) return;

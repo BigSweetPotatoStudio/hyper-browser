@@ -124,7 +124,9 @@ function CompanionHomePage() {
 
   useEffect(() => {
     const onMessage = (message: { type?: string }) => {
-      if (message?.type === "remote.synced") setLayoutRevision((current) => current + 1);
+      if (message?.type === "remote.synced" || message?.type === "launcher.changed") {
+        setLayoutRevision((current) => current + 1);
+      }
     };
     browser.runtime.onMessage.addListener(onMessage);
     return () => browser.runtime.onMessage.removeListener(onMessage);

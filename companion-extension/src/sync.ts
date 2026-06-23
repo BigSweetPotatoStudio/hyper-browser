@@ -1,10 +1,26 @@
 import { browser, type Browser } from "wxt/browser";
+import {
+  activeWebApps,
+  applyLocalWebAppTombstones,
+  BOOKMARKS_FILE,
+  bookmarksDocument,
+  hostLabel,
+  indexWebApps,
+  isHttpUrl,
+  MANIFEST_FILE,
+  mergeBookmarkRecords,
+  normalizeTimestamp,
+  sameBookmarkRecords,
+  tombstoneWebAppRecord,
+  upsertWebAppRecord,
+  WEBAPPS_FILE,
+  webAppsDocument,
+} from "@hyper-sync";
+import { COMPANION_CLIENT_NAME, DEFAULT_DEVICE_NAME, DEVICE_STATE_PREFIX } from "./identity";
 import { loadMetadata, loadSettings, saveMetadata, saveSettings } from "./storage";
 import type { BookmarkRecord, RemoteSyncManifest, SyncDocument, SyncMetadata, SyncResult, SyncSettings, WebAppRecord } from "./types";
 import { WebDavClient, WebDavConflictError } from "./webdav";
 
-const BOOKMARKS_FILE = "bookmarks.json";
-const WEBAPPS_FILE = "webapps.json";
 const MAX_SYNC_ATTEMPTS = 3;
 
 export async function syncNow(): Promise<SyncResult> {
@@ -19,21 +35,19 @@ export async function syncNow(): Promise<SyncResult> {
     const remote = await client.getJson<SyncDocument<BookmarkRecord>>(BOOKMARKS_FILE);
     const remoteRecords = remote?.data.items || [];
     const localRecords = await collectLocalBookmarkRecords(settings, metadata);
-    const merged = mergeRecords(
-      indexBookmarks(remoteRecords),
-      indexBookmarks(localRecords),
-    );
+    const merged = mergeBookmarkRecords(remoteRecords, localRecords);
     const mergedItems = Object.values(merged);
     const remoteChanged = !sameBookmarkRecords(remoteRecords, mergedItems);
 
     try {
       if (remoteChanged) {
         await client.putJson(BOOKMARKS_FILE, bookmarksDocument(mergedItems), remote?.etag);
-        await client.putManifest();
+        await putManifest(client, settings);
       }
-      await client.putDeviceState();
+      await putDeviceState(client, settings);
       const applied = await applyBookmarkRecords(settings, mergedItems);
-      await saveMetadata({ bookmarks: merged });
+      const latestMetadata = await loadMetadata();
+      await saveMetadata({ ...latestMetadata, bookmarks: merged });
       return {
         bookmarkCount: mergedItems.filter((item) => !item.deletedAt).length,
         deletedBookmarkCount: mergedItems.filter((item) => !!item.deletedAt).length,
@@ -58,14 +72,17 @@ export async function loadRemoteWebApps(): Promise<WebAppRecord[]> {
   const settings = await loadSettings();
   const client = new WebDavClient(settings);
   const remote = await client.getJson<SyncDocument<WebAppRecord>>(WEBAPPS_FILE);
-  return (remote?.data.items || []).filter((item) => !item.deletedAt);
+  const metadata = await loadMetadata();
+  const records = indexWebApps(remote?.data.items || []);
+  applyLocalWebAppTombstones(records, metadata);
+  return activeWebApps(records);
 }
 
 export async function readRemoteSyncManifest(settings?: SyncSettings): Promise<RemoteSyncManifest | null> {
   settings = settings || await loadSettings();
   if (!settings.webDavUrl.trim()) return null;
   const client = new WebDavClient(settings);
-  const remote = await client.getJson<Partial<RemoteSyncManifest>>("manifest.json");
+  const remote = await client.getJson<Partial<RemoteSyncManifest>>(MANIFEST_FILE);
   if (!remote) return null;
   const updatedAt = normalizeTimestamp(remote.data.updatedAt);
   if (!updatedAt) return null;
@@ -77,29 +94,7 @@ export async function readRemoteSyncManifest(settings?: SyncSettings): Promise<R
 
 export async function saveRemoteWebApp(input: Partial<WebAppRecord> & { name: string; startUrl: string }): Promise<WebAppRecord[]> {
   return updateRemoteWebApps((records, settings) => {
-    const now = Date.now();
-    const startUrl = input.startUrl.trim();
-    if (!startUrl) throw new Error("Start URL is required.");
-    const id = input.id?.trim() || crypto.randomUUID();
-    const existing = records[id];
-    const hasIconDataUrl = Object.prototype.hasOwnProperty.call(input, "iconDataUrl");
-    const iconDataUrl = hasIconDataUrl ? input.iconDataUrl ?? null : existing?.iconDataUrl ?? null;
-    const iconSource = input.iconSource || existing?.iconSource || (iconDataUrl ? "custom" : "title");
-    records[id] = {
-      id,
-      name: input.name.trim() || startUrl,
-      startUrl,
-      scopeUrl: input.scopeUrl?.trim() || existing?.scopeUrl || scopeFor(startUrl),
-      themeColor: input.themeColor ?? existing?.themeColor ?? 0xff126d6a,
-      displayMode: input.displayMode || existing?.displayMode || "standalone",
-      createdAt: existing?.createdAt || input.createdAt || now,
-      lastOpenedAt: input.lastOpenedAt || existing?.lastOpenedAt || now,
-      updatedAt: now,
-      deletedAt: null,
-      sourceDeviceId: settings.deviceId,
-      iconDataUrl,
-      iconSource,
-    };
+    upsertWebAppRecord(records, input, settings.deviceId);
   });
 }
 
@@ -118,18 +113,13 @@ export async function addBookmarkToSyncFolder(input: { title: string; url: strin
   return syncNow();
 }
 
-export async function deleteRemoteWebApp(idOrStartUrl: string): Promise<WebAppRecord[]> {
-  return updateRemoteWebApps((records, settings) => {
-    const key = idOrStartUrl.trim();
-    const existing = records[key] || Object.values(records).find((item) => item.startUrl === key);
-    if (!existing) return;
-    records[existing.id] = {
-      ...existing,
-      updatedAt: Date.now(),
-      deletedAt: Date.now(),
-      sourceDeviceId: settings.deviceId,
-    };
+export async function deleteRemoteWebApp(input: string | Partial<WebAppRecord> | null | undefined): Promise<WebAppRecord[]> {
+  let tombstone: WebAppRecord | null = null;
+  const webApps = await updateRemoteWebApps((records, settings) => {
+    tombstone = tombstoneWebAppRecord(records, input, settings.deviceId);
   });
+  if (tombstone) await saveLocalWebAppRecord(tombstone);
+  return webApps;
 }
 
 async function updateRemoteWebApps(mutator: (records: Record<string, WebAppRecord>, settings: SyncSettings) => void): Promise<WebAppRecord[]> {
@@ -140,13 +130,15 @@ async function updateRemoteWebApps(mutator: (records: Record<string, WebAppRecor
 
   for (let attempt = 0; attempt < MAX_SYNC_ATTEMPTS; attempt += 1) {
     const remote = await client.getJson<SyncDocument<WebAppRecord>>(WEBAPPS_FILE);
+    const metadata = await loadMetadata();
     const records = indexWebApps(remote?.data.items || []);
+    applyLocalWebAppTombstones(records, metadata);
     mutator(records, settings);
     try {
       await client.putJson(WEBAPPS_FILE, webAppsDocument(Object.values(records)), remote?.etag);
-      await client.putManifest();
-      await client.putDeviceState();
-      return Object.values(records).filter((item) => !item.deletedAt);
+      await putManifest(client, settings);
+      await putDeviceState(client, settings);
+      return activeWebApps(records);
     } catch (error) {
       if (error instanceof WebDavConflictError) {
         lastConflict = error;
@@ -157,6 +149,30 @@ async function updateRemoteWebApps(mutator: (records: Record<string, WebAppRecor
   }
 
   throw lastConflict instanceof Error ? lastConflict : new Error("Unable to save WebApps.");
+}
+
+async function saveLocalWebAppRecord(record: WebAppRecord): Promise<void> {
+  const metadata = await loadMetadata();
+  await saveMetadata({
+    ...metadata,
+    webApps: {
+      ...metadata.webApps,
+      [record.id]: record,
+    },
+  });
+}
+
+function putManifest(client: WebDavClient, settings: SyncSettings): Promise<void> {
+  return client.putManifest(settings.deviceId);
+}
+
+function putDeviceState(client: WebDavClient, settings: SyncSettings): Promise<void> {
+  return client.putDeviceState({
+    deviceId: settings.deviceId,
+    deviceName: settings.deviceName || DEFAULT_DEVICE_NAME,
+    clientName: COMPANION_CLIENT_NAME,
+    deviceStatePrefix: DEVICE_STATE_PREFIX,
+  });
 }
 
 async function ensureBookmarkFolder(settings: SyncSettings): Promise<SyncSettings> {
@@ -252,99 +268,6 @@ async function applyBookmarkRecords(settings: SyncSettings, records: BookmarkRec
     }
   }
   return { imported, removed };
-}
-
-function mergeRecords(remote: Record<string, BookmarkRecord>, local: Record<string, BookmarkRecord>): Record<string, BookmarkRecord> {
-  const result: Record<string, BookmarkRecord> = {};
-  new Set([...Object.keys(remote), ...Object.keys(local)]).forEach((key) => {
-    const left = remote[key];
-    const right = local[key];
-    result[key] = chooseLatest(left, right);
-  });
-  return result;
-}
-
-function sameBookmarkRecords(left: BookmarkRecord[], right: BookmarkRecord[]): boolean {
-  return recordListSignature(left, bookmarkRecordSignature) === recordListSignature(right, bookmarkRecordSignature);
-}
-
-function recordListSignature<T>(items: T[], signature: (item: T) => unknown): string {
-  return JSON.stringify(items.map(signature).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
-}
-
-function bookmarkRecordSignature(item: BookmarkRecord) {
-  return {
-    url: item.url,
-    title: item.title,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-    deletedAt: item.deletedAt,
-    sourceDeviceId: item.sourceDeviceId,
-    iconDataUrl: item.iconDataUrl || null,
-  };
-}
-
-function chooseLatest<T extends { updatedAt: number; deletedAt: number | null }>(left?: T, right?: T): T {
-  if (!left && !right) throw new Error("Missing records.");
-  if (!left) return right!;
-  if (!right) return left;
-  if (right.updatedAt > left.updatedAt) return right;
-  if (left.updatedAt > right.updatedAt) return left;
-  return right.deletedAt && !left.deletedAt ? right : left;
-}
-
-function normalizeTimestamp(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-function bookmarksDocument(items: BookmarkRecord[]): SyncDocument<BookmarkRecord> {
-  return {
-    type: "hyper-browser-bookmarks",
-    schemaVersion: 1,
-    updatedAt: Date.now(),
-    items: items.sort((a, b) => Number(!!a.deletedAt) - Number(!!b.deletedAt) || a.title.localeCompare(b.title)),
-  };
-}
-
-function webAppsDocument(items: WebAppRecord[]): SyncDocument<WebAppRecord> {
-  return {
-    type: "hyper-browser-webapps",
-    schemaVersion: 1,
-    updatedAt: Date.now(),
-    items,
-  };
-}
-
-function indexBookmarks(items: BookmarkRecord[]): Record<string, BookmarkRecord> {
-  return Object.fromEntries(items.filter((item) => item.url).map((item) => [item.url, item]));
-}
-
-function indexWebApps(items: WebAppRecord[]): Record<string, WebAppRecord> {
-  return Object.fromEntries(items.filter((item) => item.id).map((item) => [item.id, item]));
-}
-
-function scopeFor(url: string): string {
-  try {
-    const value = new URL(url);
-    value.pathname = "/";
-    value.search = "";
-    value.hash = "";
-    return value.toString();
-  } catch {
-    return url;
-  }
-}
-
-function hostLabel(url: string): string {
-  try {
-    return new URL(url).hostname || url;
-  } catch {
-    return url;
-  }
-}
-
-function isHttpUrl(url: string): boolean {
-  return /^https?:\/\//i.test(url);
 }
 
 function getBookmarkTree(): Promise<Browser.bookmarks.BookmarkTreeNode[]> {

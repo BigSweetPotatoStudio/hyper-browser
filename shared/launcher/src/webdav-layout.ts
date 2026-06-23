@@ -1,4 +1,5 @@
 import type { LauncherLayout, LauncherLayoutStorage } from "./index";
+import { WebDavClient, WebDavConflictError } from "../../sync/src/webdav";
 
 const LAUNCHER_FILE = "launcher.json";
 const MAX_SYNC_ATTEMPTS = 3;
@@ -27,11 +28,6 @@ type RemoteLauncherDocument = {
   layout: LauncherLayout;
 };
 
-type RemoteJson<T> = {
-  data: T;
-  etag: string | null;
-};
-
 export type LauncherLayoutSyncResult = {
   changed: boolean;
   direction: "pull" | "push" | "none";
@@ -42,6 +38,7 @@ export type LauncherLayoutSyncOptions = {
   deprecatedEntryIds?: string[];
   availableEntryIds?: string[];
   defaultDockEntryIds?: string[];
+  appendMissingApps?: boolean;
 };
 
 export async function syncLauncherLayout(
@@ -49,39 +46,60 @@ export async function syncLauncherLayout(
   settings: LauncherLayoutSyncSettings,
   options: LauncherLayoutSyncOptions = {},
 ): Promise<LauncherLayoutSyncResult> {
-  const client = new LauncherWebDavClient(settings);
+  const client = new WebDavClient(settings);
   await client.ensureCollections();
   const deprecatedEntryIds = new Set(options.deprecatedEntryIds || []);
+  const appendMissingApps = options.appendMissingApps !== false;
 
   let lastConflict: unknown;
   for (let attempt = 0; attempt < MAX_SYNC_ATTEMPTS; attempt += 1) {
     const availableAppEntryIdList = normalizeAvailableAppEntryIds(options.availableEntryIds);
-    const localResult = sanitizeLayout(completeLayout(await layoutStorage.load()), deprecatedEntryIds, availableAppEntryIdList);
+    const localResult = sanitizeLayout(completeLayout(await layoutStorage.load()), deprecatedEntryIds, availableAppEntryIdList, appendMissingApps);
     const local = localResult.layout;
+    const localUpdatedAt = local ? validTimestamp(local.updatedAt) : 0;
     const remote = await client.getJson<RemoteLauncherDocument>(LAUNCHER_FILE);
-    const remoteResult = sanitizeLayout(completeLayout(remote?.data.layout), deprecatedEntryIds, availableAppEntryIdList);
+    const remoteResult = sanitizeLayout(completeLayout(remote?.data.layout), deprecatedEntryIds, availableAppEntryIdList, appendMissingApps);
     const remoteLayout = remoteResult.layout;
     const remoteUpdatedAt = remoteLayout ? validTimestamp(remote?.data.updatedAt || remoteLayout.updatedAt) : 0;
 
     if (remote && remoteLayout) {
-      const updatedAt = remoteResult.changed || !remoteUpdatedAt ? Date.now() : remoteUpdatedAt;
-      const nextLayout = { ...remoteLayout, updatedAt };
+      const nextRemoteUpdatedAt = remoteResult.changed || !remoteUpdatedAt ? Date.now() : remoteUpdatedAt;
+      const nextRemoteLayout = { ...remoteLayout, updatedAt: nextRemoteUpdatedAt };
+      if (local && localUpdatedAt > nextRemoteUpdatedAt) {
+        const updatedAt = localResult.changed ? Math.max(Date.now(), localUpdatedAt) : localUpdatedAt;
+        const nextLocalLayout = { ...local, updatedAt };
+        try {
+          await client.putJson(LAUNCHER_FILE, launcherDocument(nextLocalLayout, settings, updatedAt), remote.etag);
+          await client.putManifest(settings.deviceId);
+          await putDeviceState(client, settings);
+          if (localResult.changed || local.updatedAt !== updatedAt) {
+            await layoutStorage.save(nextLocalLayout);
+          }
+          return { changed: true, direction: "push", updatedAt };
+        } catch (error) {
+          if (error instanceof WebDavConflictError) {
+            lastConflict = error;
+            continue;
+          }
+          throw error;
+        }
+      }
       const localMatchesRemote = !!local &&
-        validTimestamp(local.updatedAt) === updatedAt &&
-        sameLauncherLayout(local, nextLayout);
+        localUpdatedAt === nextRemoteUpdatedAt &&
+        sameLauncherLayout(local, nextRemoteLayout);
       try {
         if (remoteResult.changed || !remoteUpdatedAt) {
-          await client.putJson(LAUNCHER_FILE, launcherDocument(nextLayout, settings, updatedAt), remote.etag);
-          await client.putManifest();
+          await client.putJson(LAUNCHER_FILE, launcherDocument(nextRemoteLayout, settings, nextRemoteUpdatedAt), remote.etag);
+          await client.putManifest(settings.deviceId);
         }
         if (!localMatchesRemote || remoteResult.changed) {
-          await layoutStorage.save(nextLayout);
+          await layoutStorage.save(nextRemoteLayout);
         }
-        await client.putDeviceState();
+        await putDeviceState(client, settings);
         return {
           changed: remoteResult.changed || !localMatchesRemote,
           direction: remoteResult.changed || !localMatchesRemote ? "pull" : "none",
-          updatedAt,
+          updatedAt: nextRemoteUpdatedAt,
         };
       } catch (error) {
         if (error instanceof WebDavConflictError) {
@@ -101,8 +119,8 @@ export async function syncLauncherLayout(
       const updatedAt = localUpdatedAt || Date.now();
       try {
         await client.putJson(LAUNCHER_FILE, launcherDocument(local, settings, updatedAt), remote?.etag);
-        await client.putManifest();
-        await client.putDeviceState();
+        await client.putManifest(settings.deviceId);
+        await putDeviceState(client, settings);
         if (localResult.changed || !local.updatedAt) await layoutStorage.save({ ...local, updatedAt });
         return { changed: true, direction: "push", updatedAt };
       } catch (error) {
@@ -119,7 +137,7 @@ export async function syncLauncherLayout(
 }
 
 export async function readRemoteSyncManifest(settings: LauncherLayoutSyncSettings): Promise<RemoteSyncManifest | null> {
-  const client = new LauncherWebDavClient(settings);
+  const client = new WebDavClient(settings);
   const remote = await client.getJson<Partial<RemoteSyncManifest>>("manifest.json");
   if (!remote) return null;
   const updatedAt = validTimestamp(remote.data.updatedAt);
@@ -189,6 +207,7 @@ function sanitizeLayout(
   layout: LauncherLayout | null,
   deprecatedEntryIds: Set<string>,
   availableAppEntryIds: string[],
+  appendMissingApps: boolean,
 ): { layout: LauncherLayout | null; changed: boolean } {
   if (!layout) return { layout, changed: false };
   let changed = false;
@@ -229,7 +248,9 @@ function sanitizeLayout(
     return keep && keepFolder;
   }).slice(0, MAX_DOCK_ITEMS);
   if (dock.length !== layout.dock.length) changed = true;
-  const cells = appendMissingAppCells(normalizedCells, dock, folders, availableAppEntryIds, layout.gridColumns);
+  const cells = appendMissingApps
+    ? appendMissingAppCells(normalizedCells, dock, folders, availableAppEntryIds, layout.gridColumns)
+    : normalizedCells;
   if (!sameCells(normalizedCells, cells)) changed = true;
   return {
     layout: changed ? { ...layout, cells, dock, folders } : layout,
@@ -330,117 +351,10 @@ function uniqueStrings(values: unknown[]): string[] {
   });
 }
 
-class LauncherWebDavClient {
-  private readonly rootUrl: string;
-
-  constructor(private readonly settings: LauncherLayoutSyncSettings) {
-    this.rootUrl = normalizeRootUrl(settings.webDavUrl);
-  }
-
-  async ensureCollections(): Promise<void> {
-    await this.mkcol("");
-    await this.mkcol("devices/");
-  }
-
-  async getJson<T>(path: string): Promise<RemoteJson<T> | null> {
-    const response = await fetch(this.urlFor(path), {
-      method: "GET",
-      headers: this.headers(),
-    });
-    if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`WebDAV GET failed: HTTP ${response.status}`);
-    return {
-      data: await response.json() as T,
-      etag: response.headers.get("ETag"),
-    };
-  }
-
-  async putJson(path: string, body: unknown, etag?: string | null): Promise<void> {
-    const headers = this.headers({ "Content-Type": "application/json; charset=utf-8" });
-    if (etag) headers.set("If-Match", etag);
-    const response = await fetch(this.urlFor(path), {
-      method: "PUT",
-      headers,
-      body: JSON.stringify(body, null, 2),
-    });
-    if (response.status === 409 || response.status === 412) throw new WebDavConflictError();
-    if (!response.ok) throw new Error(`WebDAV PUT failed: HTTP ${response.status}`);
-  }
-
-  async putManifest(): Promise<void> {
-    await this.putJson("manifest.json", {
-      type: "hyper-browser-sync",
-      schemaVersion: 1,
-      updatedAt: Date.now(),
-      syncRoot: "HyperBrowserSync",
-      lastWriter: this.settings.deviceId,
-      files: ["bookmarks.json", "webapps.json", "launcher.json", "devices/"],
-    });
-  }
-
-  async putDeviceState(): Promise<void> {
-    await this.putJson(`devices/${safeSegment(this.settings.clientName)}-${safeSegment(this.settings.deviceId)}.json`, {
-      schemaVersion: 1,
-      deviceId: this.settings.deviceId,
-      deviceName: this.settings.deviceName,
-      client: this.settings.clientName,
-      lastSyncAt: Date.now(),
-    });
-  }
-
-  private async mkcol(path: string): Promise<void> {
-    const response = await fetch(this.urlFor(path), {
-      method: "MKCOL",
-      headers: this.headers(),
-    });
-    if (response.ok || response.status === 405) return;
-    if (response.status === 409 && path === "devices/") {
-      await this.mkcol("");
-      return;
-    }
-    throw new Error(`WebDAV MKCOL failed: HTTP ${response.status}`);
-  }
-
-  private headers(extra?: Record<string, string>): Headers {
-    const headers = new Headers(extra);
-    if (this.settings.username || this.settings.password) {
-      headers.set("Authorization", `Basic ${base64Utf8(`${this.settings.username}:${this.settings.password}`)}`);
-    }
-    return headers;
-  }
-
-  private urlFor(path: string): string {
-    if (!path) return this.rootUrl;
-    const encoded = path.split("/")
-      .filter(Boolean)
-      .map((segment) => encodeURIComponent(segment))
-      .join("/");
-    return `${this.rootUrl}${encoded}${path.endsWith("/") ? "/" : ""}`;
-  }
-}
-
-class WebDavConflictError extends Error {
-  constructor() {
-    super("WebDAV write conflict.");
-  }
-}
-
-function normalizeRootUrl(value: string): string {
-  const clean = value.trim().replace(/\/+$/, "");
-  if (!clean) throw new Error("WebDAV URL is required.");
-  if (!/^https?:\/\//i.test(clean)) throw new Error("WebDAV URL must start with http:// or https://.");
-  return clean.toLowerCase().endsWith("/hyperbrowsersync") ? `${clean}/` : `${clean}/HyperBrowserSync/`;
-}
-
-function base64Utf8(value: string): string {
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
+function putDeviceState(client: WebDavClient, settings: LauncherLayoutSyncSettings): Promise<void> {
+  return client.putDeviceState({
+    deviceId: settings.deviceId,
+    deviceName: settings.deviceName,
+    clientName: settings.clientName,
   });
-  return btoa(binary);
-}
-
-function safeSegment(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]/g, "_") || crypto.randomUUID();
 }

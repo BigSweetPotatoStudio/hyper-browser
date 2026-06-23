@@ -2,6 +2,7 @@ import { browser, type Browser } from "wxt/browser";
 import { appendWebAppToLauncher, syncLauncherLayoutNow } from "./launcher-layout";
 import { loadRemoteSyncState, loadSettings, saveRemoteSyncState } from "./storage";
 import { addBookmarkToSyncFolder, deleteRemoteWebApp, loadRemoteWebApps, readRemoteSyncManifest, saveRemoteWebApp, syncNow } from "./sync";
+import type { WebAppRecord } from "./types";
 
 const MAX_CAPTURED_ICON_BYTES = 1024 * 1024;
 const CAPTURED_ICON_SIZE = 128;
@@ -12,6 +13,7 @@ const REMOTE_SYNC_ALARM_MINUTES = 1;
 let launcherSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let launcherSyncRunning = false;
 let launcherSyncPending = false;
+let launcherSyncAppendMissingApps = true;
 let bookmarkSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let bookmarkSyncRunning = false;
 let bookmarkSyncPending = false;
@@ -56,25 +58,23 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     case "sync.run":
       return runFullSyncNow();
     case "launcher.syncSoon":
-      scheduleLauncherAutoSync();
+      scheduleLauncherAutoSync({ appendMissingApps: false });
       return null;
     case "remote.check":
       return checkRemoteChanges({ notifyPages: false });
     case "current.addWebApp": {
       const page = await getCurrentHttpPage();
       const iconDataUrl = await capturePageIcon(await getPageIconCandidates(page)).catch(() => null);
-      const webAppId = crypto.randomUUID();
       const webApps = await saveRemoteWebApp({
-        id: webAppId,
         name: page.title,
         startUrl: page.url,
         ...(iconDataUrl ? { iconDataUrl, iconSource: "site" as const } : {}),
       });
-      const savedApp = webApps.find((app) => app.id === webAppId);
+      const savedApp = webApps.find((app) => app.startUrl === page.url);
       if (savedApp) {
-        await syncLauncherLayoutNow(webApps.map((app) => app.id));
         await appendWebAppToLauncher(savedApp.id, webApps.map((app) => app.id));
-        await syncLauncherLayoutNow(webApps.map((app) => app.id));
+        notifyLauncherChanged();
+        scheduleLauncherAutoSync({ appendMissingApps: false });
       }
       return webApps;
     }
@@ -85,9 +85,20 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     case "webapps.list":
       return loadRemoteWebApps();
     case "webapps.save":
-      return saveRemoteWebApp(message.payload as never);
-    case "webapps.delete":
-      return deleteRemoteWebApp(String((message.payload as { id?: string; startUrl?: string })?.id || (message.payload as { startUrl?: string })?.startUrl || ""));
+      return saveRemoteWebApp(message.payload as never).then((webApps) => {
+        notifyLauncherChanged();
+        scheduleLauncherAutoSync({ appendMissingApps: false });
+        return webApps;
+      });
+    case "webapps.delete": {
+      const webApps = await deleteRemoteWebApp(message.payload as string | Partial<WebAppRecord>);
+      await syncLauncherLayoutNow(webApps.map((app) => app.id), { appendMissingApps: false }).catch((error) => {
+        console.warn("Unable to sync launcher after deleting WebApp.", error);
+      });
+      notifyLauncherChanged();
+      scheduleLauncherAutoSync({ appendMissingApps: false });
+      return webApps;
+    }
     case "open.options":
       await browser.runtime.openOptionsPage();
       return null;
@@ -109,7 +120,8 @@ function ensureRemoteSyncAlarm() {
   });
 }
 
-function scheduleLauncherAutoSync() {
+function scheduleLauncherAutoSync(options: { appendMissingApps?: boolean } = {}) {
+  if (options.appendMissingApps === false) launcherSyncAppendMissingApps = false;
   if (launcherSyncTimer) clearTimeout(launcherSyncTimer);
   launcherSyncTimer = setTimeout(() => {
     launcherSyncTimer = null;
@@ -126,10 +138,13 @@ async function runLauncherAutoSync(): Promise<void> {
   try {
     do {
       launcherSyncPending = false;
+      const appendMissingApps = launcherSyncAppendMissingApps;
+      launcherSyncAppendMissingApps = true;
       const settings = await loadSettings();
       if (!settings.webDavUrl.trim()) return;
       const webApps = await loadRemoteWebApps();
-      await syncLauncherLayoutNow(webApps.map((app) => app.id));
+      const result = await syncLauncherLayoutNow(webApps.map((app) => app.id), { appendMissingApps });
+      if (result.changed) notifyLauncherChanged();
     } while (launcherSyncPending);
   } finally {
     launcherSyncRunning = false;
@@ -220,6 +235,10 @@ async function checkRemoteChanges(options: { notifyPages: boolean } = { notifyPa
 
 function notifyRemoteSynced(updatedAt: number): void {
   browser.runtime.sendMessage({ type: "remote.synced", updatedAt }).catch(() => undefined);
+}
+
+function notifyLauncherChanged(): void {
+  browser.runtime.sendMessage({ type: "launcher.changed", updatedAt: Date.now() }).catch(() => undefined);
 }
 
 type CurrentHttpPage = {

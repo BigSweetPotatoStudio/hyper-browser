@@ -44,6 +44,8 @@ export default defineConfig({
       alias: {
         "@hyper-launcher": resolve(__dirname, "../shared/launcher/src"),
         "@hyper-launcher/": `${resolve(__dirname, "../shared/launcher/src")}/`,
+        "@hyper-sync": resolve(__dirname, "../shared/sync/src"),
+        "@hyper-sync/": `${resolve(__dirname, "../shared/sync/src")}/`,
         react: resolve(__dirname, "node_modules/react"),
         "react-dom": resolve(__dirname, "node_modules/react-dom"),
         "@dnd-kit/core": resolve(__dirname, "node_modules/@dnd-kit/core"),

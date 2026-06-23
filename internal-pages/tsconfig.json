@@ -19,6 +19,8 @@
     "paths": {
       "@hyper-launcher": ["../shared/launcher/src/index.tsx"],
       "@hyper-launcher/*": ["../shared/launcher/src/*"],
+      "@hyper-sync": ["../shared/sync/src/index.ts"],
+      "@hyper-sync/*": ["../shared/sync/src/*"],
       "react": ["node_modules/@types/react/index.d.ts"],
       "react/jsx-runtime": ["node_modules/@types/react/jsx-runtime.d.ts"],
       "@dnd-kit/core": ["node_modules/@dnd-kit/core/dist/index.d.ts"],
@@ -26,5 +28,5 @@
       "@dnd-kit/utilities": ["node_modules/@dnd-kit/utilities/dist/index.d.ts"]
     }
   },
-  "include": ["src", "../shared/launcher/src"]
+  "include": ["src", "../shared/launcher/src", "../shared/sync/src"]
 }

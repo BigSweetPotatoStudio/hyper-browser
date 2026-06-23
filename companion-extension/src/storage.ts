@@ -33,8 +33,11 @@ export async function saveSettings(settings: SyncSettings): Promise<void> {
 }
 
 export async function loadMetadata(): Promise<SyncMetadata> {
-  const result = await storageGet<{ metadata?: SyncMetadata }>("metadata");
-  return result.metadata || { bookmarks: {} };
+  const result = await storageGet<{ metadata?: Partial<SyncMetadata> }>("metadata");
+  return {
+    bookmarks: result.metadata?.bookmarks || {},
+    webApps: result.metadata?.webApps || {},
+  };
 }
 
 export async function saveMetadata(metadata: SyncMetadata): Promise<void> {

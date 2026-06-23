@@ -74,8 +74,6 @@ import com.dadigua.hyperbrowser.gecko.GeckoRuntimeProvider
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.HyperCommand
 import com.dadigua.hyperbrowser.gecko.HyperRoute
-import com.dadigua.hyperbrowser.sync.WebDavAutoSyncCoordinator
-import com.dadigua.hyperbrowser.sync.WebDavRemoteCheckResult
 import com.dadigua.hyperbrowser.sync.WebDavSyncManager
 import com.dadigua.hyperbrowser.ui.FullscreenSystemBarsEffect
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
@@ -221,7 +219,6 @@ private fun BrowserScreen(
     val downloadHandler = remember { DownloadHandler(app, downloadStore) }
     val updateManager = remember { AppUpdateManager(app, UpdateSettingsStore(app)) }
     val scope = rememberCoroutineScope()
-    val webDavAutoSync = remember { WebDavAutoSyncCoordinator(profileStore, webDavSyncManager, scope) }
     val thumbnailRefreshRequests = remember { MutableSharedFlow<String>(extraBufferCapacity = 16) }
     var message by remember { mutableStateOf<String?>(null) }
     var checkedUpdate by remember { mutableStateOf<AvailableUpdate?>(null) }
@@ -269,9 +266,7 @@ private fun BrowserScreen(
     fun canClearDownload(entry: BrowserDownloadEntry): Boolean =
         entry.id != AppUpdateManager.APP_UPDATE_DOWNLOAD_ID
 
-    fun markWebDavDirty() {
-        webDavAutoSync.markDirty()
-    }
+    fun markWebDavDirty() = Unit
 
     fun removeBookmarkAndSync(url: String) {
         profileStore.removeBookmark(url)
@@ -476,15 +471,6 @@ private fun BrowserScreen(
     fun webAppsItemsResponse(): JSONObject =
         okItems(app.webApps.observeAll().value.toWebAppsJsonString(app))
 
-    fun webDavRemoteCheckResponse(result: WebDavRemoteCheckResult): JSONObject =
-        okData(
-            JSONObject()
-                .put("changed", result.changed)
-                .put("synced", result.synced)
-                .put("updatedAt", result.updatedAt)
-                .put("syncResult", result.syncResult?.toJson() ?: JSONObject.NULL)
-        )
-
     var pendingWebAppIconPickResult by remember { mutableStateOf<GeckoResult<Any>?>(null) }
     var pendingWebAppIconPickKey by remember { mutableStateOf<String?>(null) }
     val webAppIconBridgeLauncher = rememberLauncherForActivityResult(
@@ -607,7 +593,7 @@ private fun BrowserScreen(
                 )
                 okData(nextSettings.toJson())
             }
-            "sync.webdav.run" -> {
+            "sync.webdav.localData" -> {
                 val currentSettings = profileStore.observeSettings().value
                 val syncSettings = if (currentSettings.webDavSyncDeviceId.isBlank()) {
                     profileStore.updateWebDavSyncSettings(
@@ -621,26 +607,41 @@ private fun BrowserScreen(
                     currentSettings
                 }
                 runCatching {
-                    runBlocking { webDavSyncManager.sync(syncSettings) }
+                    webDavSyncManager.localData(syncSettings)
                 }.fold(
-                    onSuccess = { result ->
-                        okData(result.toJson().put("settings", profileStore.observeSettings().value.toJson()))
+                    onSuccess = { data ->
+                        okData(data.put("settings", profileStore.observeSettings().value.toJson()))
                     },
                     onFailure = { throwable ->
                         JSONObject()
-                        .put("ok", false)
-                        .put("error", throwable.message ?: context.getString(R.string.webdav_sync_failed))
+                            .put("ok", false)
+                            .put("error", throwable.message ?: context.getString(R.string.webdav_sync_failed))
                     }
                 )
             }
-            "sync.webdav.checkRemote" -> {
+            "sync.webdav.applyRecords" -> {
                 val result = GeckoResult<Any>()
-                val pageLastSeenUpdatedAt = payload.optString("lastSeenUpdatedAt").toLongOrNull() ?: 0L
+                val bookmarksJson = payload.optString("bookmarks")
+                val webAppsJson = payload.optString("webApps")
                 scope.launch {
                     val response = runCatching {
-                        webDavAutoSync.checkRemoteChangesForPage(pageLastSeenUpdatedAt)
+                        val currentSettings = profileStore.observeSettings().value
+                        val syncSettings = if (currentSettings.webDavSyncDeviceId.isBlank()) {
+                            profileStore.updateWebDavSyncSettings(
+                                enabled = currentSettings.webDavSyncEnabled,
+                                url = currentSettings.webDavSyncUrl,
+                                username = currentSettings.webDavSyncUsername,
+                                password = currentSettings.webDavSyncPassword,
+                                deviceName = currentSettings.webDavSyncDeviceName
+                            )
+                        } else {
+                            currentSettings
+                        }
+                        webDavSyncManager.applyRecords(syncSettings, bookmarksJson, webAppsJson)
                     }.fold(
-                        onSuccess = { remoteCheckResult -> webDavRemoteCheckResponse(remoteCheckResult) },
+                        onSuccess = { applyResult ->
+                            okData(applyResult.toJson().put("settings", profileStore.observeSettings().value.toJson()))
+                        },
                         onFailure = { throwable ->
                             JSONObject()
                                 .put("ok", false)
@@ -1231,7 +1232,6 @@ private fun BrowserScreen(
     LaunchedEffect(Unit) {
         runCatching { app.extensions.refreshInstalledFromRuntime() }
         runCatching { app.webApps.refreshMissingIcons() }
-        webDavAutoSync.checkRemoteChanges()
     }
 
     fun showPanel(panel: BrowserPanel) {
@@ -1407,9 +1407,6 @@ private fun BrowserScreen(
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_START || event == Lifecycle.Event.ON_RESUME) {
-                webDavAutoSync.checkRemoteChanges()
-            }
             if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
                 tabs.forEach { tab -> tab.flushSessionState() }
                 persistBrowserTabsForLifecycle()

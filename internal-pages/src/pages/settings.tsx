@@ -6,6 +6,7 @@ import "../styles.css";
 import { getLocalePreference, matchesI18nText, setLocalePreference, t, type LocalePreference } from "../i18n";
 import type { BatteryOptimizationState, BrowserSettings, UpdateCheckResult, UpdateDownloadState, WebDavSyncResult, WebDavSyncSettings } from "../hyper-browser";
 import { createLauncherLayoutStorage } from "../launcher-layout-storage";
+import { runAndroidWebDavSync } from "../webdav-sync";
 
 const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"];
 
@@ -324,7 +325,7 @@ function SettingsPage() {
     commit
       .then((value) => {
         if (!value) return null;
-        return window.hyperBrowser.runWebDavSync();
+        return runAndroidWebDavSync(value);
       })
       .then(async (result) => {
         if (!result) return;

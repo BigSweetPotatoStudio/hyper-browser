@@ -103,6 +103,12 @@ data class BrowserSettings(
     }
 }
 
+private fun JSONObject.optPositiveLong(name: String): Long? {
+    if (!has(name) || isNull(name)) return null
+    val value = optLong(name, 0L)
+    return value.takeIf { it > 0L }
+}
+
 data class SavedBrowserTab(
     val id: String,
     val title: String,
@@ -175,6 +181,10 @@ class BrowserProfileStore(context: Context) {
     }
 
     fun saveLauncherLayout(layout: JSONObject) {
+        val current = loadLauncherLayout()
+        val currentUpdatedAt = current?.optPositiveLong("updatedAt") ?: 0L
+        val nextUpdatedAt = layout.optPositiveLong("updatedAt") ?: 0L
+        if (currentUpdatedAt > 0L && currentUpdatedAt > nextUpdatedAt) return
         launcherLayoutFile.writeText(layout.toString())
     }
 

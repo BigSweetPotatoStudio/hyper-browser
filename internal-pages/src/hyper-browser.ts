@@ -1,3 +1,5 @@
+import type { BookmarkRecord, WebAppRecord } from "@hyper-sync";
+
 type BridgeResponse = {
   ok: boolean;
   error?: string;
@@ -83,11 +85,16 @@ type WebDavSyncResult = {
   settings?: BrowserSettings;
 };
 
-type WebDavRemoteCheckResult = {
-  changed: boolean;
-  synced: boolean;
-  updatedAt: number;
-  syncResult?: WebDavSyncResult;
+type WebDavLocalSyncData = {
+  deviceId: string;
+  deviceName: string;
+  metadata: {
+    bookmarks: BookmarkRecord[];
+    webApps: WebAppRecord[];
+  };
+  bookmarks: BookmarkRecord[];
+  webApps: WebAppRecord[];
+  settings?: BrowserSettings;
 };
 
 type UpdateAsset = {
@@ -151,8 +158,8 @@ type HyperBridgeMessageType =
   | "settings.batteryOptimizationState"
   | "settings.openBatteryOptimization"
   | "sync.webdav.update"
-  | "sync.webdav.run"
-  | "sync.webdav.checkRemote"
+  | "sync.webdav.localData"
+  | "sync.webdav.applyRecords"
   | "backup.export"
   | "backup.import"
   | "update.check"
@@ -212,8 +219,8 @@ type HyperBrowserApi = {
   requestBatteryOptimizationState(): Promise<BatteryOptimizationState>;
   openBatteryOptimizationSettings(): Promise<BatteryOptimizationState>;
   updateWebDavSyncSettings(settings: WebDavSyncSettings): Promise<BrowserSettings>;
-  runWebDavSync(): Promise<WebDavSyncResult>;
-  checkWebDavRemoteChanges(lastSeenUpdatedAt?: number): Promise<WebDavRemoteCheckResult>;
+  requestWebDavLocalData(): Promise<WebDavLocalSyncData>;
+  applyWebDavSyncRecords(records: { bookmarks: BookmarkRecord[] | object; webApps: WebAppRecord[] | object }): Promise<WebDavSyncResult>;
   exportBackup(): Promise<BackupActionResult>;
   importBackup(): Promise<BackupActionResult>;
   checkUpdate(ignoreSkipped?: boolean): Promise<UpdateCheckResult>;
@@ -224,8 +231,8 @@ type HyperBrowserApi = {
   requestBookmarksData(): Promise<BookmarkItem[]>;
   requestHistoryData(): Promise<HistoryItem[]>;
   openBookmark(url: string): void;
-  removeBookmark(url: string): void;
-  editBookmark(oldUrl: string, title: string, url: string): void;
+  removeBookmark(url: string): Promise<void>;
+  editBookmark(oldUrl: string, title: string, url: string): Promise<void>;
   openHistory(url: string): void;
   removeHistory(url: string): void;
   clearHistory(): void;
@@ -370,12 +377,14 @@ window.hyperBrowser = {
       deviceName: settings.webDavSyncDeviceName,
     }).then((response) => response.data as BrowserSettings);
   },
-  runWebDavSync() {
-    return send("sync.webdav.run").then((response) => response.data as WebDavSyncResult);
+  requestWebDavLocalData() {
+    return requestObject<WebDavLocalSyncData>("sync.webdav.localData");
   },
-  checkWebDavRemoteChanges(lastSeenUpdatedAt = 0) {
-    return send("sync.webdav.checkRemote", { lastSeenUpdatedAt: String(Math.max(0, lastSeenUpdatedAt || 0)) })
-      .then((response) => response.data as WebDavRemoteCheckResult);
+  applyWebDavSyncRecords(records) {
+    return send("sync.webdav.applyRecords", {
+      bookmarks: JSON.stringify(records.bookmarks),
+      webApps: JSON.stringify(records.webApps),
+    }).then((response) => response.data as WebDavSyncResult);
   },
   exportBackup() {
     return send("backup.export").then((response) => response.data as BackupActionResult);
@@ -410,10 +419,10 @@ window.hyperBrowser = {
     command("bookmarks.open", { url });
   },
   removeBookmark(url) {
-    command("bookmarks.remove", { url });
+    return send("bookmarks.remove", { url }).then(() => undefined);
   },
   editBookmark(oldUrl, title, url) {
-    command("bookmarks.edit", { oldUrl, title, url });
+    return send("bookmarks.edit", { oldUrl, title, url }).then(() => undefined);
   },
   openHistory(url) {
     command("history.open", { url });
@@ -453,4 +462,4 @@ window.hyperBrowser = {
   }
 };
 
-export type { AvailableUpdate, BackupActionResult, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem, WebDavRemoteCheckResult, WebDavSyncResult, WebDavSyncSettings };
+export type { AvailableUpdate, BackupActionResult, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem, WebDavLocalSyncData, WebDavSyncResult, WebDavSyncSettings };

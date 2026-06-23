@@ -10,18 +10,10 @@ import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.webapp.WebAppRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.Credentials
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.io.IOException
-import java.net.URLEncoder
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 
 class WebDavSyncManager(
     context: Context,
@@ -31,75 +23,46 @@ class WebDavSyncManager(
 ) {
     private val metadataStore = WebDavSyncMetadataStore(context)
 
-    suspend fun sync(settings: BrowserSettings): WebDavSyncResult = withContext(Dispatchers.IO) {
+    fun localData(settings: BrowserSettings): JSONObject {
         val config = WebDavSyncConfig.from(settings)
-        val client = WebDavClient(config)
         val now = System.currentTimeMillis()
         val known = metadataStore.load()
-
-        client.ensureCollections()
-        var lastConflict: Throwable? = null
-        repeat(MAX_SYNC_ATTEMPTS) { attempt ->
-            val remoteBookmarks = client.getJson(BOOKMARKS_FILE)
-            val remoteWebApps = client.getJson(WEBAPPS_FILE)
-            val remoteBookmarkRecords = parseBookmarkRecords(remoteBookmarks?.body)
-            val remoteWebAppRecords = parseWebAppRecords(remoteWebApps?.body)
-            val localBookmarks = localBookmarkRecords(known.bookmarks, config.deviceId, now)
-            val localWebApps = localWebAppRecords(known.webApps, config.deviceId, now)
-            val mergedBookmarks = mergeByKey(
-                remoteBookmarkRecords.associateBy { it.url },
-                localBookmarks.associateBy { it.url }
-            )
-            val mergedWebAppRecords = mergeWebAppsRemoteFirst(
-                remoteWebAppRecords,
-                localWebApps
-            )
-            val mergedWebApps = mergedWebAppRecords.associateBy { it.id }
-            val bookmarksChanged = !sameBookmarkRecords(remoteBookmarkRecords, mergedBookmarks.values)
-            val webAppsChanged = !sameWebAppRecords(remoteWebAppRecords, mergedWebApps.values)
-
-            try {
-                if (bookmarksChanged) {
-                    client.putJson(BOOKMARKS_FILE, bookmarksDocument(mergedBookmarks.values).toString(2), remoteBookmarks?.etag)
-                }
-                if (webAppsChanged) {
-                    client.putJson(WEBAPPS_FILE, webAppsDocument(mergedWebAppRecords).toString(2), remoteWebApps?.etag)
-                }
-                if (bookmarksChanged || webAppsChanged) {
-                    client.putJson(MANIFEST_FILE, manifestDocument(config, now).toString(2), null)
-                }
-                client.putJson("devices/android-${safeSegment(config.deviceId)}.json", deviceDocument(config, now).toString(2), null)
-
-                val appliedBookmarks = applyBookmarks(mergedBookmarks.values)
-                val appliedWebApps = applyWebApps(mergedWebApps.values)
-                metadataStore.save(
-                    bookmarks = mergedBookmarks.values.toList(),
-                    webApps = mergedWebApps.values.toList()
-                )
-                return@withContext WebDavSyncResult(
-                    bookmarkCount = mergedBookmarks.values.count { it.deletedAt == null },
-                    webAppCount = mergedWebApps.values.count { it.deletedAt == null },
-                    deletedBookmarkCount = mergedBookmarks.values.count { it.deletedAt != null },
-                    deletedWebAppCount = mergedWebApps.values.count { it.deletedAt != null },
-                    importedBookmarkCount = appliedBookmarks.imported,
-                    removedBookmarkCount = appliedBookmarks.removed,
-                    importedWebAppCount = appliedWebApps.imported,
-                    removedWebAppCount = appliedWebApps.removed,
-                    syncedAt = now,
-                    deviceId = config.deviceId,
-                    attemptCount = attempt + 1
-                )
-            } catch (throwable: WebDavConflictException) {
-                lastConflict = throwable
-            }
-        }
-        throw lastConflict ?: IOException("WebDAV sync failed.")
+        return JSONObject()
+            .put("deviceId", config.deviceId)
+            .put("deviceName", config.deviceName)
+            .put("metadata", known.toJson())
+            .put("bookmarks", bookmarksArray(localBookmarkRecords(known.bookmarks, config.deviceId, now)))
+            .put("webApps", webAppsArray(localWebAppRecords(known.webApps, config.deviceId, now)))
     }
 
-    suspend fun readManifest(settings: BrowserSettings): WebDavSyncManifest? = withContext(Dispatchers.IO) {
+    suspend fun applyRecords(
+        settings: BrowserSettings,
+        bookmarksJson: String,
+        webAppsJson: String
+    ): WebDavSyncResult = withContext(Dispatchers.IO) {
         val config = WebDavSyncConfig.from(settings)
-        val client = WebDavClient(config)
-        parseManifest(client.getJson(MANIFEST_FILE)?.body)
+        val now = System.currentTimeMillis()
+        val bookmarkRecords = parseBookmarkRecordsPayload(bookmarksJson)
+        val webAppRecords = webAppRecordsById(parseWebAppRecordsPayload(webAppsJson)).values.toList()
+        val appliedBookmarks = applyBookmarks(bookmarkRecords)
+        val appliedWebApps = applyWebApps(webAppRecords)
+        metadataStore.save(
+            bookmarks = bookmarkRecords,
+            webApps = webAppRecords
+        )
+        WebDavSyncResult(
+            bookmarkCount = bookmarkRecords.count { it.deletedAt == null },
+            webAppCount = webAppRecords.count { it.deletedAt == null },
+            deletedBookmarkCount = bookmarkRecords.count { it.deletedAt != null },
+            deletedWebAppCount = webAppRecords.count { it.deletedAt != null },
+            importedBookmarkCount = appliedBookmarks.imported,
+            removedBookmarkCount = appliedBookmarks.removed,
+            importedWebAppCount = appliedWebApps.imported,
+            removedWebAppCount = appliedWebApps.removed,
+            syncedAt = now,
+            deviceId = config.deviceId,
+            attemptCount = 1
+        )
     }
 
     private fun localBookmarkRecords(
@@ -277,35 +240,7 @@ class WebDavSyncManager(
             "site" -> faviconStore.saveIconDataUrl(record.startUrl, record.iconDataUrl)
             else -> null
         }
-
-    private fun parseManifest(body: String?): WebDavSyncManifest? {
-        if (body.isNullOrBlank()) return null
-        return runCatching {
-            val item = JSONObject(body)
-            val updatedAt = item.optLong("updatedAt", 0L)
-            if (updatedAt <= 0L) {
-                null
-            } else {
-                WebDavSyncManifest(
-                    updatedAt = updatedAt,
-                    lastWriter = item.optString("lastWriter")
-                )
-            }
-        }.getOrNull()
-    }
-
-    private companion object {
-        const val MANIFEST_FILE = "manifest.json"
-        const val BOOKMARKS_FILE = "bookmarks.json"
-        const val WEBAPPS_FILE = "webapps.json"
-        const val MAX_SYNC_ATTEMPTS = 3
-    }
 }
-
-data class WebDavSyncManifest(
-    val updatedAt: Long,
-    val lastWriter: String
-)
 
 data class WebDavSyncResult(
     val bookmarkCount: Int,
@@ -336,104 +271,19 @@ data class WebDavSyncResult(
 }
 
 private data class WebDavSyncConfig(
-    val rootUrl: String,
-    val username: String,
-    val password: String,
     val deviceName: String,
     val deviceId: String
 ) {
     companion object {
         fun from(settings: BrowserSettings): WebDavSyncConfig {
-            val baseUrl = settings.webDavSyncUrl.trim()
-            require(baseUrl.startsWith("https://") || baseUrl.startsWith("http://")) {
-                "WebDAV URL must start with http:// or https://."
-            }
-            val root = baseUrl.trimEnd('/').let { clean ->
-                if (clean.endsWith("/HyperBrowserSync", ignoreCase = true)) "$clean/" else "$clean/HyperBrowserSync/"
-            }
             val deviceId = settings.webDavSyncDeviceId.ifBlank { UUID.randomUUID().toString() }
             return WebDavSyncConfig(
-                rootUrl = root,
-                username = settings.webDavSyncUsername,
-                password = settings.webDavSyncPassword,
                 deviceName = settings.webDavSyncDeviceName.ifBlank { "Hyper Browser Android" },
                 deviceId = deviceId
             )
         }
     }
 }
-
-private class WebDavClient(private val config: WebDavSyncConfig) {
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
-
-    fun ensureCollections() {
-        mkcol("")
-        mkcol("devices/")
-    }
-
-    fun getJson(path: String): RemoteJson? {
-        val request = authenticated(Request.Builder().url(urlFor(path))).get().build()
-        client.newCall(request).execute().use { response ->
-            if (response.code == 404) return null
-            if (!response.isSuccessful) throw IOException("WebDAV GET failed: HTTP ${response.code}.")
-            return RemoteJson(
-                body = response.body?.string().orEmpty(),
-                etag = response.header("ETag")
-            )
-        }
-    }
-
-    fun putJson(path: String, json: String, etag: String?) {
-        val body = json.toRequestBody("application/json; charset=utf-8".toMediaType())
-        val builder = authenticated(Request.Builder().url(urlFor(path))).put(body)
-        if (!etag.isNullOrBlank()) builder.header("If-Match", etag)
-        val request = builder.build()
-        client.newCall(request).execute().use { response ->
-            if (response.code == 409 || response.code == 412) {
-                throw WebDavConflictException("WebDAV write conflict.")
-            }
-            if (!response.isSuccessful) {
-                throw IOException("WebDAV PUT failed: HTTP ${response.code}.")
-            }
-        }
-    }
-
-    private fun mkcol(path: String) {
-        val request = authenticated(Request.Builder().url(urlFor(path)).method("MKCOL", null)).build()
-        client.newCall(request).execute().use { response ->
-            if (response.isSuccessful || response.code == 405) return
-            if (response.code == 409 && path == "devices/") {
-                mkcol("")
-                return
-            }
-            throw IOException("WebDAV MKCOL failed: HTTP ${response.code}.")
-        }
-    }
-
-    private fun authenticated(builder: Request.Builder): Request.Builder {
-        if (config.username.isNotBlank() || config.password.isNotBlank()) {
-            builder.header("Authorization", Credentials.basic(config.username, config.password))
-        }
-        return builder
-    }
-
-    private fun urlFor(path: String): String {
-        if (path.isBlank()) return config.rootUrl
-        return config.rootUrl + path.split("/")
-            .filter { it.isNotBlank() }
-            .joinToString("/") { segment ->
-                URLEncoder.encode(segment, Charsets.UTF_8.name()).replace("+", "%20")
-            } + if (path.endsWith("/")) "/" else ""
-    }
-}
-
-private data class RemoteJson(val body: String, val etag: String?)
-
-private class WebDavConflictException(message: String) : IOException(message)
 
 private class WebDavSyncMetadataStore(context: Context) {
     private val file = File(context.filesDir, "webdav_sync_metadata.json")
@@ -464,7 +314,12 @@ private class WebDavSyncMetadataStore(context: Context) {
 private data class SyncMetadata(
     val bookmarks: Map<String, SyncBookmarkRecord>,
     val webApps: Map<String, SyncWebAppRecord>
-)
+) {
+    fun toJson(): JSONObject =
+        JSONObject()
+            .put("bookmarks", bookmarksArray(bookmarks.values))
+            .put("webApps", webAppsArray(webApps.values))
+}
 
 private data class SyncBookmarkRecord(
     val url: String,
@@ -505,52 +360,45 @@ private interface SyncRecord {
 
 private data class ApplyCounts(val imported: Int, val removed: Int)
 
-private fun <T : SyncRecord> mergeByKey(remote: Map<String, T>, local: Map<String, T>): Map<String, T> {
-    val keys = remote.keys + local.keys
-    return keys.mapNotNull { key ->
-        val left = remote[key]
-        val right = local[key]
-        val merged = when {
-            left == null -> right
-            right == null -> left
-            right.updatedAt > left.updatedAt -> right
-            left.updatedAt > right.updatedAt -> left
-            right.deletedAt != null && left.deletedAt == null -> right
-            else -> left
-        }
-        merged?.let { key to it }
-    }.toMap()
-}
-
-private fun mergeWebAppsRemoteFirst(
-    remote: List<SyncWebAppRecord>,
-    local: List<SyncWebAppRecord>
-): List<SyncWebAppRecord> {
-    val remoteIds = mutableSetOf<String>()
-    val merged = remote.filter { remoteIds.add(it.id) }.toMutableList()
-    local.forEach { record ->
-        if (record.id !in remoteIds) merged += record
+private fun webAppRecordsById(records: Collection<SyncWebAppRecord>): Map<String, SyncWebAppRecord> {
+    val result = linkedMapOf<String, SyncWebAppRecord>()
+    records.forEach { record ->
+        val id = record.id.trim()
+        if (id.isBlank()) return@forEach
+        val current = result[id]
+        result[id] = if (current == null) record else chooseLatestWebApp(current, record)
     }
-    return merged
+    return result
 }
 
-private fun sameBookmarkRecords(
-    left: Collection<SyncBookmarkRecord>,
-    right: Collection<SyncBookmarkRecord>
-): Boolean =
-    left.associateBy { it.url } == right.associateBy { it.url }
-
-private fun sameWebAppRecords(
-    left: Collection<SyncWebAppRecord>,
-    right: Collection<SyncWebAppRecord>
-): Boolean =
-    left.associateBy { it.id } == right.associateBy { it.id }
+private fun chooseLatestWebApp(
+    left: SyncWebAppRecord,
+    right: SyncWebAppRecord
+): SyncWebAppRecord =
+    when {
+        right.updatedAt > left.updatedAt -> right
+        left.updatedAt > right.updatedAt -> left
+        right.deletedAt != null && left.deletedAt == null -> right
+        else -> left
+    }
 
 private fun parseBookmarkRecords(raw: String?): List<SyncBookmarkRecord> {
     if (raw.isNullOrBlank()) return emptyList()
     return runCatching {
         val root = JSONObject(raw)
         parseBookmarkRecords(root.optJSONArray("items") ?: root.optJSONArray("bookmarks") ?: JSONArray())
+    }.getOrDefault(emptyList())
+}
+
+private fun parseBookmarkRecordsPayload(raw: String?): List<SyncBookmarkRecord> {
+    if (raw.isNullOrBlank()) return emptyList()
+    val clean = raw.trim()
+    return runCatching {
+        if (clean.startsWith("[")) {
+            parseBookmarkRecords(JSONArray(clean))
+        } else {
+            parseBookmarkRecords(clean)
+        }
     }.getOrDefault(emptyList())
 }
 
@@ -585,6 +433,18 @@ private fun parseWebAppRecords(raw: String?): List<SyncWebAppRecord> {
     }.getOrDefault(emptyList())
 }
 
+private fun parseWebAppRecordsPayload(raw: String?): List<SyncWebAppRecord> {
+    if (raw.isNullOrBlank()) return emptyList()
+    val clean = raw.trim()
+    return runCatching {
+        if (clean.startsWith("[")) {
+            parseWebAppRecords(JSONArray(clean))
+        } else {
+            parseWebAppRecords(clean)
+        }
+    }.getOrDefault(emptyList())
+}
+
 private fun parseWebAppRecords(array: JSONArray): List<SyncWebAppRecord> =
     buildList {
         for (index in 0 until array.length()) {
@@ -613,20 +473,6 @@ private fun parseWebAppRecords(array: JSONArray): List<SyncWebAppRecord> =
             )
         }
     }
-
-private fun bookmarksDocument(records: Collection<SyncBookmarkRecord>): JSONObject =
-    JSONObject()
-        .put("type", "hyper-browser-bookmarks")
-        .put("schemaVersion", 1)
-        .put("updatedAt", System.currentTimeMillis())
-        .put("items", bookmarksArray(records.sortedWith(compareBy({ it.deletedAt != null }, { it.title.lowercase() }))))
-
-private fun webAppsDocument(records: Collection<SyncWebAppRecord>): JSONObject =
-    JSONObject()
-        .put("type", "hyper-browser-webapps")
-        .put("schemaVersion", 1)
-        .put("updatedAt", System.currentTimeMillis())
-        .put("items", webAppsArray(records))
 
 private fun bookmarksArray(records: Collection<SyncBookmarkRecord>): JSONArray =
     JSONArray().apply {
@@ -666,33 +512,8 @@ private fun webAppsArray(records: Collection<SyncWebAppRecord>): JSONArray =
         }
     }
 
-private fun manifestDocument(config: WebDavSyncConfig, now: Long): JSONObject =
-    JSONObject()
-        .put("type", "hyper-browser-sync")
-        .put("schemaVersion", 1)
-        .put("updatedAt", now)
-        .put("syncRoot", "HyperBrowserSync")
-        .put("lastWriter", config.deviceId)
-        .put("files", JSONArray().put("bookmarks.json").put("webapps.json").put("launcher.json").put("devices/"))
-
-private fun deviceDocument(config: WebDavSyncConfig, now: Long): JSONObject =
-    JSONObject()
-        .put("schemaVersion", 1)
-        .put("deviceId", config.deviceId)
-        .put("deviceName", config.deviceName)
-        .put("client", "hyper-browser-android")
-        .put("lastSyncAt", now)
-
 private fun JSONObject.optNullableLong(name: String): Long? {
     if (!has(name) || isNull(name)) return null
     val value = optLong(name, 0L)
     return value.takeIf { it > 0 }
 }
-
-private fun safeSegment(value: String): String =
-    value.map { char ->
-        when {
-            char.isLetterOrDigit() || char == '-' || char == '_' || char == '.' -> char
-            else -> '_'
-        }
-    }.joinToString("").ifBlank { UUID.randomUUID().toString() }

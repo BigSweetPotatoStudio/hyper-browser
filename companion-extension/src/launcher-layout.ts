@@ -10,15 +10,28 @@ export const DEPRECATED_ENTRY_IDS = ["system:chrome"];
 const LAYOUT_VERSION = 4;
 const DEFAULT_GRID_COLUMNS = 4;
 
+let launcherLayoutSaveQueue: Promise<void> = Promise.resolve();
+
 export const launcherLayoutStorage: LauncherLayoutStorage = {
   async load() {
     const stored = await storageGet<Record<string, unknown>>(LAYOUT_STORAGE_KEY);
     return stored[LAYOUT_STORAGE_KEY] as never;
   },
   save(layout: LauncherLayout) {
-    return storageSet({ [LAYOUT_STORAGE_KEY]: layout });
+    const run = launcherLayoutSaveQueue.then(() => saveLauncherLayoutIfCurrent(layout));
+    launcherLayoutSaveQueue = run.catch(() => undefined);
+    return run;
   },
 };
+
+async function saveLauncherLayoutIfCurrent(layout: LauncherLayout): Promise<void> {
+  const stored = await storageGet<Record<string, unknown>>(LAYOUT_STORAGE_KEY);
+  const current = stored[LAYOUT_STORAGE_KEY] as Partial<LauncherLayout> | undefined;
+  const currentUpdatedAt = positiveTimestamp(current?.updatedAt);
+  const nextUpdatedAt = positiveTimestamp(layout.updatedAt);
+  if (currentUpdatedAt > 0 && currentUpdatedAt > nextUpdatedAt) return;
+  await storageSet({ [LAYOUT_STORAGE_KEY]: layout });
+}
 
 export async function appendWebAppToLauncher(appId: string, knownAppIds: string[] = []): Promise<void> {
   const itemId = `app:${appId}`;
@@ -97,7 +110,10 @@ function appendMissingAppCells(
   return nextCells.sort((left, right) => compareCells(left, right, columns));
 }
 
-export async function syncLauncherLayoutNow(knownAppIds: string[] = []): Promise<LauncherLayoutSyncResult> {
+export async function syncLauncherLayoutNow(
+  knownAppIds: string[] = [],
+  options: { appendMissingApps?: boolean } = {},
+): Promise<LauncherLayoutSyncResult> {
   const settings = await loadSettings();
   const availableEntryIds = uniqueStrings(knownAppIds).map((id) => (id.startsWith("app:") ? id : `app:${id}`));
   return syncLauncherLayout(launcherLayoutStorage, {
@@ -111,6 +127,7 @@ export async function syncLauncherLayoutNow(knownAppIds: string[] = []): Promise
     deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
     availableEntryIds,
     defaultDockEntryIds: DEFAULT_DOCK_ENTRY_IDS,
+    appendMissingApps: options.appendMissingApps,
   });
 }
 
@@ -147,6 +164,10 @@ function normalizeStoredLayout(value: Awaited<ReturnType<LauncherLayoutStorage["
     gridColumns,
     updatedAt,
   };
+}
+
+function positiveTimestamp(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function normalizeCell(cell: LauncherDesktopCell, columns: number): LauncherDesktopCell {
