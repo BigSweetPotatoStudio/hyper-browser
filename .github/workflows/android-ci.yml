@@ -90,9 +90,15 @@ jobs:
       - name: Package companion extension
         run: pnpm --dir companion-extension zip
 
+      - name: Collect companion extension packages
+        run: |
+          set -euo pipefail
+          mkdir -p companion-extension-artifacts
+          cp companion-extension/.output/*.zip companion-extension-artifacts/
+
       - name: Upload companion extension packages
         uses: actions/upload-artifact@v4
         with:
           name: HyperBrowser-companion-extension
-          path: companion-extension/.output/*.zip
+          path: companion-extension-artifacts/*.zip
           if-no-files-found: error

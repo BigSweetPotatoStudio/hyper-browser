@@ -111,6 +111,12 @@ jobs:
       - name: Package companion extension
         run: pnpm --dir companion-extension zip
 
+      - name: Collect companion extension packages
+        run: |
+          set -euo pipefail
+          mkdir -p companion-extension-artifacts
+          cp companion-extension/.output/*.zip companion-extension-artifacts/
+
       - name: Run Android unit tests
         run: ./gradlew :app:testDebugUnitTest --console=plain
 
@@ -182,7 +188,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: HyperBrowser-companion-extension
-          path: companion-extension/.output/*.zip
+          path: companion-extension-artifacts/*.zip
           if-no-files-found: error
 
       - name: Publish GitHub Release
@@ -199,9 +205,9 @@ jobs:
             echo "No signed release APKs found in $SIGNED_DIR" >&2
             exit 1
           fi
-          mapfile -t EXTENSION_ZIPS < <(find "companion-extension/.output" -maxdepth 1 -type f -name "*.zip" | sort)
+          mapfile -t EXTENSION_ZIPS < <(find "companion-extension-artifacts" -maxdepth 1 -type f -name "*.zip" | sort)
           if [ "${#EXTENSION_ZIPS[@]}" -eq 0 ]; then
-            echo "No companion extension ZIPs found in companion-extension/.output" >&2
+            echo "No companion extension ZIPs found in companion-extension-artifacts" >&2
             exit 1
           fi
 

@@ -6,6 +6,13 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+## 0.1.8-beta.2 - 2026-06-23
+
+- Fixed GitHub Actions collection of WXT companion extension ZIPs for release uploads.
+- Added WXT-based companion extension builds for Chrome and Firefox.
+- Added GitHub Actions packaging for companion extension ZIP artifacts and prerelease uploads.
+- Removed future `armeabi-v7a` release APK builds; upcoming releases target `arm64-v8a` phones and `x86_64` environments.
+
 ## 0.1.8-beta.1 - 2026-06-23
 
 - Added WXT-based companion extension builds for Chrome and Firefox.

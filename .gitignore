@@ -17,6 +17,7 @@ companion-extension/node_modules/
 companion-extension/dist/
 companion-extension/.wxt/
 companion-extension/.output/
+companion-extension-artifacts/
 
 # Android Studio / IntelliJ local state
 *.ipr
