@@ -1026,15 +1026,15 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
     Promise.resolve(platform.deleteApp(entry.app))
       .then((nextApps) => {
         if (Array.isArray(nextApps)) setApps(nextApps);
+        commitLayout((current) => ({
+          ...current,
+          cells: removeFromCells(current.cells, itemId),
+          dock: current.dock.filter((id) => id !== itemId),
+          folders: removeChildFromFolders(current.folders, itemId),
+        }));
+        closeMenu();
       })
       .catch((deleteError) => showToast(deleteError instanceof Error ? deleteError.message : labels.deleteFailed));
-    commitLayout((current) => ({
-      ...current,
-      cells: removeFromCells(current.cells, itemId),
-      dock: current.dock.filter((id) => id !== itemId),
-      folders: removeChildFromFolders(current.folders, itemId),
-    }));
-    closeMenu();
   }
 
   function pinApp(itemId: string) {

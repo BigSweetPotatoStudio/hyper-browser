@@ -234,7 +234,7 @@ type HyperBrowserApi = {
   updateApp(id: string, name: string, startUrl: string, iconDataUrl?: string | null): Promise<WebAppItem[]>;
   chooseAppIcon(id: string): Promise<string | null>;
   updateAppIcon(id: string, iconDataUrl: string | null): Promise<WebAppItem[]>;
-  deleteApp(id: string): void;
+  deleteApp(id: string): Promise<WebAppItem[]>;
 };
 
 const nativeApp = "hyperBrowser";
@@ -444,7 +444,7 @@ window.hyperBrowser = {
     return requestItems<WebAppItem>("apps.icon.update", { id, iconDataUrl: iconDataUrl || "" });
   },
   deleteApp(id) {
-    command("apps.delete", { id });
+    return requestItems<WebAppItem>("apps.delete", { id });
   }
 };
 

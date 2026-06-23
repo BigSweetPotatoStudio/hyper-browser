@@ -146,8 +146,7 @@ function HomePage() {
       if (action === "extensions") window.hyperBrowser.showExtensions();
     },
     deleteApp: (app) => {
-      window.hyperBrowser.deleteApp(app.id);
-      return window.hyperBrowser.requestAppsData().then((items) => items.filter((item) => item.id !== app.id));
+      return window.hyperBrowser.deleteApp(app.id);
     },
     saveApp: (app, changes) => window.hyperBrowser.updateApp(app.id, changes.name, changes.startUrl, changes.iconDataUrl),
     chooseAppIcon: (app) => window.hyperBrowser.chooseAppIcon(app.id),

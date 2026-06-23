@@ -514,9 +514,9 @@ private fun BrowserScreen(
         }
     }
 
-    fun handleHyperBridgeMessage(message: JSONObject): GeckoResult<Any> {
-        val payload = message.optJSONObject("payload") ?: JSONObject()
-        val response = when (message.optString("type")) {
+    fun handleHyperBridgeMessage(bridgeMessage: JSONObject): GeckoResult<Any> {
+        val payload = bridgeMessage.optJSONObject("payload") ?: JSONObject()
+        val response = when (bridgeMessage.optString("type")) {
             "data.home" -> okItems(profileStore.observeHistory().value.toHistoryJsonString(faviconStore))
             "data.search" -> okItems(
                 searchSuggestionsJsonString(
@@ -782,8 +782,29 @@ private fun BrowserScreen(
                 okItems(app.webApps.observeAll().value.map { if (it.id == id) updated else it }.toWebAppsJsonString(app))
             }
             "apps.delete" -> {
-                pendingHyperCommand = HyperCommand.Apps.Delete(payload.optString("id"))
-                ok()
+                val id = payload.optString("id")
+                if (id.isBlank()) return bridgeError(context.getString(R.string.webapp_not_found))
+                val result = GeckoResult<Any>()
+                scope.launch {
+                    runCatching {
+                        val deleted = app.webApps.delete(id)
+                        if (!deleted) error(context.getString(R.string.webapp_not_found))
+                        markWebDavDirty()
+                        message = context.getString(R.string.webapp_deleted)
+                        webAppsItemsResponse()
+                    }.fold(
+                        onSuccess = { response -> completeBridgeResult(result, response) },
+                        onFailure = { throwable ->
+                            completeBridgeResult(
+                                result,
+                                JSONObject()
+                                    .put("ok", false)
+                                    .put("error", throwable.message ?: context.getString(R.string.webapp_delete_failed))
+                            )
+                        }
+                    )
+                }
+                return result
             }
             "panel.extensions" -> {
                 pendingHyperCommand = HyperCommand.Panel.Extensions
