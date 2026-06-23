@@ -148,11 +148,10 @@ class WebDavSyncManager(
         now: Long
     ): List<SyncWebAppRecord> {
         val localById = webAppRepository.observeAll().value.associateBy { it.id.trim() }
-        val localStartUrls = localById.values.map { it.startUrl.trim() }.toSet()
         val records = mutableMapOf<String, SyncWebAppRecord>()
 
         knownRecords.values
-            .filter { it.deletedAt == null && it.id !in localById && it.startUrl !in localStartUrls }
+            .filter { it.deletedAt == null && it.id !in localById }
             .forEach { known ->
                 records[known.id] = known.copy(
                     updatedAt = now,
