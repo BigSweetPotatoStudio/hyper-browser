@@ -1071,7 +1071,12 @@ private fun BrowserScreen(
             toolbarCollapseFraction = 0f
             return
         }
-        toolbarCollapseFraction = (toolbarCollapseFraction + deltaY / toolbarCollapseRangePx)
+        val toolbarDeltaY = if (settings.toolbarPosition == BrowserSettings.TOOLBAR_POSITION_TOP) {
+            -deltaY
+        } else {
+            deltaY
+        }
+        toolbarCollapseFraction = (toolbarCollapseFraction + toolbarDeltaY / toolbarCollapseRangePx)
             .coerceIn(0f, 1f)
     }
 

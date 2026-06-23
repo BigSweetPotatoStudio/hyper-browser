@@ -28,7 +28,7 @@ data class BrowserBookmark(
 data class BrowserSettings(
     val searchEngineId: String = SEARCH_ENGINE_GOOGLE,
     val customSearchUrl: String = "",
-    val toolbarPosition: String = TOOLBAR_POSITION_TOP,
+    val toolbarPosition: String = TOOLBAR_POSITION_BOTTOM,
     val backgroundVideoEnhancementEnabled: Boolean = false,
     val openNewTabsInCurrentTab: Boolean = false,
     val dohEnabled: Boolean = false,
@@ -84,6 +84,12 @@ data class BrowserSettings(
                 LOCALE_CHINESE -> LOCALE_CHINESE
                 LOCALE_ENGLISH -> LOCALE_ENGLISH
                 else -> LOCALE_DEFAULT
+            }
+
+        fun normalizedToolbarPosition(value: String): String =
+            when (value) {
+                TOOLBAR_POSITION_TOP -> TOOLBAR_POSITION_TOP
+                else -> TOOLBAR_POSITION_BOTTOM
             }
     }
 }
@@ -340,10 +346,7 @@ class BrowserProfileStore(context: Context) {
 
     fun updateToolbarPosition(toolbarPosition: String) {
         val next = settingsState.value.copy(
-            toolbarPosition = when (toolbarPosition) {
-                BrowserSettings.TOOLBAR_POSITION_BOTTOM -> BrowserSettings.TOOLBAR_POSITION_BOTTOM
-                else -> BrowserSettings.TOOLBAR_POSITION_TOP
-            }
+            toolbarPosition = BrowserSettings.normalizedToolbarPosition(toolbarPosition)
         )
         settingsState.value = next
         saveSettings(next)
@@ -566,7 +569,9 @@ class BrowserProfileStore(context: Context) {
                 BrowserSettings(
                     searchEngineId = item.optString("searchEngineId", BrowserSettings.SEARCH_ENGINE_GOOGLE),
                     customSearchUrl = item.optString("customSearchUrl"),
-                    toolbarPosition = item.optString("toolbarPosition", BrowserSettings.TOOLBAR_POSITION_TOP),
+                    toolbarPosition = BrowserSettings.normalizedToolbarPosition(
+                        item.optString("toolbarPosition", BrowserSettings.TOOLBAR_POSITION_BOTTOM)
+                    ),
                     backgroundVideoEnhancementEnabled = item.optBoolean("backgroundVideoEnhancementEnabled", false),
                     openNewTabsInCurrentTab = item.optBoolean("openNewTabsInCurrentTab", false),
                     dohEnabled = item.optBoolean("dohEnabled", false),
