@@ -40,18 +40,21 @@ class WebAppRepository(
 
     fun mergeImported(items: List<WebAppDefinition>): Int {
         val current = state.value
-        val currentByStartUrl = current.associateBy { it.startUrl }
+        val currentById = current.associateBy { it.id }
         val usedIds = current.map { it.id }.toMutableSet()
-        val importedStartUrls = mutableSetOf<String>()
+        val importedIds = mutableSetOf<String>()
         val accepted = mutableListOf<WebAppDefinition>()
         val shortcutUpdates = mutableListOf<WebAppDefinition>()
         items.forEach { item ->
             val startUrl = item.startUrl.trim()
-            if (startUrl.isBlank() || !importedStartUrls.add(startUrl)) return@forEach
-            val existing = currentByStartUrl[startUrl]
+            if (startUrl.isBlank()) return@forEach
+            val requestedId = item.id.trim()
+            val existing = currentById[requestedId]
             val id = existing?.id
-                ?: item.id.takeIf { it.isNotBlank() && usedIds.add(it) }
-                ?: UUID.randomUUID().toString().also { usedIds.add(it) }
+                ?: requestedId.takeIf { it.isNotBlank() && (it !in usedIds || importedIds.contains(it)) }
+                ?: UUID.randomUUID().toString()
+            if (!importedIds.add(id)) return@forEach
+            usedIds.add(id)
             val iconPath = faviconStore.existingIconPath(siteModeIconPath(item.iconPath))
                 ?: faviconStore.cachedIconPath(startUrl)
                 ?: siteModeIconPath(existing?.iconPath)
@@ -74,8 +77,8 @@ class WebAppRepository(
             if (existing != null) shortcutUpdates.add(webApp)
         }
         if (accepted.isEmpty()) return 0
-        val importedUrls = accepted.map { it.startUrl }.toSet()
-        save((accepted + current.filterNot { it.startUrl in importedUrls }).sortedByDescending { it.lastOpenedAt })
+        val importedIdSet = accepted.map { it.id }.toSet()
+        save((accepted + current.filterNot { it.id in importedIdSet }).sortedByDescending { it.lastOpenedAt })
         shortcutUpdates.forEach { updateShortcut(it) }
         return accepted.size
     }

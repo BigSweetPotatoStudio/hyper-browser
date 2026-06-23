@@ -83,7 +83,7 @@ function WebAppsPage() {
   function remove(item: WebAppRecord) {
     setBusy(true);
     setError("");
-    deleteRemoteWebApp(item.startUrl)
+    deleteRemoteWebApp(item.id)
       .then((next) => {
         setItems(next);
         setMessage("WebApp deleted. A tombstone was kept for offline devices.");
@@ -144,7 +144,7 @@ function WebAppsPage() {
         {sortedItems.length === 0 ? (
           <div className="empty">No WebApps yet.</div>
         ) : sortedItems.map((item) => (
-          <article className="item" key={item.startUrl}>
+          <article className="item" key={item.id}>
             <div>
               <span className="item-title">{item.name}</span>
               <span className="item-url">{item.startUrl}</span>

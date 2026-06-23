@@ -47,7 +47,7 @@ function ChromeHomePage() {
       };
       chrome.tabs.create({ url: urls[action] || "chrome://newtab/" });
     },
-    deleteApp: (app) => sendCommand<WebAppRecord[]>("webapps.delete", { startUrl: app.startUrl }),
+    deleteApp: (app) => sendCommand<WebAppRecord[]>("webapps.delete", { id: app.id }),
     saveApp: (app, changes) => sendCommand<WebAppRecord[]>("webapps.save", {
       ...app,
       name: changes.name,

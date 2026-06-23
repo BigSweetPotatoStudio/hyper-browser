@@ -51,8 +51,8 @@ class WebDavSyncManager(
                 localBookmarks.associateBy { it.url }
             )
             val mergedWebApps = mergeByKey(
-                remoteWebAppRecords.associateBy { it.startUrl },
-                localWebApps.associateBy { it.startUrl }
+                remoteWebAppRecords.associateBy { it.id },
+                localWebApps.associateBy { it.id }
             )
             val bookmarksChanged = !sameBookmarkRecords(remoteBookmarkRecords, mergedBookmarks.values)
             val webAppsChanged = !sameWebAppRecords(remoteWebAppRecords, mergedWebApps.values)
@@ -147,23 +147,25 @@ class WebDavSyncManager(
         deviceId: String,
         now: Long
     ): List<SyncWebAppRecord> {
-        val localByStartUrl = webAppRepository.observeAll().value.associateBy { it.startUrl.trim() }
+        val localById = webAppRepository.observeAll().value.associateBy { it.id.trim() }
+        val localStartUrls = localById.values.map { it.startUrl.trim() }.toSet()
         val records = mutableMapOf<String, SyncWebAppRecord>()
 
         knownRecords.values
-            .filter { it.deletedAt == null && it.startUrl !in localByStartUrl }
+            .filter { it.deletedAt == null && it.id !in localById && it.startUrl !in localStartUrls }
             .forEach { known ->
-                records[known.startUrl] = known.copy(
+                records[known.id] = known.copy(
                     updatedAt = now,
                     deletedAt = now,
                     sourceDeviceId = deviceId
                 )
             }
 
-        localByStartUrl.values.forEach { webApp ->
+        localById.values.forEach { webApp ->
+            val id = webApp.id.trim()
             val startUrl = webApp.startUrl.trim()
-            if (startUrl.isBlank()) return@forEach
-            val known = knownRecords[startUrl]
+            if (id.isBlank() || startUrl.isBlank()) return@forEach
+            val known = knownRecords[id]
             val iconDataUrl = webAppRepository.iconDataUrl(webApp)
             val iconSource = webAppRepository.iconSource(webApp)
             val changed = known == null ||
@@ -174,8 +176,8 @@ class WebDavSyncManager(
                 known.displayMode != webApp.displayMode ||
                 known.iconDataUrl != iconDataUrl ||
                 known.iconSource != iconSource
-            records[startUrl] = SyncWebAppRecord(
-                id = webApp.id,
+            records[id] = SyncWebAppRecord(
+                id = id,
                 name = webApp.name.ifBlank { startUrl },
                 startUrl = startUrl,
                 scopeUrl = webApp.scopeUrl,
@@ -221,17 +223,17 @@ class WebDavSyncManager(
     }
 
     private suspend fun applyWebApps(records: Collection<SyncWebAppRecord>): ApplyCounts {
-        val currentByStartUrl = webAppRepository.observeAll().value.associateBy { it.startUrl }
+        val currentById = webAppRepository.observeAll().value.associateBy { it.id }
         var removed = 0
         val imports = mutableListOf<WebAppDefinition>()
         records.sortedByDescending { it.updatedAt }.forEach { record ->
             if (record.deletedAt != null) {
-                currentByStartUrl[record.startUrl]?.let {
+                currentById[record.id]?.let {
                     if (webAppRepository.delete(it.id)) removed += 1
                 }
                 return@forEach
             }
-            val current = currentByStartUrl[record.startUrl]
+            val current = currentById[record.id]
             if (current == null ||
                 current.name != record.name ||
                 current.scopeUrl != record.scopeUrl ||
@@ -241,7 +243,7 @@ class WebDavSyncManager(
                 webAppRepository.iconSource(current) != record.normalizedIconSource()
             ) {
                 imports += WebAppDefinition(
-                    id = record.id.ifBlank { current?.id ?: UUID.randomUUID().toString() },
+                    id = record.id.ifBlank { UUID.randomUUID().toString() },
                     name = record.name.ifBlank { record.startUrl },
                     startUrl = record.startUrl,
                     scopeUrl = record.scopeUrl,
@@ -430,7 +432,7 @@ private class WebDavSyncMetadataStore(context: Context) {
             val root = JSONObject(file.readText())
             SyncMetadata(
                 bookmarks = parseBookmarkRecords(root.optJSONArray("bookmarks") ?: JSONArray()).associateBy { it.url },
-                webApps = parseWebAppRecords(root.optJSONArray("webApps") ?: JSONArray()).associateBy { it.startUrl }
+                webApps = parseWebAppRecords(root.optJSONArray("webApps") ?: JSONArray()).associateBy { it.id }
             )
         }.getOrDefault(SyncMetadata(emptyMap(), emptyMap()))
     }
@@ -518,7 +520,7 @@ private fun sameWebAppRecords(
     left: Collection<SyncWebAppRecord>,
     right: Collection<SyncWebAppRecord>
 ): Boolean =
-    left.associateBy { it.startUrl } == right.associateBy { it.startUrl }
+    left.associateBy { it.id } == right.associateBy { it.id }
 
 private fun parseBookmarkRecords(raw: String?): List<SyncBookmarkRecord> {
     if (raw.isNullOrBlank()) return emptyList()
@@ -570,7 +572,7 @@ private fun parseWebAppRecords(array: JSONArray): List<SyncWebAppRecord> =
                 ?: System.currentTimeMillis()
             add(
                 SyncWebAppRecord(
-                    id = item.optString("id").ifBlank { UUID.randomUUID().toString() },
+                    id = item.optString("id").ifBlank { UUID.nameUUIDFromBytes(startUrl.toByteArray(Charsets.UTF_8)).toString() },
                     name = item.optString("name").ifBlank { startUrl },
                     startUrl = startUrl,
                     scopeUrl = item.optString("scopeUrl"),

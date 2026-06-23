@@ -410,8 +410,9 @@
 }
 
 .desktop-dock-tile .desktop-folder-icon {
-  --folder-dot-size: 20px;
-  padding: 7px;
+  --folder-dot-size: 23px;
+  gap: 2px;
+  padding: 5px;
 }
 
 @keyframes desktop-wiggle {
@@ -426,6 +427,7 @@
 
 .desktop-icon {
   display: grid;
+  box-sizing: border-box;
   width: var(--desktop-icon-size);
   height: var(--desktop-icon-size);
   place-items: center;
@@ -449,13 +451,13 @@
 }
 
 .desktop-folder-icon {
-  --folder-dot-size: 22px;
+  --folder-dot-size: 26px;
   grid-template-rows: repeat(2, var(--folder-dot-size));
   grid-template-columns: repeat(2, var(--folder-dot-size));
-  gap: 4px;
+  gap: 3px;
   place-content: center;
   place-items: stretch;
-  padding: 8px;
+  padding: 4px;
   background: rgba(255, 255, 255, 0.88);
 }
 
@@ -470,6 +472,19 @@
   color: #fff;
   font-size: 12px;
   font-weight: 760;
+}
+
+.desktop-folder-dot.image {
+  overflow: hidden;
+  background: #fff;
+}
+
+.desktop-folder-dot img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
 }
 
 .desktop-folder-dot.placeholder {
@@ -954,4 +969,10 @@
   width: 58px;
   height: 58px;
   border-radius: 16px;
+}
+
+.desktop-page.mobile .desktop-folder-icon {
+  --folder-dot-size: 23px;
+  gap: 2px;
+  padding: 5px;
 }

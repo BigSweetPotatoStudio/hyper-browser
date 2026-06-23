@@ -31,8 +31,10 @@ const DOCK_DROP_ID = "drop:dock";
 const DROP_ZONE_IDS = new Set<string>([DESKTOP_DROP_ID, DOCK_DROP_ID]);
 const DESKTOP_CELL_WIDTH = 116;
 const DESKTOP_CELL_HEIGHT = 125;
-const MOBILE_GRID_COLUMNS = 4;
+const MOBILE_GRID_MIN_COLUMNS = 4;
+const MOBILE_CELL_WIDTH = 76;
 const MOBILE_CELL_HEIGHT = 112;
+const MOBILE_GRID_COLUMN_GAP = 10;
 const MAX_DOCK_ITEMS = 4;
 
 export type LauncherApp = {
@@ -470,10 +472,14 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
   useEffect(() => {
     if (loading) return;
     setLayout((current) => {
-      const pruned = limitDockItems(pruneEmptyFolders(removeDeprecatedEntryIds(current, deprecatedEntryIds)));
+      const pruned = removeUnavailableEntryIds(
+        limitDockItems(pruneEmptyFolders(removeDeprecatedEntryIds(current, deprecatedEntryIds))),
+        availableEntries,
+      ).layout;
+      const visibleDesktopIdSet = new Set(visibleDesktopIds);
       const preservedCellIds = pruned.cells
         .map((cell) => cell.id)
-        .filter((id) => !pruned.dock.includes(id) && !pruned.folders.some((folder) => folder.childIds.includes(id)));
+        .filter((id) => visibleDesktopIdSet.has(id));
       const nextCellIds = uniqueStrings([...preservedCellIds, ...visibleDesktopIds]);
       const nextCells = normalizeDesktopCells(pruned.cells, nextCellIds, gridMetrics);
       const next = sameCells(pruned.cells, nextCells, gridMetrics) && pruned.gridColumns === gridMetrics.columns
@@ -481,7 +487,7 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
         : { ...pruned, cells: nextCells, version: LAYOUT_VERSION, gridColumns: gridMetrics.columns };
       return next === current ? current : next;
     });
-  }, [deprecatedEntryIds, gridMetrics, loading, visibleDesktopIds]);
+  }, [availableEntries, deprecatedEntryIds, gridMetrics, loading, visibleDesktopIds]);
 
   useEffect(() => {
     if (openFolderId && !folderEntries.has(openFolderId)) {
@@ -1731,12 +1737,14 @@ function DesktopLauncherIcon({ entry }: { entry: LauncherEntry }) {
       <span className="desktop-icon desktop-folder-icon" aria-hidden="true">
         {Array.from({ length: 4 }, (_, index) => {
           const child = previewChildren[index];
-          return child ? (
-            <span className="desktop-folder-dot" key={child.id} style={{ background: child.kind === "folder" ? "#dfe5eb" : child.color }}>
-              {child.kind === "folder" ? "" : child.mark.slice(0, 1)}
+          if (!child) {
+            return <span className="desktop-folder-dot placeholder" key={`empty-${index}`} />;
+          }
+          const iconDataUrl = child.kind === "app" ? child.app.iconDataUrl : null;
+          return (
+            <span className={iconDataUrl ? "desktop-folder-dot image" : "desktop-folder-dot"} key={child.id} style={{ background: iconDataUrl ? "#fff" : child.kind === "folder" ? "#dfe5eb" : child.color }}>
+              {iconDataUrl ? <img src={iconDataUrl} alt="" /> : child.kind === "folder" ? "" : child.mark.slice(0, 1)}
             </span>
-          ) : (
-            <span className="desktop-folder-dot placeholder" key={`empty-${index}`} />
           );
         })}
       </span>
@@ -1890,12 +1898,14 @@ function sameDesktopGridMetrics(left: DesktopGridMetrics, right: DesktopGridMetr
 function calculateDesktopGridMetrics(variant: LauncherPageProps["variant"]): DesktopGridMetrics {
   const mobile = variant === "mobile";
   const narrow = mobile || window.innerWidth <= 680;
-  const topSafe = narrow ? 82 : 96;
-  const sideSafe = narrow ? 18 : 24;
-  const bottomSafe = narrow ? 132 : 150;
+  const topSafe = mobile ? 72 : narrow ? 82 : 96;
+  const sideSafe = mobile ? 14 : narrow ? 18 : 24;
+  const bottomSafe = mobile ? 126 : narrow ? 132 : 150;
   const width = Math.max(DESKTOP_CELL_WIDTH, window.innerWidth - sideSafe * 2);
   const height = Math.max(DESKTOP_CELL_HEIGHT, window.innerHeight - topSafe - bottomSafe);
-  const columns = mobile ? MOBILE_GRID_COLUMNS : Math.max(1, Math.floor(width / DESKTOP_CELL_WIDTH));
+  const columns = mobile
+    ? Math.max(MOBILE_GRID_MIN_COLUMNS, Math.floor((width + MOBILE_GRID_COLUMN_GAP) / (MOBILE_CELL_WIDTH + MOBILE_GRID_COLUMN_GAP)))
+    : Math.max(1, Math.floor(width / DESKTOP_CELL_WIDTH));
   const rows = Math.max(1, Math.floor(height / (mobile ? MOBILE_CELL_HEIGHT : DESKTOP_CELL_HEIGHT)));
   return { columns, rows, capacity: columns * rows };
 }
@@ -2357,6 +2367,30 @@ function pruneEmptyFolders(layout: LauncherLayout, availableEntryIds?: Set<strin
     cells: removedFolderIds.size > 0 ? layout.cells.filter((cell) => !removedFolderIds.has(cell.id)) : layout.cells,
     dock: removedFolderIds.size > 0 ? layout.dock.filter((id) => !removedFolderIds.has(id)) : layout.dock,
     folders,
+  };
+}
+
+function removeUnavailableEntryIds(layout: LauncherLayout, availableEntries: Map<string, LauncherSystemEntry | AppEntry>): { layout: LauncherLayout; changed: boolean } {
+  const availableEntryIds = new Set(availableEntries.keys());
+  const withoutInvalidFolderChildren = pruneEmptyFolders(layout, availableEntryIds);
+  const folderIds = new Set(withoutInvalidFolderChildren.folders.map((folder) => folder.id));
+  const isAvailableLayoutId = (id: string) => availableEntryIds.has(id) || folderIds.has(id);
+  const cells = withoutInvalidFolderChildren.cells.filter((cell) => isAvailableLayoutId(cell.id));
+  const dock = withoutInvalidFolderChildren.dock.filter(isAvailableLayoutId);
+  if (
+    cells.length === withoutInvalidFolderChildren.cells.length
+    && dock.length === withoutInvalidFolderChildren.dock.length
+    && withoutInvalidFolderChildren === layout
+  ) {
+    return { layout, changed: false };
+  }
+  return {
+    changed: true,
+    layout: {
+      ...withoutInvalidFolderChildren,
+      cells,
+      dock,
+    },
   };
 }
 

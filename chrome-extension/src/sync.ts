@@ -79,16 +79,13 @@ export async function saveRemoteWebApp(input: Partial<WebAppRecord> & { name: st
     const now = Date.now();
     const startUrl = input.startUrl.trim();
     if (!startUrl) throw new Error("Start URL is required.");
-    const previousKey = input.id
-      ? Object.keys(records).find((key) => records[key].id === input.id)
-      : undefined;
-    const existing = records[startUrl] || (previousKey ? records[previousKey] : undefined);
-    if (previousKey && previousKey !== startUrl) delete records[previousKey];
+    const id = input.id?.trim() || crypto.randomUUID();
+    const existing = records[id];
     const hasIconDataUrl = Object.prototype.hasOwnProperty.call(input, "iconDataUrl");
     const iconDataUrl = hasIconDataUrl ? input.iconDataUrl ?? null : existing?.iconDataUrl ?? null;
     const iconSource = input.iconSource || existing?.iconSource || (iconDataUrl ? "custom" : "title");
-    records[startUrl] = {
-      id: input.id || existing?.id || crypto.randomUUID(),
+    records[id] = {
+      id,
       name: input.name.trim() || startUrl,
       startUrl,
       scopeUrl: input.scopeUrl?.trim() || existing?.scopeUrl || scopeFor(startUrl),
@@ -120,12 +117,12 @@ export async function addBookmarkToSyncFolder(input: { title: string; url: strin
   return syncNow();
 }
 
-export async function deleteRemoteWebApp(startUrl: string): Promise<WebAppRecord[]> {
+export async function deleteRemoteWebApp(idOrStartUrl: string): Promise<WebAppRecord[]> {
   return updateRemoteWebApps((records, settings) => {
-    const key = startUrl.trim();
-    const existing = records[key];
+    const key = idOrStartUrl.trim();
+    const existing = records[key] || Object.values(records).find((item) => item.startUrl === key);
     if (!existing) return;
-    records[key] = {
+    records[existing.id] = {
       ...existing,
       updatedAt: Date.now(),
       deletedAt: Date.now(),
@@ -316,7 +313,7 @@ function indexBookmarks(items: BookmarkRecord[]): Record<string, BookmarkRecord>
 }
 
 function indexWebApps(items: WebAppRecord[]): Record<string, WebAppRecord> {
-  return Object.fromEntries(items.filter((item) => item.startUrl).map((item) => [item.startUrl, item]));
+  return Object.fromEntries(items.filter((item) => item.id).map((item) => [item.id, item]));
 }
 
 function scopeFor(url: string): string {

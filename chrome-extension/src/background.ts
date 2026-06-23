@@ -60,12 +60,14 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     case "current.addWebApp": {
       const page = await getCurrentHttpPage();
       const iconDataUrl = await capturePageIcon(await getPageIconCandidates(page)).catch(() => null);
+      const webAppId = crypto.randomUUID();
       const webApps = await saveRemoteWebApp({
+        id: webAppId,
         name: page.title,
         startUrl: page.url,
         ...(iconDataUrl ? { iconDataUrl, iconSource: "site" as const } : {}),
       });
-      const savedApp = webApps.find((app) => app.startUrl === page.url);
+      const savedApp = webApps.find((app) => app.id === webAppId);
       if (savedApp) {
         await syncLauncherLayoutNow();
         await appendWebAppToLauncher(savedApp.id, webApps.map((app) => app.id));
@@ -82,7 +84,7 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     case "webapps.save":
       return saveRemoteWebApp(message.payload as never);
     case "webapps.delete":
-      return deleteRemoteWebApp(String((message.payload as { startUrl?: string })?.startUrl || ""));
+      return deleteRemoteWebApp(String((message.payload as { id?: string; startUrl?: string })?.id || (message.payload as { startUrl?: string })?.startUrl || ""));
     case "open.options":
       await chrome.runtime.openOptionsPage();
       return null;
