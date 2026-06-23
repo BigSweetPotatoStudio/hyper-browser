@@ -784,27 +784,11 @@ private fun BrowserScreen(
             "apps.delete" -> {
                 val id = payload.optString("id")
                 if (id.isBlank()) return bridgeError(context.getString(R.string.webapp_not_found))
-                val result = GeckoResult<Any>()
-                scope.launch {
-                    runCatching {
-                        val deleted = app.webApps.delete(id)
-                        if (!deleted) error(context.getString(R.string.webapp_not_found))
-                        markWebDavDirty()
-                        message = context.getString(R.string.webapp_deleted)
-                        webAppsItemsResponse()
-                    }.fold(
-                        onSuccess = { response -> completeBridgeResult(result, response) },
-                        onFailure = { throwable ->
-                            completeBridgeResult(
-                                result,
-                                JSONObject()
-                                    .put("ok", false)
-                                    .put("error", throwable.message ?: context.getString(R.string.webapp_delete_failed))
-                            )
-                        }
-                    )
-                }
-                return result
+                val deleted = runBlocking { app.webApps.delete(id) }
+                if (!deleted) return bridgeError(context.getString(R.string.webapp_not_found))
+                markWebDavDirty()
+                message = context.getString(R.string.webapp_deleted)
+                okItems(app.webApps.observeAll().value.toWebAppsJsonString(app))
             }
             "panel.extensions" -> {
                 pendingHyperCommand = HyperCommand.Panel.Extensions
