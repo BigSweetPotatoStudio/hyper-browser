@@ -1,14 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { LauncherLayout, LauncherLayoutStorage } from "@hyper-launcher";
 import { syncLauncherLayout } from "@hyper-launcher/webdav-layout";
 import "../hyper-browser";
 import "../styles.css";
 import { getLocalePreference, matchesI18nText, setLocalePreference, t, type LocalePreference } from "../i18n";
 import type { BatteryOptimizationState, BrowserSettings, UpdateCheckResult, UpdateDownloadState, WebDavSyncResult, WebDavSyncSettings } from "../hyper-browser";
-
-const LAYOUT_STORAGE_KEY = "hyper-home-launcher-layout-v3";
-const LEGACY_LAYOUT_STORAGE_KEY = "hyper-home-launcher-layout-v1";
+import { createLauncherLayoutStorage } from "../launcher-layout-storage";
 
 function SettingsPage() {
   const [query, setQuery] = useState("");
@@ -52,14 +49,7 @@ function SettingsPage() {
   const [updateSettingsExpanded, setUpdateSettingsExpanded] = useState(false);
   const customInputRef = useRef<HTMLInputElement | null>(null);
   const didAutoCheckUpdateRef = useRef(false);
-  const launcherLayoutStorage = useMemo<LauncherLayoutStorage>(() => ({
-    async load() {
-      return readJson(LAYOUT_STORAGE_KEY) || readJson(LEGACY_LAYOUT_STORAGE_KEY);
-    },
-    save(layout: LauncherLayout) {
-      window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
-    },
-  }), []);
+  const launcherLayoutStorage = useMemo(() => createLauncherLayoutStorage(), []);
   const showSearchEngine = useMemo(() => {
     return matchesI18nText("settings.searchEngineTerms", query);
   }, [query]);
@@ -1174,16 +1164,6 @@ function SettingsPage() {
       </section>
     </main>
   );
-}
-
-function readJson(key: string): Record<string, unknown> | null {
-  const raw = window.localStorage.getItem(key);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
 }
 
 createRoot(document.getElementById("root")!).render(

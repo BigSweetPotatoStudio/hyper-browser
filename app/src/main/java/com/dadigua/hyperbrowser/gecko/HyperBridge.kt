@@ -19,6 +19,8 @@ object HyperBridge {
         "data.history",
         "data.apps",
         "data.settings",
+        "data.launcherLayout",
+        "launcher.layout.save",
         "search.submit",
         "settings.searchEngine.update",
         "settings.toolbarPosition.update",

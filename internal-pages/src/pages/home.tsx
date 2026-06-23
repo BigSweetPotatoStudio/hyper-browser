@@ -1,14 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { LauncherPage, LauncherSyncActions, type LauncherLayout, type LauncherLayoutStorage, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
+import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
 import { syncLauncherLayout } from "@hyper-launcher/webdav-layout";
 import "../hyper-browser";
 import type { BrowserSettings, WebDavSyncResult } from "../hyper-browser";
 import "../styles.css";
 import { t } from "../i18n";
+import { createLauncherLayoutStorage } from "../launcher-layout-storage";
 
-const LAYOUT_STORAGE_KEY = "hyper-home-launcher-layout-v3";
-const LEGACY_LAYOUT_STORAGE_KEY = "hyper-home-launcher-layout-v1";
 const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"];
 const AUTO_SYNC_DEBOUNCE_MS = 1800;
 const REMOTE_POLL_MS = 30000;
@@ -30,14 +29,7 @@ function HomePage() {
       .catch(() => undefined);
   }, []);
 
-  const storage = useMemo<LauncherLayoutStorage>(() => ({
-    async load() {
-      return readJson(LAYOUT_STORAGE_KEY) || readJson(LEGACY_LAYOUT_STORAGE_KEY);
-    },
-    save(layout: LauncherLayout) {
-      window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
-    },
-  }), []);
+  const storage = useMemo(() => createLauncherLayoutStorage(), []);
 
   const runAutoSync = useCallback(async (options: { refreshLauncher?: boolean } = {}) => {
     if (autoSyncRunning.current) {
@@ -82,7 +74,6 @@ function HomePage() {
       if (!settings.webDavSyncEnabled || !isWebDavConfigured(settings)) return;
       const remoteCheck = await window.hyperBrowser.checkWebDavRemoteChanges(lastSeenRemoteUpdatedAt.current);
       if (remoteCheck.updatedAt > 0) lastSeenRemoteUpdatedAt.current = remoteCheck.updatedAt;
-      if (!remoteCheck.changed) return;
       const layoutResult = await syncLauncherLayout(storage, {
         webDavUrl: settings.webDavSyncUrl,
         username: settings.webDavSyncUsername,
@@ -295,16 +286,6 @@ function webDavSyncSummary(result: WebDavSyncResult): string {
     webApps: result.webAppCount,
     deleted: result.deletedBookmarkCount + result.deletedWebAppCount,
   });
-}
-
-function readJson(key: string): Record<string, unknown> | null {
-  const raw = window.localStorage.getItem(key);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
 }
 
 createRoot(document.getElementById("root")!).render(

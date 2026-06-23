@@ -529,6 +529,16 @@ private fun BrowserScreen(
             "data.history" -> okItems(profileStore.observeHistory().value.toHistoryJsonString(faviconStore))
             "data.apps" -> okItems(app.webApps.observeAll().value.toWebAppsJsonString(app))
             "data.settings" -> okData(profileStore.observeSettings().value.toJson())
+            "data.launcherLayout" -> okData(
+                JSONObject().put("layout", profileStore.loadLauncherLayout() ?: JSONObject.NULL)
+            )
+            "launcher.layout.save" -> {
+                val rawLayout = payload.optString("layout")
+                val layout = runCatching { JSONObject(rawLayout) }.getOrNull()
+                    ?: return bridgeError("Invalid launcher layout.")
+                profileStore.saveLauncherLayout(layout)
+                ok()
+            }
             "search.submit" -> {
                 pendingHyperCommand = HyperCommand.Search.Submit(payload.optString("query"))
                 ok()

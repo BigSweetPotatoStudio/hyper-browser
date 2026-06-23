@@ -51,6 +51,7 @@ class BrowserBackupManager(
             .put("createdAt", System.currentTimeMillis())
             .put("bookmarks", bookmarks)
             .put("webApps", webApps)
+            .put("launcherLayout", profileStore.loadLauncherLayout() ?: JSONObject.NULL)
             .toString(2)
     }
 
@@ -60,6 +61,7 @@ class BrowserBackupManager(
         val webApps = parseWebApps(root.optJSONArray("webApps") ?: JSONArray())
         val importedBookmarks = profileStore.mergeBookmarks(bookmarks)
         val importedWebApps = webAppRepository.mergeImported(webApps)
+        root.optJSONObject("launcherLayout")?.let { profileStore.saveLauncherLayout(it) }
         return BrowserBackupImportResult(
             bookmarks = importedBookmarks,
             webApps = importedWebApps

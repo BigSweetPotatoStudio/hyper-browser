@@ -107,6 +107,7 @@ class BrowserProfileStore(context: Context) {
     private val bookmarksFile = File(context.filesDir, "browser_bookmarks.json")
     private val settingsFile = File(context.filesDir, SETTINGS_FILE_NAME)
     private val tabsFile = File(context.filesDir, "browser_tabs.json")
+    private val launcherLayoutFile = File(context.filesDir, "launcher_layout.json")
     private val tabSessionStateDir = File(context.filesDir, "browser_tab_states")
     private val tabThumbnailDir = File(context.filesDir, "browser_tab_thumbnails")
     private val historyState = MutableStateFlow(loadHistory())
@@ -151,6 +152,15 @@ class BrowserProfileStore(context: Context) {
 
     fun saveTabs(state: SavedBrowserTabs) {
         tabsFile.writeText(BrowserTabPersistenceCodec.encode(state))
+    }
+
+    fun loadLauncherLayout(): JSONObject? {
+        if (!launcherLayoutFile.exists()) return null
+        return runCatching { JSONObject(launcherLayoutFile.readText()) }.getOrNull()
+    }
+
+    fun saveLauncherLayout(layout: JSONObject) {
+        launcherLayoutFile.writeText(layout.toString())
     }
 
     fun loadTabSessionState(tabId: String): String? {

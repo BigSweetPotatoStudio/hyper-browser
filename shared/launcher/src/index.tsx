@@ -430,7 +430,9 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
 
   const visibleDesktopIds = useMemo(() => {
     const allIds = [...availableEntries.keys(), ...folderEntries.keys()];
-    return allIds.filter((id) => !containedIds.has(id) && !dockIds.includes(id));
+    return allIds
+      .filter((id) => !containedIds.has(id) && !dockIds.includes(id))
+      .sort(compareLauncherIds);
   }, [availableEntries, containedIds, dockIds, folderEntries]);
 
   const desktopCells = useMemo(
@@ -2396,6 +2398,10 @@ function removeUnavailableEntryIds(layout: LauncherLayout, availableEntries: Map
 
 function sameStringList(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function compareLauncherIds(left: string, right: string): number {
+  return left.localeCompare(right);
 }
 
 function uniqueStrings(values: unknown[]): string[] {

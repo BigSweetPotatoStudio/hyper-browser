@@ -139,6 +139,8 @@ type HyperBridgeMessageType =
   | "data.history"
   | "data.apps"
   | "data.settings"
+  | "data.launcherLayout"
+  | "launcher.layout.save"
   | "search.submit"
   | "settings.searchEngine.update"
   | "settings.toolbarPosition.update"
@@ -198,6 +200,8 @@ type HyperBrowserApi = {
   requestAppsData(): Promise<WebAppItem[]>;
   requestSearchData(): Promise<SearchSuggestionItem[]>;
   requestSettingsData(): Promise<BrowserSettings>;
+  requestLauncherLayout(): Promise<object | null>;
+  saveLauncherLayout(layout: object): Promise<void>;
   updateSearchEngine(searchEngineId: BrowserSettings["searchEngineId"], customSearchUrl?: string): Promise<BrowserSettings>;
   updateToolbarPosition(toolbarPosition: BrowserSettings["toolbarPosition"]): Promise<BrowserSettings>;
   updateBackgroundVideoEnhancement(enabled: boolean): Promise<BrowserSettings>;
@@ -313,6 +317,13 @@ window.hyperBrowser = {
   },
   requestSettingsData() {
     return requestObject<BrowserSettings>("data.settings");
+  },
+  requestLauncherLayout() {
+    return requestObject<{ layout?: object | null }>("data.launcherLayout")
+      .then((result) => result.layout && typeof result.layout === "object" ? result.layout : null);
+  },
+  saveLauncherLayout(layout) {
+    return send("launcher.layout.save", { layout: JSON.stringify(layout) }).then(() => undefined);
   },
   updateSearchEngine(searchEngineId, customSearchUrl = "") {
     return send("settings.searchEngine.update", { searchEngineId, customSearchUrl })

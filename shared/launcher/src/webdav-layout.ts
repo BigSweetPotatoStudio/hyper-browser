@@ -165,10 +165,7 @@ function layoutSignature(layout: LauncherLayout): string {
     cells: [...layout.cells]
       .map((cell) => ({
         id: cell.id,
-        page: cell.page,
-        row: cell.row,
-        column: cell.column,
-        index: cell.index,
+        index: stableCellIndex(cell),
       }))
       .sort((left, right) => left.id.localeCompare(right.id)),
     dock: layout.dock.slice(0, MAX_DOCK_ITEMS),
@@ -179,8 +176,12 @@ function layoutSignature(layout: LauncherLayout): string {
         childIds: folder.childIds,
       }))
       .sort((left, right) => left.id.localeCompare(right.id)),
-    gridColumns: layout.gridColumns,
   });
+}
+
+function stableCellIndex(cell: LauncherLayout["cells"][number]): number | string {
+  if (Number.isInteger(cell.index)) return Math.max(0, Number(cell.index));
+  return `${cell.page}:${cell.row}:${cell.column}`;
 }
 
 function validTimestamp(value: unknown): number {
