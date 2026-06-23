@@ -110,6 +110,12 @@ class WebDavSyncManager(
         val records = mutableMapOf<String, SyncBookmarkRecord>()
 
         knownRecords.values
+            .filter { it.deletedAt != null }
+            .forEach { known ->
+                records[known.url] = known
+            }
+
+        knownRecords.values
             .filter { it.deletedAt == null && it.url !in localByUrl }
             .forEach { known ->
                 records[known.url] = known.copy(
@@ -149,6 +155,12 @@ class WebDavSyncManager(
     ): List<SyncWebAppRecord> {
         val localById = webAppRepository.observeAll().value.associateBy { it.id.trim() }
         val records = mutableMapOf<String, SyncWebAppRecord>()
+
+        knownRecords.values
+            .filter { it.deletedAt != null }
+            .forEach { known ->
+                records[known.id] = known
+            }
 
         knownRecords.values
             .filter { it.deletedAt == null && it.id !in localById }

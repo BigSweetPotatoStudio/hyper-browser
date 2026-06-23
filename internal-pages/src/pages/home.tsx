@@ -52,7 +52,7 @@ function HomePage() {
           clientName: "hyper-browser-android",
         }, await launcherSyncOptions());
         const importedWebApps = result.importedWebAppCount + result.removedWebAppCount > 0;
-        if (layoutResult.direction === "pull" || importedWebApps || options.refreshLauncher) {
+        if (layoutResult.changed || importedWebApps || options.refreshLauncher) {
           setLayoutRevision((current) => current + 1);
         }
         setSyncState("success");
@@ -87,7 +87,7 @@ function HomePage() {
         setSyncState("success");
         setSyncMessage(webDavSyncSummary(syncResult));
       }
-      if (layoutResult.direction === "pull" || remoteCheck.changed) setLayoutRevision((current) => current + 1);
+      if (layoutResult.changed || remoteCheck.changed) setLayoutRevision((current) => current + 1);
     } catch (error) {
       console.warn("Remote sync check failed.", error);
     } finally {
@@ -236,7 +236,8 @@ function HomePage() {
             deviceName: settings.webDavSyncDeviceName || "Hyper Browser Android",
             clientName: "hyper-browser-android",
           }, await launcherSyncOptions());
-          if (layoutResult.direction === "pull") setLayoutRevision((current) => current + 1);
+          const importedWebApps = result.importedWebAppCount + result.removedWebAppCount > 0;
+          if (layoutResult.changed || importedWebApps) setLayoutRevision((current) => current + 1);
         }
         setSyncState("success");
         setSyncMessage(webDavSyncSummary(result));

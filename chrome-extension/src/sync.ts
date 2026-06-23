@@ -190,6 +190,12 @@ async function collectLocalBookmarkRecords(settings: SyncSettings, metadata: Syn
   const records: Record<string, BookmarkRecord> = {};
 
   Object.values(metadata.bookmarks)
+    .filter((known) => !!known.deletedAt)
+    .forEach((known) => {
+      records[known.url] = known;
+    });
+
+  Object.values(metadata.bookmarks)
     .filter((known) => !known.deletedAt && !localByUrl.has(known.url))
     .forEach((known) => {
       records[known.url] = { ...known, updatedAt: now, deletedAt: now, sourceDeviceId: settings.deviceId };

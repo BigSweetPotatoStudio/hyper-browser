@@ -86,7 +86,7 @@ function ChromeHomePage() {
         deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
         availableEntryIds: webApps.map((app) => app.id),
       });
-      if (layoutResult.direction === "pull" || options.refreshLauncher) setLayoutRevision((current) => current + 1);
+      if (layoutResult.changed || options.refreshLauncher) setLayoutRevision((current) => current + 1);
       setSyncState("success");
       setSyncMessage(syncResultMessage(result));
     } catch (syncError) {
