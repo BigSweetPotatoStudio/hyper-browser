@@ -40,7 +40,6 @@ function AppsPage() {
     loadLayoutError: t("apps.failed"),
     folder: t("home.folder"),
     folderEmpty: t("home.folderEmpty"),
-    open: t("home.open"),
     openStandaloneApp: t("apps.openStandalone"),
     editHomeScreen: t("home.editHomeScreen"),
     done: t("home.done"),

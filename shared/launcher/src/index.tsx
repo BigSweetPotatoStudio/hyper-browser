@@ -156,7 +156,6 @@ export type LauncherLabels = {
   loadLayoutError: string;
   folder: string;
   folderEmpty: string;
-  open: string;
   openStandaloneApp: string;
   editHomeScreen: string;
   done: string;
@@ -200,7 +199,6 @@ const defaultLabels: LauncherLabels = {
   loadLayoutError: "Unable to load desktop layout.",
   folder: "Folder",
   folderEmpty: "This folder is empty.",
-  open: "Open",
   openStandaloneApp: "Open as WebApp",
   editHomeScreen: "Edit Desktop",
   done: "Done",
@@ -1227,10 +1225,6 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
           x={menu.x}
           y={menu.y}
           onClose={closeMenu}
-          onOpen={(item) => {
-            openEntry(item);
-            closeMenu();
-          }}
           onOpenStandaloneApp={openStandaloneApp}
           onStartEditMode={() => {
             setEditMode(true);
@@ -1788,7 +1782,6 @@ function DesktopMenu(props: {
   x: number;
   y: number;
   onClose: () => void;
-  onOpen: (item: LauncherEntry) => void;
   onOpenStandaloneApp: (itemId: string) => void;
   onStartEditMode: () => void;
   onCreateFolder: (itemId: string, sourceContainer: LauncherContainer) => void;
@@ -1822,7 +1815,6 @@ function DesktopMenu(props: {
     <div className="desktop-menu-scrim" onClick={props.onClose}>
       <div className="desktop-menu" ref={menuRef} role="menu" style={position} onClick={(event) => event.stopPropagation()}>
         <div className="desktop-menu-title">{props.item.title}</div>
-        <button type="button" role="menuitem" onClick={() => props.onOpen(props.item!)}>{props.labels.open}</button>
         <button type="button" role="menuitem" onClick={props.onStartEditMode}>{props.labels.editHomeScreen}</button>
         {props.item.kind === "folder" ? (
           <>
