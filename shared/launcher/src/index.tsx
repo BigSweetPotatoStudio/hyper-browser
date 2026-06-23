@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   closestCenter,
   DndContext,
@@ -1794,12 +1794,19 @@ function DesktopMenu(props: {
   canDeleteApp: boolean;
   labels: LauncherLabels;
 }) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState(() => menuPositionFor(props.x, props.y));
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    const rect = menu.getBoundingClientRect();
+    setPosition(menuPositionFor(props.x, props.y, rect.width, rect.height));
+  }, [props.x, props.y, props.item?.id, props.sourceContainer, props.sourceFolderId]);
+
   if (!props.item) return null;
-  const top = Math.min(props.y, window.innerHeight - 270);
-  const left = Math.min(props.x, window.innerWidth - 240);
   return (
     <div className="desktop-menu-scrim" onClick={props.onClose}>
-      <div className="desktop-menu" role="menu" style={{ top, left }} onClick={(event) => event.stopPropagation()}>
+      <div className="desktop-menu" ref={menuRef} role="menu" style={position} onClick={(event) => event.stopPropagation()}>
         <div className="desktop-menu-title">{props.item.title}</div>
         <button type="button" role="menuitem" onClick={() => props.onOpen(props.item!)}>{props.labels.open}</button>
         <button type="button" role="menuitem" onClick={props.onStartEditMode}>{props.labels.editHomeScreen}</button>
@@ -1839,6 +1846,26 @@ function DesktopMenu(props: {
       </div>
     </div>
   );
+}
+
+function menuPositionFor(x: number, y: number, width = 240, height = 270): React.CSSProperties {
+  const edgePadding = 12;
+  const bottomSafe = currentDesktopBottomSafe();
+  const viewportWidth = window.visualViewport?.width || window.innerWidth;
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  const maxLeft = Math.max(edgePadding, viewportWidth - width - edgePadding);
+  const maxTop = Math.max(edgePadding, viewportHeight - height - bottomSafe);
+  return {
+    left: Math.max(edgePadding, Math.min(x, maxLeft)),
+    top: Math.max(edgePadding, Math.min(y, maxTop)),
+  };
+}
+
+function currentDesktopBottomSafe(): number {
+  const page = document.querySelector<HTMLElement>(".desktop-page");
+  const raw = page ? getComputedStyle(page).getPropertyValue("--desktop-bottom-safe").trim() : "";
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) ? Math.max(12, parsed) : 12;
 }
 
 function normalizeStoredLayout(
