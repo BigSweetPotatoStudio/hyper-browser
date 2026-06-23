@@ -62,7 +62,7 @@ jobs:
         run: ./gradlew :app:assembleDebug --console=plain
 
   companion-extension:
-    name: Build companion extension packages
+    name: Check companion extension
     runs-on: ubuntu-latest
 
     steps:
@@ -86,19 +86,3 @@ jobs:
 
       - name: Check companion extension TypeScript
         run: pnpm --dir companion-extension typecheck
-
-      - name: Package companion extension
-        run: pnpm --dir companion-extension zip
-
-      - name: Collect companion extension packages
-        run: |
-          set -euo pipefail
-          mkdir -p companion-extension-artifacts
-          cp companion-extension/.output/*.zip companion-extension-artifacts/
-
-      - name: Upload companion extension packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: HyperBrowser-companion-extension
-          path: companion-extension-artifacts/*.zip
-          if-no-files-found: error
