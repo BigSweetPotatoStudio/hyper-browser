@@ -343,7 +343,7 @@ function SettingsPage() {
               deviceId: result.settings.webDavSyncDeviceId,
               deviceName: result.settings.webDavSyncDeviceName || "Hyper Browser Android",
               clientName: "hyper-browser-android",
-            });
+            }, await launcherSyncOptions());
           }
         }
         setWebDavDirty(false);
@@ -362,6 +362,11 @@ function SettingsPage() {
       webApps: result.webAppCount,
       deleted: result.deletedBookmarkCount + result.deletedWebAppCount,
     });
+  }
+
+  async function launcherSyncOptions(): Promise<{ availableEntryIds: string[] }> {
+    const apps = await window.hyperBrowser.requestAppsData().catch(() => []);
+    return { availableEntryIds: apps.map((app) => app.id) };
   }
 
   function webDavStatusLabel() {

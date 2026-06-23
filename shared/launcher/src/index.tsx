@@ -474,19 +474,29 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
   useEffect(() => {
     if (loading) return;
     setLayout((current) => {
-      const pruned = removeUnavailableEntryIds(
-        limitDockItems(pruneEmptyFolders(removeDeprecatedEntryIds(current, deprecatedEntryIds))),
+      const cleaned = limitDockItems(pruneEmptyFolders(removeDeprecatedEntryIds(current, deprecatedEntryIds)));
+      const cleanedChanged = cleaned !== current;
+      const prunedResult = removeUnavailableEntryIds(
+        cleaned,
         availableEntries,
-      ).layout;
+      );
+      const pruned = prunedResult.layout;
       const visibleDesktopIdSet = new Set(visibleDesktopIds);
       const preservedCellIds = pruned.cells
         .map((cell) => cell.id)
         .filter((id) => visibleDesktopIdSet.has(id));
       const nextCellIds = uniqueStrings([...preservedCellIds, ...visibleDesktopIds]);
       const nextCells = normalizeDesktopCells(pruned.cells, nextCellIds, gridMetrics);
+      const semanticCellsChanged = !sameCellIndexes(pruned.cells, nextCells, gridMetrics);
       const next = sameCells(pruned.cells, nextCells, gridMetrics) && pruned.gridColumns === gridMetrics.columns
         ? pruned
-        : { ...pruned, cells: nextCells, version: LAYOUT_VERSION, gridColumns: gridMetrics.columns };
+        : {
+            ...pruned,
+            cells: nextCells,
+            version: LAYOUT_VERSION,
+            gridColumns: gridMetrics.columns,
+            updatedAt: cleanedChanged || prunedResult.changed || semanticCellsChanged ? Date.now() : pruned.updatedAt,
+          };
       return next === current ? current : next;
     });
   }, [availableEntries, deprecatedEntryIds, gridMetrics, loading, visibleDesktopIds]);
@@ -1982,6 +1992,19 @@ function sameCells(left: DesktopCell[], right: DesktopCell[], metrics: DesktopGr
     && cell.row === sortedRight[index].row
     && cell.column === sortedRight[index].column
   ));
+}
+
+function sameCellIndexes(left: DesktopCell[], right: DesktopCell[], metrics: DesktopGridMetrics): boolean {
+  if (left.length !== right.length) return false;
+  const leftIndexes = cellIndexSignature(left, metrics);
+  const rightIndexes = cellIndexSignature(right, metrics);
+  return leftIndexes.every((cell, index) => cell.id === rightIndexes[index].id && cell.index === rightIndexes[index].index);
+}
+
+function cellIndexSignature(cells: DesktopCell[], metrics: DesktopGridMetrics): Array<{ id: string; index: number }> {
+  return cells
+    .map((cell) => ({ id: cell.id, index: globalCellIndex(cell, metrics) }))
+    .sort((left, right) => left.id.localeCompare(right.id));
 }
 
 function sameCellPosition(left: DesktopCellPosition, right: DesktopCellPosition): boolean {

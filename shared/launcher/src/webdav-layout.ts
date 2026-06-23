@@ -40,6 +40,7 @@ export type LauncherLayoutSyncResult = {
 
 export type LauncherLayoutSyncOptions = {
   deprecatedEntryIds?: string[];
+  availableEntryIds?: string[];
 };
 
 export async function syncLauncherLayout(
@@ -53,10 +54,11 @@ export async function syncLauncherLayout(
 
   let lastConflict: unknown;
   for (let attempt = 0; attempt < MAX_SYNC_ATTEMPTS; attempt += 1) {
-    const localResult = sanitizeLayout(completeLayout(await storage.load()), deprecatedEntryIds);
+    const availableAppEntryIds = normalizeAvailableAppEntryIds(options.availableEntryIds);
+    const localResult = sanitizeLayout(completeLayout(await storage.load()), deprecatedEntryIds, availableAppEntryIds);
     const local = localResult.layout;
     const remote = await client.getJson<RemoteLauncherDocument>(LAUNCHER_FILE);
-    const remoteResult = sanitizeLayout(completeLayout(remote?.data.layout), deprecatedEntryIds);
+    const remoteResult = sanitizeLayout(completeLayout(remote?.data.layout), deprecatedEntryIds, availableAppEntryIds);
     const remoteLayout = remoteResult.layout;
     const localUpdatedAt = validTimestamp(local?.updatedAt);
     const remoteUpdatedAt = remoteLayout ? validTimestamp(remote?.data.updatedAt || remoteLayout.updatedAt) : 0;
@@ -77,7 +79,23 @@ export async function syncLauncherLayout(
       }
     }
 
-    if (remote && remoteLayout && remoteResult.changed && local && remoteUpdatedAt <= localUpdatedAt) {
+    if (remote && remoteLayout && remoteResult.changed && local && remoteUpdatedAt === localUpdatedAt) {
+      try {
+        await storage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
+        await client.putJson(LAUNCHER_FILE, launcherDocument(remoteLayout, settings, remoteUpdatedAt), remote.etag);
+        await client.putManifest();
+        await client.putDeviceState();
+        return { changed: true, direction: "pull", updatedAt: remoteUpdatedAt };
+      } catch (error) {
+        if (error instanceof WebDavConflictError) {
+          lastConflict = error;
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (remote && remoteLayout && remoteResult.changed && local && remoteUpdatedAt < localUpdatedAt) {
       const updatedAt = localUpdatedAt || Date.now();
       try {
         await client.putJson(LAUNCHER_FILE, launcherDocument(local, settings, updatedAt), remote.etag);
@@ -200,12 +218,21 @@ function completeLayout(value: Awaited<ReturnType<LauncherLayoutStorage["load"]>
   };
 }
 
-function sanitizeLayout(layout: LauncherLayout | null, deprecatedEntryIds: Set<string>): { layout: LauncherLayout | null; changed: boolean } {
-  if (!layout || deprecatedEntryIds.size === 0) return { layout, changed: false };
+function sanitizeLayout(
+  layout: LauncherLayout | null,
+  deprecatedEntryIds: Set<string>,
+  availableAppEntryIds: Set<string>,
+): { layout: LauncherLayout | null; changed: boolean } {
+  if (!layout) return { layout, changed: false };
   let changed = false;
   const removedFolderIds = new Set<string>();
+  const hasAvailableApps = availableAppEntryIds.size > 0;
+  const shouldKeepId = (id: string) => {
+    if (deprecatedEntryIds.has(id)) return false;
+    return !hasAvailableApps || !id.startsWith("app:") || availableAppEntryIds.has(id);
+  };
   const folders = layout.folders.flatMap((folder) => {
-    const childIds = folder.childIds.filter((id) => !deprecatedEntryIds.has(id));
+    const childIds = uniqueStrings(folder.childIds).filter(shouldKeepId);
     if (childIds.length === 0) {
       changed = true;
       removedFolderIds.add(folder.id);
@@ -217,25 +244,126 @@ function sanitizeLayout(layout: LauncherLayout | null, deprecatedEntryIds: Set<s
     }
     return [folder];
   });
-  const cells = layout.cells.filter((cell) => {
-    const keep = !deprecatedEntryIds.has(cell.id);
+  const filteredCells = layout.cells.filter((cell) => {
+    const keep = shouldKeepId(cell.id);
     const keepFolder = !removedFolderIds.has(cell.id);
     if (!keep) changed = true;
     if (!keepFolder) changed = true;
     return keep && keepFolder;
   });
+  const normalizedCells = normalizeCells(filteredCells, layout.gridColumns);
+  if (!sameCells(filteredCells, normalizedCells)) changed = true;
   const dock = layout.dock.filter((id) => {
-    const keep = !deprecatedEntryIds.has(id);
+    const keep = shouldKeepId(id);
     const keepFolder = !removedFolderIds.has(id);
     if (!keep) changed = true;
     if (!keepFolder) changed = true;
     return keep && keepFolder;
   }).slice(0, MAX_DOCK_ITEMS);
   if (dock.length !== layout.dock.length) changed = true;
+  const cells = appendMissingAppCells(normalizedCells, dock, folders, availableAppEntryIds, layout.gridColumns);
+  if (!sameCells(normalizedCells, cells)) changed = true;
   return {
     layout: changed ? { ...layout, cells, dock, folders } : layout,
     changed,
   };
+}
+
+function appendMissingAppCells(
+  cells: LauncherLayout["cells"],
+  dock: string[],
+  folders: LauncherLayout["folders"],
+  availableAppEntryIds: Set<string>,
+  gridColumns: number | undefined,
+): LauncherLayout["cells"] {
+  if (availableAppEntryIds.size === 0) return cells;
+  const columns = inferGridColumns(cells, gridColumns);
+  const nextCells = [...cells];
+  const occupiedIds = new Set([
+    ...nextCells.map((cell) => cell.id),
+    ...dock,
+    ...folders.flatMap((folder) => folder.childIds),
+  ]);
+  let appendIndex = nextCells.reduce((max, cell) => Math.max(max, cellGlobalIndex(cell, columns)), -1) + 1;
+  for (const id of [...availableAppEntryIds].sort(compareLauncherIds)) {
+    if (occupiedIds.has(id)) continue;
+    nextCells.push(cellFromGlobalIndex(appendIndex, columns, id));
+    occupiedIds.add(id);
+    appendIndex += 1;
+  }
+  return sortCells(nextCells, columns);
+}
+
+function normalizeCells(cells: LauncherLayout["cells"], gridColumns: number | undefined): LauncherLayout["cells"] {
+  const columns = inferGridColumns(cells, gridColumns);
+  const seenIds = new Set<string>();
+  const usedIndexes = new Set<number>();
+  const nextCells: LauncherLayout["cells"] = [];
+  for (const cell of cells) {
+    if (seenIds.has(cell.id)) continue;
+    let index = cellGlobalIndex(cell, columns);
+    while (usedIndexes.has(index)) index += 1;
+    nextCells.push(cellFromGlobalIndex(index, columns, cell.id));
+    seenIds.add(cell.id);
+    usedIndexes.add(index);
+  }
+  return sortCells(nextCells, columns);
+}
+
+function sameCells(left: LauncherLayout["cells"], right: LauncherLayout["cells"]): boolean {
+  return left.length === right.length && left.every((cell, index) => {
+    const next = right[index];
+    return cell.id === next.id
+      && cell.index === next.index
+      && cell.page === next.page
+      && cell.row === next.row
+      && cell.column === next.column;
+  });
+}
+
+function sortCells(cells: LauncherLayout["cells"], columns: number): LauncherLayout["cells"] {
+  return [...cells].sort((left, right) => cellGlobalIndex(left, columns) - cellGlobalIndex(right, columns) || left.id.localeCompare(right.id));
+}
+
+function cellGlobalIndex(cell: LauncherLayout["cells"][number], columns: number): number {
+  if (Number.isInteger(cell.index) && Number(cell.index) >= 0) return Number(cell.index);
+  const row = Math.max(0, Number.isInteger(cell.row) ? Number(cell.row) : 0);
+  const column = Math.max(0, Math.min(columns - 1, Number.isInteger(cell.column) ? Number(cell.column) : 0));
+  return row * columns + column;
+}
+
+function cellFromGlobalIndex(index: number, columns: number, id: string): LauncherLayout["cells"][number] {
+  const safeIndex = Math.max(0, Math.floor(index));
+  return {
+    id,
+    index: safeIndex,
+    page: 0,
+    row: Math.floor(safeIndex / columns),
+    column: safeIndex % columns,
+  };
+}
+
+function inferGridColumns(cells: LauncherLayout["cells"], gridColumns: number | undefined): number {
+  if (Number.isInteger(gridColumns) && Number(gridColumns) > 0) return Number(gridColumns);
+  const maxColumn = cells.reduce((max, cell) => (Number.isInteger(cell.column) ? Math.max(max, Number(cell.column)) : max), -1);
+  return Math.max(4, maxColumn + 1);
+}
+
+function normalizeAvailableAppEntryIds(ids: string[] | undefined): Set<string> {
+  return new Set(uniqueStrings(ids || []).map((id) => (id.startsWith("app:") ? id : `app:${id}`)));
+}
+
+function uniqueStrings(values: unknown[]): string[] {
+  const seen = new Set<string>();
+  return values.filter((value): value is string => {
+    if (typeof value !== "string" || !value || seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+}
+
+function compareLauncherIds(left: string, right: string): number {
+  return left.localeCompare(right);
 }
 
 class LauncherWebDavClient {

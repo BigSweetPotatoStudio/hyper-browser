@@ -74,6 +74,7 @@ function ChromeHomePage() {
         return;
       }
       const result = await sendCommand<SyncResult>("sync.run");
+      const webApps = await sendCommand<WebAppRecord[]>("webapps.list");
       const layoutResult = await syncLauncherLayout(launcherLayoutStorage, {
         webDavUrl: settings.webDavUrl,
         username: settings.username,
@@ -83,6 +84,7 @@ function ChromeHomePage() {
         clientName: "hyper-browser-chrome-extension",
       }, {
         deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
+        availableEntryIds: webApps.map((app) => app.id),
       });
       if (layoutResult.direction === "pull" || options.refreshLauncher) setLayoutRevision((current) => current + 1);
       setSyncState("success");

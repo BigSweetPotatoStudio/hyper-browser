@@ -69,9 +69,9 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
       });
       const savedApp = webApps.find((app) => app.id === webAppId);
       if (savedApp) {
-        await syncLauncherLayoutNow();
+        await syncLauncherLayoutNow(webApps.map((app) => app.id));
         await appendWebAppToLauncher(savedApp.id, webApps.map((app) => app.id));
-        await syncLauncherLayoutNow();
+        await syncLauncherLayoutNow(webApps.map((app) => app.id));
       }
       return webApps;
     }
@@ -125,7 +125,8 @@ async function runLauncherAutoSync(): Promise<void> {
       launcherSyncPending = false;
       const settings = await loadSettings();
       if (!settings.webDavUrl.trim()) return;
-      await syncLauncherLayoutNow();
+      const webApps = await loadRemoteWebApps();
+      await syncLauncherLayoutNow(webApps.map((app) => app.id));
     } while (launcherSyncPending);
   } finally {
     launcherSyncRunning = false;
@@ -194,7 +195,8 @@ async function checkRemoteChanges(options: { notifyPages: boolean } = { notifyPa
     }
 
     await runBookmarkSyncNow();
-    await syncLauncherLayoutNow();
+    const webApps = await loadRemoteWebApps();
+    await syncLauncherLayoutNow(webApps.map((app) => app.id));
     await saveRemoteSyncState({ manifestUpdatedAt: manifest.updatedAt });
     if (options.notifyPages) notifyRemoteSynced(manifest.updatedAt);
     return { changed: true, synced: true, updatedAt: manifest.updatedAt };

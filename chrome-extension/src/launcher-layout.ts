@@ -47,7 +47,7 @@ export async function appendWebAppToLauncher(appId: string, knownAppIds: string[
       && (!cell.id.startsWith("app:") || knownAppEntryIds.size === 0 || knownAppEntryIds.has(cell.id))
     ))
     .map((cell) => normalizeCell(cell, columns))
-    .sort((left, right) => compareCellPositions(left, right));
+    .sort((left, right) => compareCells(left, right, columns));
   cells = appendMissingAppCells(cells, knownAppEntryIds, new Set([
     ...dock,
     ...folders.flatMap((folder) => folder.childIds),
@@ -55,16 +55,18 @@ export async function appendWebAppToLauncher(appId: string, knownAppIds: string[
   ]), columns);
   const lastAppCell = [...cells].reverse().find((cell) => cell.id.startsWith("app:"));
   const baseCell = lastAppCell || cells.at(-1);
-  const target = baseCell ? nextCellPosition(baseCell, columns) : { page: 0, row: 0, column: 0 };
+  const targetIndex = baseCell ? cellGlobalIndex(baseCell, columns) + 1 : 0;
   const shiftedCells = cells.map((cell) => (
-    compareCellPositions(cell, target) >= 0 ? incrementCell(cell, columns) : cell
+    cellGlobalIndex(cell, columns) >= targetIndex
+      ? cellFromGlobalIndex(cellGlobalIndex(cell, columns) + 1, columns, cell.id)
+      : cell
   ));
   const nextLayout: LauncherLayout = {
     version: LAYOUT_VERSION,
     cells: [
       ...shiftedCells,
-      { id: itemId, ...target },
-    ].sort((left, right) => compareCellPositions(left, right)),
+      cellFromGlobalIndex(targetIndex, columns, itemId),
+    ].sort((left, right) => compareCells(left, right, columns)),
     dock,
     folders,
     gridColumns: columns,
@@ -80,23 +82,24 @@ function appendMissingAppCells(
   columns: number,
 ): LauncherDesktopCell[] {
   if (knownAppEntryIds.size === 0) return cells;
-  const nextCells = [...cells].sort((left, right) => compareCellPositions(left, right));
+  const nextCells = [...cells].sort((left, right) => compareCells(left, right, columns));
   const occupiedIds = new Set([
     ...nextCells.map((cell) => cell.id),
     ...unavailableIds,
   ]);
-  for (const id of knownAppEntryIds) {
+  for (const id of [...knownAppEntryIds].sort(compareLauncherIds)) {
     if (occupiedIds.has(id)) continue;
     const baseCell = nextCells.at(-1);
-    const target = baseCell ? nextCellPosition(baseCell, columns) : { page: 0, row: 0, column: 0 };
-    nextCells.push({ id, ...target });
+    const targetIndex = baseCell ? cellGlobalIndex(baseCell, columns) + 1 : 0;
+    nextCells.push(cellFromGlobalIndex(targetIndex, columns, id));
     occupiedIds.add(id);
   }
-  return nextCells.sort((left, right) => compareCellPositions(left, right));
+  return nextCells.sort((left, right) => compareCells(left, right, columns));
 }
 
-export async function syncLauncherLayoutNow(): Promise<void> {
+export async function syncLauncherLayoutNow(knownAppIds: string[] = []): Promise<void> {
   const settings = await loadSettings();
+  const availableEntryIds = uniqueStrings(knownAppIds).map((id) => (id.startsWith("app:") ? id : `app:${id}`));
   await syncLauncherLayout(launcherLayoutStorage, {
     webDavUrl: settings.webDavUrl,
     username: settings.username,
@@ -106,6 +109,7 @@ export async function syncLauncherLayoutNow(): Promise<void> {
     clientName: CHROME_CLIENT_NAME,
   }, {
     deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
+    availableEntryIds,
   });
 }
 
@@ -116,7 +120,9 @@ function normalizeStoredLayout(value: Awaited<ReturnType<LauncherLayoutStorage["
   const gridColumns = typeof value?.gridColumns === "number" && Number.isFinite(value.gridColumns) && value.gridColumns > 0
     ? Math.floor(value.gridColumns)
     : inferGridColumns(rawCells);
-  const cells = rawCells.map((cell) => normalizeCell(cell, gridColumns));
+  const cells = rawCells
+    .map((cell) => normalizeCell(cell, gridColumns))
+    .sort((left, right) => compareCells(left, right, gridColumns));
   const dock = Array.isArray(value?.dock)
     ? uniqueStrings(value.dock).filter((id) => !DEPRECATED_ENTRY_IDS.includes(id))
     : [...DEFAULT_DOCK_ENTRY_IDS];
@@ -143,37 +149,34 @@ function normalizeStoredLayout(value: Awaited<ReturnType<LauncherLayoutStorage["
 }
 
 function normalizeCell(cell: LauncherDesktopCell, columns: number): LauncherDesktopCell {
-  if (Number.isInteger(cell.index) && Number(cell.index) >= 0) {
-    const index = Number(cell.index);
-    return {
-      id: cell.id,
-      page: Math.max(0, Number.isInteger(cell.page) ? Number(cell.page) : 0),
-      row: Math.floor(index / columns),
-      column: index % columns,
-    };
-  }
+  const index = cellGlobalIndex(cell, columns);
+  return cellFromGlobalIndex(index, columns, cell.id);
+}
+
+function cellFromGlobalIndex(index: number, columns: number, id: string): LauncherDesktopCell {
+  const safeIndex = Math.max(0, Math.floor(index));
   return {
-    id: cell.id,
-    page: Math.max(0, Number.isInteger(cell.page) ? Number(cell.page) : 0),
-    row: Math.max(0, Number.isInteger(cell.row) ? Number(cell.row) : 0),
-    column: Math.max(0, Math.min(columns - 1, Number.isInteger(cell.column) ? Number(cell.column) : 0)),
+    id,
+    index: safeIndex,
+    page: 0,
+    row: Math.floor(safeIndex / columns),
+    column: safeIndex % columns,
   };
 }
 
-function nextCellPosition(cell: Pick<LauncherDesktopCell, "page" | "row" | "column">, columns: number): Pick<LauncherDesktopCell, "page" | "row" | "column"> {
-  const nextColumn = cell.column + 1;
-  if (nextColumn < columns) {
-    return { page: cell.page, row: cell.row, column: nextColumn };
-  }
-  return { page: cell.page, row: cell.row + 1, column: 0 };
+function cellGlobalIndex(cell: LauncherDesktopCell, columns: number): number {
+  if (Number.isInteger(cell.index) && Number(cell.index) >= 0) return Number(cell.index);
+  const row = Math.max(0, Number.isInteger(cell.row) ? Number(cell.row) : 0);
+  const column = Math.max(0, Math.min(columns - 1, Number.isInteger(cell.column) ? Number(cell.column) : 0));
+  return row * columns + column;
 }
 
-function incrementCell(cell: LauncherDesktopCell, columns: number): LauncherDesktopCell {
-  return { id: cell.id, ...nextCellPosition(cell, columns) };
+function compareCells(left: LauncherDesktopCell, right: LauncherDesktopCell, columns: number): number {
+  return cellGlobalIndex(left, columns) - cellGlobalIndex(right, columns) || left.id.localeCompare(right.id);
 }
 
-function compareCellPositions(left: Pick<LauncherDesktopCell, "page" | "row" | "column">, right: Pick<LauncherDesktopCell, "page" | "row" | "column">): number {
-  return left.page - right.page || left.row - right.row || left.column - right.column;
+function compareLauncherIds(left: string, right: string): number {
+  return left.localeCompare(right);
 }
 
 function inferGridColumns(cells: readonly LauncherDesktopCell[] | undefined): number {

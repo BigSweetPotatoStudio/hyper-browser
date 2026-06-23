@@ -50,7 +50,7 @@ function HomePage() {
           deviceId: settings.webDavSyncDeviceId,
           deviceName: settings.webDavSyncDeviceName || "Hyper Browser Android",
           clientName: "hyper-browser-android",
-        });
+        }, await launcherSyncOptions());
         const importedWebApps = result.importedWebAppCount + result.removedWebAppCount > 0;
         if (layoutResult.direction === "pull" || importedWebApps || options.refreshLauncher) {
           setLayoutRevision((current) => current + 1);
@@ -81,7 +81,7 @@ function HomePage() {
         deviceId: settings.webDavSyncDeviceId,
         deviceName: settings.webDavSyncDeviceName || "Hyper Browser Android",
         clientName: "hyper-browser-android",
-      });
+      }, await launcherSyncOptions());
       const syncResult = remoteCheck.syncResult || null;
       if (syncResult) {
         setSyncState("success");
@@ -236,7 +236,7 @@ function HomePage() {
             deviceId: settings.webDavSyncDeviceId,
             deviceName: settings.webDavSyncDeviceName || "Hyper Browser Android",
             clientName: "hyper-browser-android",
-          });
+          }, await launcherSyncOptions());
           if (layoutResult.direction === "pull") setLayoutRevision((current) => current + 1);
         }
         setSyncState("success");
@@ -278,6 +278,11 @@ function HomePage() {
 
 function isWebDavConfigured(settings: BrowserSettings): boolean {
   return settings.webDavSyncUrl.trim().length > 0;
+}
+
+async function launcherSyncOptions(): Promise<{ availableEntryIds: string[] }> {
+  const apps = await window.hyperBrowser.requestAppsData().catch(() => []);
+  return { availableEntryIds: apps.map((app) => app.id) };
 }
 
 function webDavSyncSummary(result: WebDavSyncResult): string {
