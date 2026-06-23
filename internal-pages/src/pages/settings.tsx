@@ -7,6 +7,8 @@ import { getLocalePreference, matchesI18nText, setLocalePreference, t, type Loca
 import type { BatteryOptimizationState, BrowserSettings, UpdateCheckResult, UpdateDownloadState, WebDavSyncResult, WebDavSyncSettings } from "../hyper-browser";
 import { createLauncherLayoutStorage } from "../launcher-layout-storage";
 
+const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"];
+
 function SettingsPage() {
   const [query, setQuery] = useState("");
   const [languagePreference, setLanguagePreference] = useState<LocalePreference>(() => getLocalePreference());
@@ -364,9 +366,9 @@ function SettingsPage() {
     });
   }
 
-  async function launcherSyncOptions(): Promise<{ availableEntryIds: string[] }> {
+  async function launcherSyncOptions(): Promise<{ availableEntryIds: string[]; defaultDockEntryIds: string[] }> {
     const apps = await window.hyperBrowser.requestAppsData().catch(() => []);
-    return { availableEntryIds: apps.map((app) => app.id) };
+    return { availableEntryIds: apps.map((app) => app.id), defaultDockEntryIds: DEFAULT_DOCK_ENTRY_IDS };
   }
 
   function webDavStatusLabel() {

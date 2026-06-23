@@ -1,5 +1,5 @@
 import type { LauncherDesktopCell, LauncherFolderLayout, LauncherLayout, LauncherLayoutStorage } from "@hyper-launcher";
-import { syncLauncherLayout } from "@hyper-launcher/webdav-layout";
+import { syncLauncherLayout, type LauncherLayoutSyncResult } from "@hyper-launcher/webdav-layout";
 import { COMPANION_CLIENT_NAME, DEFAULT_DEVICE_NAME } from "./identity";
 import { loadSettings, storageGet, storageSet } from "./storage";
 
@@ -97,10 +97,10 @@ function appendMissingAppCells(
   return nextCells.sort((left, right) => compareCells(left, right, columns));
 }
 
-export async function syncLauncherLayoutNow(knownAppIds: string[] = []): Promise<void> {
+export async function syncLauncherLayoutNow(knownAppIds: string[] = []): Promise<LauncherLayoutSyncResult> {
   const settings = await loadSettings();
   const availableEntryIds = uniqueStrings(knownAppIds).map((id) => (id.startsWith("app:") ? id : `app:${id}`));
-  await syncLauncherLayout(launcherLayoutStorage, {
+  return syncLauncherLayout(launcherLayoutStorage, {
     webDavUrl: settings.webDavUrl,
     username: settings.username,
     password: settings.password,
@@ -110,6 +110,7 @@ export async function syncLauncherLayoutNow(knownAppIds: string[] = []): Promise
   }, {
     deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
     availableEntryIds,
+    defaultDockEntryIds: DEFAULT_DOCK_ENTRY_IDS,
   });
 }
 

@@ -1,3 +1,5 @@
+import type { LauncherLayoutSyncResult } from "@hyper-launcher/webdav-layout";
+
 export type SyncSettings = {
   webDavUrl: string;
   username: string;
@@ -50,6 +52,7 @@ export type SyncResult = {
   deletedBookmarkCount: number;
   importedBookmarkCount: number;
   removedBookmarkCount: number;
+  launcherLayout?: LauncherLayoutSyncResult;
   syncedAt: number;
   folderTitle: string;
   attemptCount: number;

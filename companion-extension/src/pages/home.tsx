@@ -2,8 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
-import { syncLauncherLayout } from "@hyper-launcher/webdav-layout";
-import { COMPANION_CLIENT_NAME, DEFAULT_DEVICE_NAME } from "../identity";
+import { DEFAULT_DEVICE_NAME } from "../identity";
 import { getDefaultSettings, loadSettings, saveSettings } from "../storage";
 import { DEFAULT_DOCK_ENTRY_IDS, DEPRECATED_ENTRY_IDS, launcherLayoutStorage } from "../launcher-layout";
 import "../styles.css";
@@ -81,19 +80,7 @@ function CompanionHomePage() {
         return;
       }
       const result = await sendCommand<SyncResult>("sync.run");
-      const webApps = await sendCommand<WebAppRecord[]>("webapps.list");
-      const layoutResult = await syncLauncherLayout(launcherLayoutStorage, {
-        webDavUrl: settings.webDavUrl,
-        username: settings.username,
-        password: settings.password,
-        deviceId: settings.deviceId,
-        deviceName: settings.deviceName || DEFAULT_DEVICE_NAME,
-        clientName: COMPANION_CLIENT_NAME,
-      }, {
-        deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
-        availableEntryIds: webApps.map((app) => app.id),
-      });
-      if (layoutResult.changed || options.refreshLauncher) setLayoutRevision((current) => current + 1);
+      if (result.launcherLayout?.changed || options.refreshLauncher) setLayoutRevision((current) => current + 1);
       setSyncState("success");
       setSyncMessage(syncResultMessage(result));
     } catch (syncError) {
@@ -180,6 +167,7 @@ function CompanionHomePage() {
           onSyncResult={(result) => {
             setSyncState("success");
             setSyncMessage(syncResultMessage(result));
+            if (result.launcherLayout?.changed) setLayoutRevision((current) => current + 1);
           }}
           onClose={() => setSettingsOpen(false)}
         />
@@ -219,22 +207,6 @@ function SettingsDialog(props: {
     setError("");
   }
 
-  function save() {
-    const next = normalizeSettings(settings);
-    setBusy(true);
-    saveSettings(next)
-      .then(() => {
-        setSettings(next);
-        props.onSettingsSaved(next);
-        setMessage("Settings saved.");
-        setError("");
-      })
-      .catch((saveError) => {
-        setError(saveError instanceof Error ? saveError.message : "Unable to save settings.");
-      })
-      .finally(() => setBusy(false));
-  }
-
   function sync() {
     const next = normalizeSettings(settings);
     setBusy(true);
@@ -243,7 +215,7 @@ function SettingsDialog(props: {
     saveSettings(next)
       .then(() => sendCommand<SyncResult>("sync.run"))
       .then((result) => {
-        setMessage(`Synced ${result.bookmarkCount} bookmarks. Tombstones: ${result.deletedBookmarkCount}.`);
+        setMessage(syncResultMessage(result));
         props.onSyncResult(result);
         return loadSettings();
       })
@@ -291,9 +263,8 @@ function SettingsDialog(props: {
         </div>
         <p className="message">Remote files are stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, manifest.json, and devices/.</p>
         <div className="actions">
-          <button className="button" type="button" disabled={busy} onClick={save}>Save</button>
           <button className="button primary" type="button" disabled={busy || !settings.webDavUrl.trim()} onClick={sync}>
-            {busy ? "Working..." : "Save and sync"}
+            {busy ? "Syncing..." : "Sync"}
           </button>
         </div>
         {settings.deviceId && <p className="message">Device ID: {settings.deviceId}</p>}
@@ -311,7 +282,10 @@ function isWebDavConfigError(error: unknown): boolean {
 
 function syncResultMessage(result: SyncResult): string {
   const deleted = result.deletedBookmarkCount > 0 ? `, ${result.deletedBookmarkCount} deleted` : "";
-  return `Synced ${result.bookmarkCount} bookmarks${deleted}`;
+  const layout = result.launcherLayout?.direction && result.launcherLayout.direction !== "none"
+    ? `, launcher ${result.launcherLayout.direction}`
+    : "";
+  return `Synced ${result.bookmarkCount} bookmarks${deleted}${layout}`;
 }
 
 function normalizeSettings(settings: SyncSettings): SyncSettings {

@@ -50,10 +50,11 @@ class WebDavSyncManager(
                 remoteBookmarkRecords.associateBy { it.url },
                 localBookmarks.associateBy { it.url }
             )
-            val mergedWebApps = mergeByKey(
-                remoteWebAppRecords.associateBy { it.id },
-                localWebApps.associateBy { it.id }
+            val mergedWebAppRecords = mergeWebAppsRemoteFirst(
+                remoteWebAppRecords,
+                localWebApps
             )
+            val mergedWebApps = mergedWebAppRecords.associateBy { it.id }
             val bookmarksChanged = !sameBookmarkRecords(remoteBookmarkRecords, mergedBookmarks.values)
             val webAppsChanged = !sameWebAppRecords(remoteWebAppRecords, mergedWebApps.values)
 
@@ -62,7 +63,7 @@ class WebDavSyncManager(
                     client.putJson(BOOKMARKS_FILE, bookmarksDocument(mergedBookmarks.values).toString(2), remoteBookmarks?.etag)
                 }
                 if (webAppsChanged) {
-                    client.putJson(WEBAPPS_FILE, webAppsDocument(mergedWebApps.values).toString(2), remoteWebApps?.etag)
+                    client.putJson(WEBAPPS_FILE, webAppsDocument(mergedWebAppRecords).toString(2), remoteWebApps?.etag)
                 }
                 if (bookmarksChanged || webAppsChanged) {
                     client.putJson(MANIFEST_FILE, manifestDocument(config, now).toString(2), null)
@@ -521,6 +522,18 @@ private fun <T : SyncRecord> mergeByKey(remote: Map<String, T>, local: Map<Strin
     }.toMap()
 }
 
+private fun mergeWebAppsRemoteFirst(
+    remote: List<SyncWebAppRecord>,
+    local: List<SyncWebAppRecord>
+): List<SyncWebAppRecord> {
+    val remoteIds = mutableSetOf<String>()
+    val merged = remote.filter { remoteIds.add(it.id) }.toMutableList()
+    local.forEach { record ->
+        if (record.id !in remoteIds) merged += record
+    }
+    return merged
+}
+
 private fun sameBookmarkRecords(
     left: Collection<SyncBookmarkRecord>,
     right: Collection<SyncBookmarkRecord>
@@ -613,7 +626,7 @@ private fun webAppsDocument(records: Collection<SyncWebAppRecord>): JSONObject =
         .put("type", "hyper-browser-webapps")
         .put("schemaVersion", 1)
         .put("updatedAt", System.currentTimeMillis())
-        .put("items", webAppsArray(records.sortedWith(compareBy({ it.deletedAt != null }, { it.name.lowercase() }))))
+        .put("items", webAppsArray(records))
 
 private fun bookmarksArray(records: Collection<SyncBookmarkRecord>): JSONArray =
     JSONArray().apply {

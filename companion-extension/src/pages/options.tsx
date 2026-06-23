@@ -24,27 +24,14 @@ function OptionsPage() {
     setError("");
   }
 
-  function save() {
-    setBusy(true);
-    saveSettings({
-      ...settings,
-      webDavUrl: settings.webDavUrl.trim(),
-      username: settings.username.trim(),
-      folderTitle: settings.folderTitle.trim() || "Hyper Browser",
-      deviceName: settings.deviceName.trim() || "Chrome",
-    })
-      .then(() => setMessage("Settings saved."))
-      .catch((saveError) => setError(saveError instanceof Error ? saveError.message : "Unable to save settings."))
-      .finally(() => setBusy(false));
-  }
-
   function sync() {
+    const next = normalizeSettings(settings);
     setBusy(true);
     setMessage("Syncing...");
-    saveSettings(settings)
+    saveSettings(next)
       .then(() => sendCommand<SyncResult>("sync.run"))
       .then((result) => {
-        setMessage(`Synced ${result.bookmarkCount} bookmarks in "${result.folderTitle}". Tombstones: ${result.deletedBookmarkCount}.`);
+        setMessage(syncResultMessage(result));
         return loadSettings();
       })
       .then(setSettings)
@@ -97,9 +84,8 @@ function OptionsPage() {
         </div>
         <p className="message">Remote files are stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, manifest.json, and devices/.</p>
         <div className="actions">
-          <button className="button" type="button" disabled={busy} onClick={save}>Save</button>
           <button className="button primary" type="button" disabled={busy || !settings.webDavUrl.trim()} onClick={sync}>
-            {busy ? "Working..." : "Save and sync"}
+            {busy ? "Syncing..." : "Sync"}
           </button>
         </div>
         {settings.deviceId && <p className="message">Device ID: {settings.deviceId}</p>}
@@ -108,6 +94,24 @@ function OptionsPage() {
       </section>
     </main>
   );
+}
+
+function syncResultMessage(result: SyncResult): string {
+  const deleted = result.deletedBookmarkCount > 0 ? ` Tombstones: ${result.deletedBookmarkCount}.` : "";
+  const layout = result.launcherLayout?.direction && result.launcherLayout.direction !== "none"
+    ? ` Launcher layout ${result.launcherLayout.direction}.`
+    : "";
+  return `Synced ${result.bookmarkCount} bookmarks in "${result.folderTitle}".${deleted}${layout}`;
+}
+
+function normalizeSettings(settings: SyncSettings): SyncSettings {
+  return {
+    ...settings,
+    webDavUrl: settings.webDavUrl.trim(),
+    username: settings.username.trim(),
+    folderTitle: settings.folderTitle.trim() || "Hyper Browser",
+    deviceName: settings.deviceName.trim() || "Chrome",
+  };
 }
 
 function openExtensionPage(path: "/home.html" | "/webapps.html"): void {

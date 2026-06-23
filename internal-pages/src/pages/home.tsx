@@ -283,9 +283,9 @@ function isWebDavConfigured(settings: BrowserSettings): boolean {
   return settings.webDavSyncUrl.trim().length > 0;
 }
 
-async function launcherSyncOptions(): Promise<{ availableEntryIds: string[] }> {
+async function launcherSyncOptions(): Promise<{ availableEntryIds: string[]; defaultDockEntryIds: string[] }> {
   const apps = await window.hyperBrowser.requestAppsData().catch(() => []);
-  return { availableEntryIds: apps.map((app) => app.id) };
+  return { availableEntryIds: apps.map((app) => app.id), defaultDockEntryIds: DEFAULT_DOCK_ENTRY_IDS };
 }
 
 function webDavSyncSummary(result: WebDavSyncResult): string {

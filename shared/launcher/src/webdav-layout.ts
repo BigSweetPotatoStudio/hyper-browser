@@ -41,6 +41,7 @@ export type LauncherLayoutSyncResult = {
 export type LauncherLayoutSyncOptions = {
   deprecatedEntryIds?: string[];
   availableEntryIds?: string[];
+  defaultDockEntryIds?: string[];
 };
 
 export async function syncLauncherLayout(
@@ -54,22 +55,34 @@ export async function syncLauncherLayout(
 
   let lastConflict: unknown;
   for (let attempt = 0; attempt < MAX_SYNC_ATTEMPTS; attempt += 1) {
-    const availableAppEntryIds = normalizeAvailableAppEntryIds(options.availableEntryIds);
-    const localResult = sanitizeLayout(completeLayout(await layoutStorage.load()), deprecatedEntryIds, availableAppEntryIds);
+    const availableAppEntryIdList = normalizeAvailableAppEntryIds(options.availableEntryIds);
+    const localResult = sanitizeLayout(completeLayout(await layoutStorage.load()), deprecatedEntryIds, availableAppEntryIdList);
     const local = localResult.layout;
     const remote = await client.getJson<RemoteLauncherDocument>(LAUNCHER_FILE);
-    const remoteResult = sanitizeLayout(completeLayout(remote?.data.layout), deprecatedEntryIds, availableAppEntryIds);
+    const remoteResult = sanitizeLayout(completeLayout(remote?.data.layout), deprecatedEntryIds, availableAppEntryIdList);
     const remoteLayout = remoteResult.layout;
-    const localUpdatedAt = validTimestamp(local?.updatedAt);
     const remoteUpdatedAt = remoteLayout ? validTimestamp(remote?.data.updatedAt || remoteLayout.updatedAt) : 0;
 
-    if (remote && remoteLayout && remoteResult.changed && remoteUpdatedAt > localUpdatedAt) {
+    if (remote && remoteLayout) {
+      const updatedAt = remoteResult.changed || !remoteUpdatedAt ? Date.now() : remoteUpdatedAt;
+      const nextLayout = { ...remoteLayout, updatedAt };
+      const localMatchesRemote = !!local &&
+        validTimestamp(local.updatedAt) === updatedAt &&
+        sameLauncherLayout(local, nextLayout);
       try {
-        await layoutStorage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
-        await client.putJson(LAUNCHER_FILE, launcherDocument(remoteLayout, settings, remoteUpdatedAt), remote.etag);
-        await client.putManifest();
+        if (remoteResult.changed || !remoteUpdatedAt) {
+          await client.putJson(LAUNCHER_FILE, launcherDocument(nextLayout, settings, updatedAt), remote.etag);
+          await client.putManifest();
+        }
+        if (!localMatchesRemote || remoteResult.changed) {
+          await layoutStorage.save(nextLayout);
+        }
         await client.putDeviceState();
-        return { changed: true, direction: "pull", updatedAt: remoteUpdatedAt };
+        return {
+          changed: remoteResult.changed || !localMatchesRemote,
+          direction: remoteResult.changed || !localMatchesRemote ? "pull" : "none",
+          updatedAt,
+        };
       } catch (error) {
         if (error instanceof WebDavConflictError) {
           lastConflict = error;
@@ -77,57 +90,14 @@ export async function syncLauncherLayout(
         }
         throw error;
       }
-    }
-
-    if (remote && remoteLayout && remoteResult.changed && local && remoteUpdatedAt === localUpdatedAt) {
-      try {
-        await layoutStorage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
-        await client.putJson(LAUNCHER_FILE, launcherDocument(remoteLayout, settings, remoteUpdatedAt), remote.etag);
-        await client.putManifest();
-        await client.putDeviceState();
-        return { changed: true, direction: "pull", updatedAt: remoteUpdatedAt };
-      } catch (error) {
-        if (error instanceof WebDavConflictError) {
-          lastConflict = error;
-          continue;
-        }
-        throw error;
-      }
-    }
-
-    if (remote && remoteLayout && remoteResult.changed && local && remoteUpdatedAt < localUpdatedAt) {
-      const updatedAt = localUpdatedAt || Date.now();
-      try {
-        await client.putJson(LAUNCHER_FILE, launcherDocument(local, settings, updatedAt), remote.etag);
-        await client.putManifest();
-        await client.putDeviceState();
-        if (localResult.changed || !local.updatedAt) await layoutStorage.save({ ...local, updatedAt });
-        return { changed: true, direction: "push", updatedAt };
-      } catch (error) {
-        if (error instanceof WebDavConflictError) {
-          lastConflict = error;
-          continue;
-        }
-        throw error;
-      }
-    }
-
-    if (remoteLayout && remoteUpdatedAt > localUpdatedAt) {
-      await layoutStorage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
-      return { changed: true, direction: "pull", updatedAt: remoteUpdatedAt };
     }
 
     if (!local) {
       return { changed: false, direction: "none", updatedAt: remoteUpdatedAt };
     }
 
-    if (remoteLayout && remoteUpdatedAt === localUpdatedAt && !sameLauncherLayout(local, remoteLayout)) {
-      await layoutStorage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
-      await client.putDeviceState();
-      return { changed: true, direction: "pull", updatedAt: remoteUpdatedAt };
-    }
-
-    if (localUpdatedAt > remoteUpdatedAt || !remote) {
+    if (!remote || !remoteLayout) {
+      const localUpdatedAt = validTimestamp(local.updatedAt);
       const updatedAt = localUpdatedAt || Date.now();
       try {
         await client.putJson(LAUNCHER_FILE, launcherDocument(local, settings, updatedAt), remote?.etag);
@@ -143,9 +113,6 @@ export async function syncLauncherLayout(
         throw error;
       }
     }
-
-    await client.putDeviceState();
-    return { changed: false, direction: "none", updatedAt: remoteUpdatedAt };
   }
 
   throw lastConflict instanceof Error ? lastConflict : new Error("Unable to sync launcher layout.");
@@ -221,15 +188,16 @@ function completeLayout(value: Awaited<ReturnType<LauncherLayoutStorage["load"]>
 function sanitizeLayout(
   layout: LauncherLayout | null,
   deprecatedEntryIds: Set<string>,
-  availableAppEntryIds: Set<string>,
+  availableAppEntryIds: string[],
 ): { layout: LauncherLayout | null; changed: boolean } {
   if (!layout) return { layout, changed: false };
   let changed = false;
   const removedFolderIds = new Set<string>();
-  const hasAvailableApps = availableAppEntryIds.size > 0;
+  const availableAppEntryIdSet = new Set(availableAppEntryIds);
+  const hasAvailableApps = availableAppEntryIdSet.size > 0;
   const shouldKeepId = (id: string) => {
     if (deprecatedEntryIds.has(id)) return false;
-    return !hasAvailableApps || !id.startsWith("app:") || availableAppEntryIds.has(id);
+    return !hasAvailableApps || !id.startsWith("app:") || availableAppEntryIdSet.has(id);
   };
   const folders = layout.folders.flatMap((folder) => {
     const childIds = uniqueStrings(folder.childIds).filter(shouldKeepId);
@@ -273,10 +241,10 @@ function appendMissingAppCells(
   cells: LauncherLayout["cells"],
   dock: string[],
   folders: LauncherLayout["folders"],
-  availableAppEntryIds: Set<string>,
+  availableAppEntryIds: string[],
   gridColumns: number | undefined,
 ): LauncherLayout["cells"] {
-  if (availableAppEntryIds.size === 0) return cells;
+  if (availableAppEntryIds.length === 0) return cells;
   const columns = inferGridColumns(cells, gridColumns);
   const nextCells = [...cells];
   const occupiedIds = new Set([
@@ -285,7 +253,7 @@ function appendMissingAppCells(
     ...folders.flatMap((folder) => folder.childIds),
   ]);
   let appendIndex = nextCells.reduce((max, cell) => Math.max(max, cellGlobalIndex(cell, columns)), -1) + 1;
-  for (const id of [...availableAppEntryIds].sort(compareLauncherIds)) {
+  for (const id of availableAppEntryIds) {
     if (occupiedIds.has(id)) continue;
     nextCells.push(cellFromGlobalIndex(appendIndex, columns, id));
     occupiedIds.add(id);
@@ -349,8 +317,8 @@ function inferGridColumns(cells: LauncherLayout["cells"], gridColumns: number | 
   return Math.max(4, maxColumn + 1);
 }
 
-function normalizeAvailableAppEntryIds(ids: string[] | undefined): Set<string> {
-  return new Set(uniqueStrings(ids || []).map((id) => (id.startsWith("app:") ? id : `app:${id}`)));
+function normalizeAvailableAppEntryIds(ids: string[] | undefined): string[] {
+  return uniqueStrings(ids || []).map((id) => (id.startsWith("app:") ? id : `app:${id}`));
 }
 
 function uniqueStrings(values: unknown[]): string[] {
@@ -360,10 +328,6 @@ function uniqueStrings(values: unknown[]): string[] {
     seen.add(value);
     return true;
   });
-}
-
-function compareLauncherIds(left: string, right: string): number {
-  return left.localeCompare(right);
 }
 
 class LauncherWebDavClient {

@@ -311,7 +311,7 @@ function webAppsDocument(items: WebAppRecord[]): SyncDocument<WebAppRecord> {
     type: "hyper-browser-webapps",
     schemaVersion: 1,
     updatedAt: Date.now(),
-    items: items.sort((a, b) => Number(!!a.deletedAt) - Number(!!b.deletedAt) || a.name.localeCompare(b.name)),
+    items,
   };
 }
 

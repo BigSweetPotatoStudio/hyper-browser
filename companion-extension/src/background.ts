@@ -54,7 +54,7 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     case "settings.get":
       return loadSettings();
     case "sync.run":
-      return runBookmarkSyncNow();
+      return runFullSyncNow();
     case "launcher.syncSoon":
       scheduleLauncherAutoSync();
       return null;
@@ -169,6 +169,16 @@ async function runBookmarkSyncNow() {
     bookmarkSyncTimer = null;
   }
   return withBookmarkEventsMuted(() => syncNow());
+}
+
+async function runFullSyncNow() {
+  const result = await runBookmarkSyncNow();
+  const webApps = await loadRemoteWebApps();
+  const launcherLayout = await syncLauncherLayoutNow(webApps.map((app) => app.id));
+  return {
+    ...result,
+    launcherLayout,
+  };
 }
 
 async function withBookmarkEventsMuted<T>(operation: () => Promise<T>): Promise<T> {

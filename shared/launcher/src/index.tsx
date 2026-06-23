@@ -344,24 +344,28 @@ export function LauncherPage({ platform, layoutStorage, labels: labelOverrides, 
   useEffect(() => {
     let cancelled = false;
     async function loadDesktop() {
-      try {
-        const nextLayout = normalizeStoredLayout(await layoutStorage.load(), platform.defaultDockEntryIds, gridMetrics, labels.folder, deprecatedEntryIds);
-        if (!cancelled) setLayout(nextLayout);
-      } catch (loadError) {
-        if (!cancelled) showToast(loadError instanceof Error ? loadError.message : labels.loadLayoutError);
-      }
+      if (!cancelled) setLoading(true);
+      let nextLayout: LauncherLayout | null = null;
+      let nextApps: LauncherApp[] | null = null;
 
       try {
-        const records = await platform.loadApps();
-        if (!cancelled) {
-          setApps(records);
-        }
+        const [storedLayout, records] = await Promise.all([
+          layoutStorage.load(),
+          platform.loadApps(),
+        ]);
+        nextLayout = normalizeStoredLayout(storedLayout, platform.defaultDockEntryIds, gridMetrics, labels.folder, deprecatedEntryIds);
+        nextApps = records;
       } catch (loadError) {
         if (!cancelled) {
-          showToast(loadError instanceof Error ? loadError.message : labels.loadAppsError);
+          const message = loadError instanceof Error ? loadError.message : labels.loadAppsError;
+          showToast(message || labels.loadLayoutError);
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          if (nextLayout) setLayout(nextLayout);
+          if (nextApps) setApps(nextApps);
+          setLoading(false);
+        }
       }
     }
     loadDesktop();
@@ -476,7 +480,6 @@ export function LauncherPage({ platform, layoutStorage, labels: labelOverrides, 
     if (loading) return;
     setLayout((current) => {
       const cleaned = limitDockItems(pruneEmptyFolders(removeDeprecatedEntryIds(current, deprecatedEntryIds)));
-      const cleanedChanged = cleaned !== current;
       const prunedResult = removeUnavailableEntryIds(
         cleaned,
         availableEntries,
@@ -488,7 +491,6 @@ export function LauncherPage({ platform, layoutStorage, labels: labelOverrides, 
         .filter((id) => visibleDesktopIdSet.has(id));
       const nextCellIds = uniqueStrings([...preservedCellIds, ...visibleDesktopIds]);
       const nextCells = normalizeDesktopCells(pruned.cells, nextCellIds, gridMetrics);
-      const semanticCellsChanged = !sameCellIndexes(pruned.cells, nextCells, gridMetrics);
       const next = sameCells(pruned.cells, nextCells, gridMetrics) && pruned.gridColumns === gridMetrics.columns
         ? pruned
         : {
@@ -496,7 +498,7 @@ export function LauncherPage({ platform, layoutStorage, labels: labelOverrides, 
             cells: nextCells,
             version: LAYOUT_VERSION,
             gridColumns: gridMetrics.columns,
-            updatedAt: cleanedChanged || prunedResult.changed || semanticCellsChanged ? Date.now() : pruned.updatedAt,
+            updatedAt: pruned.updatedAt,
           };
       return next === current ? current : next;
     });
@@ -2028,19 +2030,6 @@ function sameCells(left: DesktopCell[], right: DesktopCell[], metrics: DesktopGr
     && cell.row === sortedRight[index].row
     && cell.column === sortedRight[index].column
   ));
-}
-
-function sameCellIndexes(left: DesktopCell[], right: DesktopCell[], metrics: DesktopGridMetrics): boolean {
-  if (left.length !== right.length) return false;
-  const leftIndexes = cellIndexSignature(left, metrics);
-  const rightIndexes = cellIndexSignature(right, metrics);
-  return leftIndexes.every((cell, index) => cell.id === rightIndexes[index].id && cell.index === rightIndexes[index].index);
-}
-
-function cellIndexSignature(cells: DesktopCell[], metrics: DesktopGridMetrics): Array<{ id: string; index: number }> {
-  return cells
-    .map((cell) => ({ id: cell.id, index: globalCellIndex(cell, metrics) }))
-    .sort((left, right) => left.id.localeCompare(right.id));
 }
 
 function sameCellPosition(left: DesktopCellPosition, right: DesktopCellPosition): boolean {
