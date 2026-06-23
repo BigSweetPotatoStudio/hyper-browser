@@ -252,13 +252,13 @@ function HomePage() {
   }
 
   return (
-    <LauncherPage
-      labels={labels}
-      platform={platform}
-      storage={storage}
-      refreshToken={layoutRevision}
-      onLayoutChanged={scheduleAutoSync}
-      topActions={(
+      <LauncherPage
+        labels={labels}
+        platform={platform}
+        layoutStorage={storage}
+        refreshToken={layoutRevision}
+        onLayoutChanged={scheduleAutoSync}
+        topActions={(
         <LauncherSyncActions
           labels={{
             settings: t("settings.title"),

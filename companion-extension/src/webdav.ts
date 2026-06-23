@@ -1,3 +1,4 @@
+import { COMPANION_CLIENT_NAME, DEFAULT_DEVICE_NAME, DEVICE_STATE_PREFIX } from "./identity";
 import type { SyncSettings } from "./types";
 
 export type RemoteJson<T> = {
@@ -46,11 +47,11 @@ export class WebDavClient {
 
   async putDeviceState(): Promise<void> {
     const now = Date.now();
-    await this.putJson(`devices/chrome-${safeSegment(this.settings.deviceId)}.json`, {
+    await this.putJson(`devices/${DEVICE_STATE_PREFIX}-${safeSegment(this.settings.deviceId)}.json`, {
       schemaVersion: 1,
       deviceId: this.settings.deviceId,
-      deviceName: this.settings.deviceName || "Chrome",
-      client: "hyper-browser-chrome-extension",
+      deviceName: this.settings.deviceName || DEFAULT_DEVICE_NAME,
+      client: COMPANION_CLIENT_NAME,
       lastSyncAt: now,
     });
   }

@@ -13,8 +13,10 @@ screenshots/
 app/build/
 internal-pages/node_modules/
 internal-pages/dist/
-chrome-extension/node_modules/
-chrome-extension/dist/
+companion-extension/node_modules/
+companion-extension/dist/
+companion-extension/.wxt/
+companion-extension/.output/
 
 # Android Studio / IntelliJ local state
 *.ipr

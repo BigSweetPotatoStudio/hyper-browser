@@ -44,7 +44,7 @@ export type LauncherLayoutSyncOptions = {
 };
 
 export async function syncLauncherLayout(
-  storage: LauncherLayoutStorage,
+  layoutStorage: LauncherLayoutStorage,
   settings: LauncherLayoutSyncSettings,
   options: LauncherLayoutSyncOptions = {},
 ): Promise<LauncherLayoutSyncResult> {
@@ -55,7 +55,7 @@ export async function syncLauncherLayout(
   let lastConflict: unknown;
   for (let attempt = 0; attempt < MAX_SYNC_ATTEMPTS; attempt += 1) {
     const availableAppEntryIds = normalizeAvailableAppEntryIds(options.availableEntryIds);
-    const localResult = sanitizeLayout(completeLayout(await storage.load()), deprecatedEntryIds, availableAppEntryIds);
+    const localResult = sanitizeLayout(completeLayout(await layoutStorage.load()), deprecatedEntryIds, availableAppEntryIds);
     const local = localResult.layout;
     const remote = await client.getJson<RemoteLauncherDocument>(LAUNCHER_FILE);
     const remoteResult = sanitizeLayout(completeLayout(remote?.data.layout), deprecatedEntryIds, availableAppEntryIds);
@@ -65,7 +65,7 @@ export async function syncLauncherLayout(
 
     if (remote && remoteLayout && remoteResult.changed && remoteUpdatedAt > localUpdatedAt) {
       try {
-        await storage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
+        await layoutStorage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
         await client.putJson(LAUNCHER_FILE, launcherDocument(remoteLayout, settings, remoteUpdatedAt), remote.etag);
         await client.putManifest();
         await client.putDeviceState();
@@ -81,7 +81,7 @@ export async function syncLauncherLayout(
 
     if (remote && remoteLayout && remoteResult.changed && local && remoteUpdatedAt === localUpdatedAt) {
       try {
-        await storage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
+        await layoutStorage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
         await client.putJson(LAUNCHER_FILE, launcherDocument(remoteLayout, settings, remoteUpdatedAt), remote.etag);
         await client.putManifest();
         await client.putDeviceState();
@@ -101,7 +101,7 @@ export async function syncLauncherLayout(
         await client.putJson(LAUNCHER_FILE, launcherDocument(local, settings, updatedAt), remote.etag);
         await client.putManifest();
         await client.putDeviceState();
-        if (localResult.changed || !local.updatedAt) await storage.save({ ...local, updatedAt });
+        if (localResult.changed || !local.updatedAt) await layoutStorage.save({ ...local, updatedAt });
         return { changed: true, direction: "push", updatedAt };
       } catch (error) {
         if (error instanceof WebDavConflictError) {
@@ -113,7 +113,7 @@ export async function syncLauncherLayout(
     }
 
     if (remoteLayout && remoteUpdatedAt > localUpdatedAt) {
-      await storage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
+      await layoutStorage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
       return { changed: true, direction: "pull", updatedAt: remoteUpdatedAt };
     }
 
@@ -122,7 +122,7 @@ export async function syncLauncherLayout(
     }
 
     if (remoteLayout && remoteUpdatedAt === localUpdatedAt && !sameLauncherLayout(local, remoteLayout)) {
-      await storage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
+      await layoutStorage.save({ ...remoteLayout, updatedAt: remoteUpdatedAt });
       await client.putDeviceState();
       return { changed: true, direction: "pull", updatedAt: remoteUpdatedAt };
     }
@@ -133,7 +133,7 @@ export async function syncLauncherLayout(
         await client.putJson(LAUNCHER_FILE, launcherDocument(local, settings, updatedAt), remote?.etag);
         await client.putManifest();
         await client.putDeviceState();
-        if (localResult.changed || !local.updatedAt) await storage.save({ ...local, updatedAt });
+        if (localResult.changed || !local.updatedAt) await layoutStorage.save({ ...local, updatedAt });
         return { changed: true, direction: "push", updatedAt };
       } catch (error) {
         if (error instanceof WebDavConflictError) {

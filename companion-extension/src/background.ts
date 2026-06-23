@@ -1,3 +1,4 @@
+import { browser, type Browser } from "wxt/browser";
 import { appendWebAppToLauncher, syncLauncherLayoutNow } from "./launcher-layout";
 import { loadRemoteSyncState, loadSettings, saveRemoteSyncState } from "./storage";
 import { addBookmarkToSyncFolder, deleteRemoteWebApp, loadRemoteWebApps, readRemoteSyncManifest, saveRemoteWebApp, syncNow } from "./sync";
@@ -17,34 +18,36 @@ let bookmarkSyncPending = false;
 let bookmarkEventMuteDepth = 0;
 let remoteCheckRunning = false;
 
-chrome.runtime.onInstalled.addListener(() => {
-  loadSettings().catch(console.error);
-  ensureRemoteSyncAlarm();
-});
+export function startBackground(): void {
+  browser.runtime.onInstalled.addListener(() => {
+    loadSettings().catch(console.error);
+    ensureRemoteSyncAlarm();
+  });
 
-chrome.runtime.onStartup.addListener(() => {
-  ensureRemoteSyncAlarm();
-  checkRemoteChanges({ notifyPages: true }).catch(console.error);
-});
-
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === REMOTE_SYNC_ALARM) {
+  browser.runtime.onStartup.addListener(() => {
+    ensureRemoteSyncAlarm();
     checkRemoteChanges({ notifyPages: true }).catch(console.error);
-  }
-});
+  });
 
-chrome.bookmarks.onCreated.addListener(() => scheduleBookmarkAutoSync());
-chrome.bookmarks.onChanged.addListener(() => scheduleBookmarkAutoSync());
-chrome.bookmarks.onMoved.addListener(() => scheduleBookmarkAutoSync());
-chrome.bookmarks.onRemoved.addListener(() => scheduleBookmarkAutoSync());
+  browser.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === REMOTE_SYNC_ALARM) {
+      checkRemoteChanges({ notifyPages: true }).catch(console.error);
+    }
+  });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!message || typeof message.type !== "string") return false;
-  handleMessage(message)
-    .then((data) => sendResponse({ ok: true, data }))
-    .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
-  return true;
-});
+  browser.bookmarks.onCreated.addListener(() => scheduleBookmarkAutoSync());
+  browser.bookmarks.onChanged.addListener(() => scheduleBookmarkAutoSync());
+  browser.bookmarks.onMoved.addListener(() => scheduleBookmarkAutoSync());
+  browser.bookmarks.onRemoved.addListener(() => scheduleBookmarkAutoSync());
+
+  browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (!message || typeof message.type !== "string") return false;
+    handleMessage(message)
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  });
+}
 
 async function handleMessage(message: { type: string; payload?: unknown }): Promise<unknown> {
   switch (message.type) {
@@ -86,13 +89,13 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     case "webapps.delete":
       return deleteRemoteWebApp(String((message.payload as { id?: string; startUrl?: string })?.id || (message.payload as { startUrl?: string })?.startUrl || ""));
     case "open.options":
-      await chrome.runtime.openOptionsPage();
+      await browser.runtime.openOptionsPage();
       return null;
     case "open.home":
-      await chrome.tabs.create({ url: chrome.runtime.getURL("home.html") });
+      await browser.tabs.create({ url: browser.runtime.getURL("/home.html") });
       return null;
     case "open.webapps":
-      await chrome.tabs.create({ url: chrome.runtime.getURL("webapps.html") });
+      await browser.tabs.create({ url: browser.runtime.getURL("/webapps.html") });
       return null;
     default:
       throw new Error("Unknown command.");
@@ -100,7 +103,7 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
 }
 
 function ensureRemoteSyncAlarm() {
-  chrome.alarms.create(REMOTE_SYNC_ALARM, {
+  browser.alarms.create(REMOTE_SYNC_ALARM, {
     delayInMinutes: REMOTE_SYNC_ALARM_MINUTES,
     periodInMinutes: REMOTE_SYNC_ALARM_MINUTES,
   });
@@ -206,9 +209,7 @@ async function checkRemoteChanges(options: { notifyPages: boolean } = { notifyPa
 }
 
 function notifyRemoteSynced(updatedAt: number): void {
-  chrome.runtime.sendMessage({ type: "remote.synced", updatedAt }, () => {
-    void chrome.runtime.lastError;
-  });
+  browser.runtime.sendMessage({ type: "remote.synced", updatedAt }).catch(() => undefined);
 }
 
 type CurrentHttpPage = {
@@ -242,54 +243,46 @@ async function getPageIconCandidates(page: CurrentHttpPage): Promise<string[]> {
 }
 
 async function readPageIconUrls(tabId: number): Promise<string[]> {
-  return new Promise((resolve) => {
-    chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => {
-        type IconCandidate = {
-          href: string;
-          rel: string;
-          type: string;
-          sizes: string;
-        };
-        const candidates: IconCandidate[] = Array.from(document.querySelectorAll<HTMLLinkElement>("link[rel]"))
-          .map((link) => ({
-            href: link.href,
-            rel: link.rel.toLowerCase(),
-            type: link.type.toLowerCase(),
-            sizes: link.sizes?.value || "",
-          }))
-          .filter((link) => {
-            const tokens = link.rel.split(/\s+/);
-            return !!link.href && (tokens.includes("icon") || link.rel.includes("apple-touch-icon") || link.rel.includes("mask-icon"));
-          });
-        const score = (candidate: IconCandidate) => {
-          let value = 50;
-          if (candidate.rel.includes("apple-touch-icon")) value -= 20;
-          if (candidate.type.includes("png")) value -= 12;
-          if (candidate.type.includes("webp")) value -= 10;
-          if (candidate.type.includes("jpeg") || candidate.type.includes("jpg")) value -= 8;
-          if (candidate.type.includes("svg")) value += 10;
-          const sizes = candidate.sizes.match(/\d+/g)?.map(Number).filter((size) => Number.isFinite(size)) || [];
-          const largestSize = sizes.length > 0 ? Math.max(...sizes) : 0;
-          if (largestSize >= 128) value -= 6;
-          if (largestSize >= 192) value -= 6;
-          return value;
-        };
-        return candidates
-          .sort((left, right) => score(left) - score(right))
-          .map((candidate) => candidate.href);
-      },
-    }, (results) => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        resolve([]);
-        return;
-      }
-      const value = results?.[0]?.result;
-      resolve(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : []);
-    });
-  });
+  const results = await browser.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      type IconCandidate = {
+        href: string;
+        rel: string;
+        type: string;
+        sizes: string;
+      };
+      const candidates: IconCandidate[] = Array.from(document.querySelectorAll<HTMLLinkElement>("link[rel]"))
+        .map((link) => ({
+          href: link.href,
+          rel: link.rel.toLowerCase(),
+          type: link.type.toLowerCase(),
+          sizes: link.sizes?.value || "",
+        }))
+        .filter((link) => {
+          const tokens = link.rel.split(/\s+/);
+          return !!link.href && (tokens.includes("icon") || link.rel.includes("apple-touch-icon") || link.rel.includes("mask-icon"));
+        });
+      const score = (candidate: IconCandidate) => {
+        let value = 50;
+        if (candidate.rel.includes("apple-touch-icon")) value -= 20;
+        if (candidate.type.includes("png")) value -= 12;
+        if (candidate.type.includes("webp")) value -= 10;
+        if (candidate.type.includes("jpeg") || candidate.type.includes("jpg")) value -= 8;
+        if (candidate.type.includes("svg")) value += 10;
+        const sizes = candidate.sizes.match(/\d+/g)?.map(Number).filter((size) => Number.isFinite(size)) || [];
+        const largestSize = sizes.length > 0 ? Math.max(...sizes) : 0;
+        if (largestSize >= 128) value -= 6;
+        if (largestSize >= 192) value -= 6;
+        return value;
+      };
+      return candidates
+        .sort((left, right) => score(left) - score(right))
+        .map((candidate) => candidate.href);
+    },
+  }).catch(() => []);
+  const value = results?.[0]?.result;
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
 }
 
 async function capturePageIcon(candidates: string[]): Promise<string | null> {
@@ -356,22 +349,11 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
   return `data:${blob.type || "image/png"};base64,${btoa(binary)}`;
 }
 
-function getActiveTab(): Promise<chrome.tabs.Tab> {
-  return new Promise((resolve, reject) => {
-    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        reject(new Error(error.message));
-        return;
-      }
-      const tab = tabs[0];
-      if (!tab) {
-        reject(new Error("No active tab."));
-        return;
-      }
-      resolve(tab);
-    });
-  });
+async function getActiveTab(): Promise<Browser.tabs.Tab> {
+  const tabs = await browser.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = tabs[0];
+  if (!tab) throw new Error("No active tab.");
+  return tab;
 }
 
 function uniqueStrings(values: unknown[]): string[] {

@@ -268,7 +268,7 @@ export function LauncherSyncActions(props: {
 
 export type LauncherPageProps = {
   platform: LauncherPlatform;
-  storage: LauncherLayoutStorage;
+  layoutStorage: LauncherLayoutStorage;
   labels?: Partial<LauncherLabels>;
   className?: string;
   variant?: "desktop" | "mobile";
@@ -321,7 +321,7 @@ type ResolvedDropTarget = {
   slotDropId?: string;
 };
 
-export function LauncherPage({ platform, storage, labels: labelOverrides, className = "", variant = "desktop", topActions, refreshToken, onLayoutChanged }: LauncherPageProps) {
+export function LauncherPage({ platform, layoutStorage, labels: labelOverrides, className = "", variant = "desktop", topActions, refreshToken, onLayoutChanged }: LauncherPageProps) {
   const labels = useMemo<LauncherLabels>(() => ({ ...defaultLabels, ...labelOverrides }), [labelOverrides]);
   const gridMetrics = useDesktopGridMetrics(variant);
   const [apps, setApps] = useState<LauncherApp[]>([]);
@@ -345,7 +345,7 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
     let cancelled = false;
     async function loadDesktop() {
       try {
-        const nextLayout = normalizeStoredLayout(await storage.load(), platform.defaultDockEntryIds, gridMetrics, labels.folder, deprecatedEntryIds);
+        const nextLayout = normalizeStoredLayout(await layoutStorage.load(), platform.defaultDockEntryIds, gridMetrics, labels.folder, deprecatedEntryIds);
         if (!cancelled) setLayout(nextLayout);
       } catch (loadError) {
         if (!cancelled) showToast(loadError instanceof Error ? loadError.message : labels.loadLayoutError);
@@ -368,12 +368,12 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
     return () => {
       cancelled = true;
     };
-  }, [deprecatedEntryIds, gridMetrics, labels.folder, labels.loadAppsError, labels.loadLayoutError, platform, refreshToken, storage]);
+  }, [deprecatedEntryIds, gridMetrics, labels.folder, labels.loadAppsError, labels.loadLayoutError, platform, refreshToken, layoutStorage]);
 
   useEffect(() => {
     if (loading) return;
-    Promise.resolve(storage.save({ ...layout, version: LAYOUT_VERSION, gridColumns: gridMetrics.columns })).catch(console.error);
-  }, [gridMetrics.columns, layout, loading, storage]);
+    Promise.resolve(layoutStorage.save({ ...layout, version: LAYOUT_VERSION, gridColumns: gridMetrics.columns })).catch(console.error);
+  }, [gridMetrics.columns, layout, loading, layoutStorage]);
 
   useEffect(() => {
     if (!toast) return undefined;

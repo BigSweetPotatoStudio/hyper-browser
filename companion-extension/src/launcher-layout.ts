@@ -1,5 +1,6 @@
 import type { LauncherDesktopCell, LauncherFolderLayout, LauncherLayout, LauncherLayoutStorage } from "@hyper-launcher";
 import { syncLauncherLayout } from "@hyper-launcher/webdav-layout";
+import { COMPANION_CLIENT_NAME, DEFAULT_DEVICE_NAME } from "./identity";
 import { loadSettings, storageGet, storageSet } from "./storage";
 
 export const LAYOUT_STORAGE_KEY = "launcherLayout";
@@ -8,7 +9,6 @@ export const DEPRECATED_ENTRY_IDS = ["system:chrome"];
 
 const LAYOUT_VERSION = 4;
 const DEFAULT_GRID_COLUMNS = 4;
-const CHROME_CLIENT_NAME = "hyper-browser-chrome-extension";
 
 export const launcherLayoutStorage: LauncherLayoutStorage = {
   async load() {
@@ -105,8 +105,8 @@ export async function syncLauncherLayoutNow(knownAppIds: string[] = []): Promise
     username: settings.username,
     password: settings.password,
     deviceId: settings.deviceId,
-    deviceName: settings.deviceName || "Chrome",
-    clientName: CHROME_CLIENT_NAME,
+    deviceName: settings.deviceName || DEFAULT_DEVICE_NAME,
+    clientName: COMPANION_CLIENT_NAME,
   }, {
     deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
     availableEntryIds,

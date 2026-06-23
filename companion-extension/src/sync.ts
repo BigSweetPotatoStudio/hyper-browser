@@ -1,3 +1,4 @@
+import { browser, type Browser } from "wxt/browser";
 import { loadMetadata, loadSettings, saveMetadata, saveSettings } from "./storage";
 import type { BookmarkRecord, RemoteSyncManifest, SyncDocument, SyncMetadata, SyncResult, SyncSettings, WebAppRecord } from "./types";
 import { WebDavClient, WebDavConflictError } from "./webdav";
@@ -183,7 +184,7 @@ async function ensureBookmarkFolder(settings: SyncSettings): Promise<SyncSetting
 async function collectLocalBookmarkRecords(settings: SyncSettings, metadata: SyncMetadata): Promise<BookmarkRecord[]> {
   const now = Date.now();
   const nodes = await getFolderBookmarks(settings.folderId);
-  const localByUrl = new Map<string, chrome.bookmarks.BookmarkTreeNode>();
+  const localByUrl = new Map<string, Browser.bookmarks.BookmarkTreeNode>();
   nodes.forEach((node) => {
     if (node.url) localByUrl.set(node.url, node);
   });
@@ -220,7 +221,7 @@ async function collectLocalBookmarkRecords(settings: SyncSettings, metadata: Syn
 
 async function applyBookmarkRecords(settings: SyncSettings, records: BookmarkRecord[]): Promise<{ imported: number; removed: number }> {
   const nodes = await getFolderBookmarks(settings.folderId);
-  const byUrl = new Map<string, chrome.bookmarks.BookmarkTreeNode[]>();
+  const byUrl = new Map<string, Browser.bookmarks.BookmarkTreeNode[]>();
   nodes.forEach((node) => {
     if (!node.url) return;
     byUrl.set(node.url, [...(byUrl.get(node.url) || []), node]);
@@ -346,31 +347,21 @@ function isHttpUrl(url: string): boolean {
   return /^https?:\/\//i.test(url);
 }
 
-function getBookmarkTree(): Promise<chrome.bookmarks.BookmarkTreeNode[]> {
-  return new Promise((resolve) => chrome.bookmarks.getTree(resolve));
+function getBookmarkTree(): Promise<Browser.bookmarks.BookmarkTreeNode[]> {
+  return browser.bookmarks.getTree();
 }
 
-function getBookmarkNode(id: string): Promise<chrome.bookmarks.BookmarkTreeNode | null> {
-  return new Promise((resolve, reject) => {
-    chrome.bookmarks.get(id, (nodes) => {
-      const error = chrome.runtime.lastError;
-      if (error) reject(new Error(error.message));
-      else resolve(nodes[0] || null);
-    });
-  });
+async function getBookmarkNode(id: string): Promise<Browser.bookmarks.BookmarkTreeNode | null> {
+  const nodes = await browser.bookmarks.get(id);
+  return nodes[0] || null;
 }
 
-function getFolderBookmarks(folderId: string): Promise<chrome.bookmarks.BookmarkTreeNode[]> {
-  return new Promise((resolve, reject) => {
-    chrome.bookmarks.getSubTree(folderId, (nodes) => {
-      const error = chrome.runtime.lastError;
-      if (error) reject(new Error(error.message));
-      else resolve(flattenBookmarkNodes(nodes[0]).filter((node) => !!node.url));
-    });
-  });
+async function getFolderBookmarks(folderId: string): Promise<Browser.bookmarks.BookmarkTreeNode[]> {
+  const nodes = await browser.bookmarks.getSubTree(folderId);
+  return flattenBookmarkNodes(nodes[0]).filter((node) => !!node.url);
 }
 
-function flattenBookmarkNodes(node?: chrome.bookmarks.BookmarkTreeNode): chrome.bookmarks.BookmarkTreeNode[] {
+function flattenBookmarkNodes(node?: Browser.bookmarks.BookmarkTreeNode): Browser.bookmarks.BookmarkTreeNode[] {
   if (!node) return [];
   const children = node.children || [];
   return [
@@ -379,14 +370,14 @@ function flattenBookmarkNodes(node?: chrome.bookmarks.BookmarkTreeNode): chrome.
   ];
 }
 
-function createBookmark(bookmark: chrome.bookmarks.CreateDetails): Promise<chrome.bookmarks.BookmarkTreeNode> {
-  return new Promise((resolve) => chrome.bookmarks.create(bookmark, resolve));
+function createBookmark(bookmark: Browser.bookmarks.CreateDetails): Promise<Browser.bookmarks.BookmarkTreeNode> {
+  return browser.bookmarks.create(bookmark);
 }
 
-function updateBookmark(id: string, changes: chrome.bookmarks.UpdateChanges): Promise<chrome.bookmarks.BookmarkTreeNode> {
-  return new Promise((resolve) => chrome.bookmarks.update(id, changes, resolve));
+function updateBookmark(id: string, changes: Browser.bookmarks.UpdateChanges): Promise<Browser.bookmarks.BookmarkTreeNode> {
+  return browser.bookmarks.update(id, changes);
 }
 
 function removeBookmark(id: string): Promise<void> {
-  return new Promise((resolve) => chrome.bookmarks.remove(id, () => resolve()));
+  return browser.bookmarks.remove(id);
 }

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { browser } from "wxt/browser";
 import { getDefaultSettings, loadSettings, saveSettings } from "../storage";
 import "../styles.css";
 import type { SyncResult, SyncSettings } from "../types";
@@ -62,10 +63,10 @@ function OptionsPage() {
           <p className="subtitle">Sync one Chrome bookmark folder with Hyper Browser through WebDAV.</p>
         </div>
         <div className="actions compact">
-          <button className="button" type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("home.html") })}>
+          <button className="button" type="button" onClick={() => openExtensionPage("/home.html")}>
             Home
           </button>
-          <button className="button" type="button" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("webapps.html") })}>
+          <button className="button" type="button" onClick={() => openExtensionPage("/webapps.html")}>
             WebApps
           </button>
         </div>
@@ -107,6 +108,12 @@ function OptionsPage() {
       </section>
     </main>
   );
+}
+
+function openExtensionPage(path: "/home.html" | "/webapps.html"): void {
+  browser.tabs.create({ url: browser.runtime.getURL(path) }).catch((error) => {
+    console.warn("Unable to open extension page.", error);
+  });
 }
 
 createRoot(document.getElementById("root")!).render(

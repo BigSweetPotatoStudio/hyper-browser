@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { browser } from "wxt/browser";
 import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
 import { syncLauncherLayout } from "@hyper-launcher/webdav-layout";
+import { COMPANION_CLIENT_NAME, DEFAULT_DEVICE_NAME } from "../identity";
 import { getDefaultSettings, loadSettings, saveSettings } from "../storage";
 import { DEFAULT_DOCK_ENTRY_IDS, DEPRECATED_ENTRY_IDS, launcherLayoutStorage } from "../launcher-layout";
 import "../styles.css";
@@ -14,8 +16,18 @@ const systemEntries: LauncherSystemEntry[] = [
   { id: "system:extensions", kind: "system", title: "Extensions", mark: "Ex", color: "#ea4335", action: "extensions" },
 ];
 const REMOTE_POLL_MS = 30000;
+const chromiumSystemUrls: Record<string, string> = {
+  bookmarks: "chrome://bookmarks/",
+  history: "chrome://history/",
+  extensions: "chrome://extensions/",
+};
+const firefoxSystemUrls: Record<string, string> = {
+  bookmarks: "about:bookmarks",
+  history: "about:history",
+  extensions: "about:addons",
+};
 
-function ChromeHomePage() {
+function CompanionHomePage() {
   const launcherVariant = new URLSearchParams(window.location.search).get("variant") === "mobile" ? "mobile" : "desktop";
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsConfigured, setSettingsConfigured] = useState(false);
@@ -37,15 +49,10 @@ function ChromeHomePage() {
     deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
     loadApps: () => sendCommand<WebAppRecord[]>("webapps.list"),
     openApp: (app) => {
-      chrome.tabs.create({ url: app.startUrl });
+      openTab(app.startUrl);
     },
     openSystem: (action) => {
-      const urls: Record<string, string> = {
-        bookmarks: "chrome://bookmarks/",
-        history: "chrome://history/",
-        extensions: "chrome://extensions/",
-      };
-      chrome.tabs.create({ url: urls[action] || "chrome://newtab/" });
+      openTab(systemUrl(action));
     },
     deleteApp: (app) => sendCommand<WebAppRecord[]>("webapps.delete", { id: app.id }),
     saveApp: (app, changes) => sendCommand<WebAppRecord[]>("webapps.save", {
@@ -80,8 +87,8 @@ function ChromeHomePage() {
         username: settings.username,
         password: settings.password,
         deviceId: settings.deviceId,
-        deviceName: settings.deviceName || "Chrome",
-        clientName: "hyper-browser-chrome-extension",
+        deviceName: settings.deviceName || DEFAULT_DEVICE_NAME,
+        clientName: COMPANION_CLIENT_NAME,
       }, {
         deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
         availableEntryIds: webApps.map((app) => app.id),
@@ -132,15 +139,15 @@ function ChromeHomePage() {
     const onMessage = (message: { type?: string }) => {
       if (message?.type === "remote.synced") setLayoutRevision((current) => current + 1);
     };
-    chrome.runtime.onMessage.addListener(onMessage);
-    return () => chrome.runtime.onMessage.removeListener(onMessage);
+    browser.runtime.onMessage.addListener(onMessage);
+    return () => browser.runtime.onMessage.removeListener(onMessage);
   }, []);
 
   return (
     <>
       <LauncherPage
         platform={platform}
-        storage={launcherLayoutStorage}
+        layoutStorage={launcherLayoutStorage}
         refreshToken={layoutRevision}
         onLayoutChanged={() => {
           sendCommand("launcher.syncSoon").catch(() => undefined);
@@ -274,7 +281,7 @@ function SettingsDialog(props: {
             <input className="input" type="password" autoComplete="current-password" value={settings.password} onChange={(event) => update("password", event.currentTarget.value)} />
           </label>
           <label className="field">
-            <span className="label">Chrome folder title</span>
+            <span className="label">Sync folder title</span>
             <input className="input" type="text" value={settings.folderTitle} onChange={(event) => update("folderTitle", event.currentTarget.value)} />
           </label>
           <label className="field">
@@ -313,12 +320,23 @@ function normalizeSettings(settings: SyncSettings): SyncSettings {
     webDavUrl: settings.webDavUrl.trim(),
     username: settings.username.trim(),
     folderTitle: settings.folderTitle.trim() || "Hyper Browser",
-    deviceName: settings.deviceName.trim() || "Chrome",
+    deviceName: settings.deviceName.trim() || DEFAULT_DEVICE_NAME,
   };
+}
+
+function openTab(url: string): void {
+  browser.tabs.create({ url }).catch((error) => {
+    console.warn("Unable to open tab.", error);
+  });
+}
+
+function systemUrl(action: string): string {
+  const urls = import.meta.env.FIREFOX ? firefoxSystemUrls : chromiumSystemUrls;
+  return urls[action] || (import.meta.env.FIREFOX ? "about:blank" : "chrome://newtab/");
 }
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <ChromeHomePage />
+    <CompanionHomePage />
   </React.StrictMode>
 );

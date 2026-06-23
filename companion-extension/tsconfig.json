@@ -1,4 +1,5 @@
 {
+  "extends": "./.wxt/tsconfig.json",
   "compilerOptions": {
     "target": "ES2022",
     "useDefineForClassFields": true,
@@ -25,7 +26,7 @@
       "@dnd-kit/sortable": ["node_modules/@dnd-kit/sortable/dist/index.d.ts"],
       "@dnd-kit/utilities": ["node_modules/@dnd-kit/utilities/dist/index.d.ts"]
     },
-    "types": ["chrome", "node"]
+    "types": ["node"]
   },
-  "include": ["src", "vite.config.ts", "../shared/launcher/src"]
+  "include": [".wxt/wxt.d.ts", "entrypoints", "src", "wxt.config.ts", "../shared/launcher/src"]
 }

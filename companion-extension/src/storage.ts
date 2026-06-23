@@ -1,3 +1,5 @@
+import { browser } from "wxt/browser";
+import { DEFAULT_DEVICE_NAME } from "./identity";
 import type { SyncMetadata, SyncSettings } from "./types";
 
 const DEFAULT_FOLDER_TITLE = "Hyper Browser";
@@ -8,7 +10,7 @@ const DEFAULT_SETTINGS: SyncSettings = {
   password: "",
   folderTitle: DEFAULT_FOLDER_TITLE,
   folderId: "",
-  deviceName: "Chrome",
+  deviceName: DEFAULT_DEVICE_NAME,
   deviceId: "",
 };
 
@@ -54,9 +56,9 @@ export async function saveRemoteSyncState(state: { manifestUpdatedAt: number }):
 }
 
 export function storageGet<T>(keys: string | string[] | Record<string, unknown> | null): Promise<T> {
-  return new Promise((resolve) => chrome.storage.local.get(keys, (items) => resolve(items as T)));
+  return browser.storage.local.get(keys as never) as Promise<T>;
 }
 
 export function storageSet(items: Record<string, unknown>): Promise<void> {
-  return new Promise((resolve) => chrome.storage.local.set(items, () => resolve()));
+  return browser.storage.local.set(items);
 }
