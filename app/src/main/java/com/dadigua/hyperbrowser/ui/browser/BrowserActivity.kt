@@ -1270,7 +1270,7 @@ private fun BrowserScreen(
         profileStore.pruneTabThumbnails(keptTabIds)
     }
 
-    fun closeBrowserTabById(id: String) {
+    fun closeBrowserTabById(id: String, closePanelAfterClose: Boolean = true) {
         val closing = tabs.firstOrNull { it.id == id } ?: return
         val oldIndex = tabs.indexOf(closing)
         closing.close()
@@ -1286,12 +1286,14 @@ private fun BrowserScreen(
                 ?.takeIf { openerId -> tabs.any { it.id == openerId } }
                 ?: tabs[(oldIndex - 1).coerceIn(0, tabs.lastIndex)].id
         }
-        activePanel = BrowserPanel.None
+        if (closePanelAfterClose) {
+            activePanel = BrowserPanel.None
+        }
         message = null
         persistBrowserTabs()
     }
 
-    closeTabById = ::closeBrowserTabById
+    closeTabById = { id -> closeBrowserTabById(id) }
     focusTabById = { id ->
         if (tabs.any { it.id == id }) {
             selectedTabId = id
@@ -1848,7 +1850,7 @@ private fun BrowserScreen(
                         selectedTabId = it
                         closePanel()
                     },
-                    onClose = ::closeBrowserTabById,
+                    onClose = { closeBrowserTabById(it, closePanelAfterClose = false) },
                     onNewTab = {
                         val newTab = createBrowserTab(GeckoSessionController.HOME_URL)
                         tabs.add(newTab)
