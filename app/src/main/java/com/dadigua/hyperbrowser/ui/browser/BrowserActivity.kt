@@ -715,6 +715,10 @@ private fun BrowserScreen(
                 pendingHyperCommand = HyperCommand.Apps.Open(payload.optString("id"))
                 ok()
             }
+            "apps.openStandalone" -> {
+                pendingHyperCommand = HyperCommand.Apps.OpenStandalone(payload.optString("id"))
+                ok()
+            }
             "apps.pin" -> {
                 pendingHyperCommand = HyperCommand.Apps.Pin(payload.optString("id"))
                 ok()
@@ -1049,6 +1053,18 @@ private fun BrowserScreen(
 
     fun handlePageContentTouchStarted() {
         focusManager.clearFocus(force = true)
+    }
+
+    fun openWebAppInCurrentTab(webAppId: String, closeCurrentPanel: Boolean = false) {
+        val webApp = webApps.firstOrNull { it.id == webAppId }
+        if (webApp == null) {
+            message = context.getString(R.string.webapp_not_found)
+            return
+        }
+        tab.input = webApp.startUrl
+        controller.load(webApp.startUrl)
+        if (closeCurrentPanel) activePanel = BrowserPanel.None
+        message = null
     }
 
     fun showInstallWebAppDetailsDialog(name: String, startUrl: String, siteIconPath: String?) {
@@ -1542,6 +1558,11 @@ private fun BrowserScreen(
             }
             is HyperCommand.Apps.Open -> {
                 if (command.id.isNotBlank()) {
+                    openWebAppInCurrentTab(command.id)
+                }
+            }
+            is HyperCommand.Apps.OpenStandalone -> {
+                if (command.id.isNotBlank()) {
                     activity.startActivity(WebAppActivity.intent(activity, command.id, true))
                 }
             }
@@ -1634,9 +1655,7 @@ private fun BrowserScreen(
                         message = null
                     },
                     onOpenWebApp = { webAppId ->
-                        activity.startActivity(WebAppActivity.intent(activity, webAppId, true))
-                        closePanel()
-                        message = null
+                        openWebAppInCurrentTab(webAppId, closeCurrentPanel = true)
                     }
                 )
             } else if (showBookmarks) {

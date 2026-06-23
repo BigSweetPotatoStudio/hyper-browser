@@ -122,6 +122,7 @@ export type LauncherPlatform = {
   deprecatedEntryIds?: string[];
   loadApps: () => Promise<LauncherApp[]>;
   openApp: (app: LauncherApp) => void;
+  openStandaloneApp?: (app: LauncherApp) => void;
   openSystem: (action: string) => void;
   deleteApp?: (app: LauncherApp) => Promise<LauncherApp[] | void> | LauncherApp[] | void;
   editApp?: (app: LauncherApp) => Promise<LauncherApp[] | void> | LauncherApp[] | void;
@@ -156,6 +157,7 @@ export type LauncherLabels = {
   folder: string;
   folderEmpty: string;
   open: string;
+  openStandaloneApp: string;
   editHomeScreen: string;
   done: string;
   newFolder: string;
@@ -199,6 +201,7 @@ const defaultLabels: LauncherLabels = {
   folder: "Folder",
   folderEmpty: "This folder is empty.",
   open: "Open",
+  openStandaloneApp: "Open as WebApp",
   editHomeScreen: "Edit Desktop",
   done: "Done",
   newFolder: "New folder",
@@ -521,6 +524,13 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
       return;
     }
     platform.openSystem(entry.action);
+  }
+
+  function openStandaloneApp(itemId: string) {
+    const entry = availableEntries.get(itemId);
+    if (!entry || entry.kind !== "app" || !platform.openStandaloneApp) return;
+    platform.openStandaloneApp(entry.app);
+    closeMenu();
   }
 
   function showToast(message: string) {
@@ -1221,6 +1231,7 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
             openEntry(item);
             closeMenu();
           }}
+          onOpenStandaloneApp={openStandaloneApp}
           onStartEditMode={() => {
             setEditMode(true);
             closeMenu();
@@ -1236,6 +1247,7 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
           onDeleteApp={deleteApp}
           canMoveToDock={menu.sourceContainer === "dock" || canPlaceInDock(menu.itemId)}
           canPinApp={!!platform.pinApp}
+          canOpenStandaloneApp={!!platform.openStandaloneApp}
           canEditApp={!!platform.saveApp || !!platform.editApp}
           canEditIcon={!platform.saveApp && !!platform.updateAppIcon}
           canDeleteApp={!!platform.deleteApp}
@@ -1777,6 +1789,7 @@ function DesktopMenu(props: {
   y: number;
   onClose: () => void;
   onOpen: (item: LauncherEntry) => void;
+  onOpenStandaloneApp: (itemId: string) => void;
   onStartEditMode: () => void;
   onCreateFolder: (itemId: string, sourceContainer: LauncherContainer) => void;
   onMoveToDock: (itemId: string) => void;
@@ -1788,6 +1801,7 @@ function DesktopMenu(props: {
   onEditIcon: (itemId: string) => void;
   onDeleteApp: (itemId: string) => void;
   canMoveToDock: boolean;
+  canOpenStandaloneApp: boolean;
   canPinApp: boolean;
   canEditApp: boolean;
   canEditIcon: boolean;
@@ -1831,6 +1845,9 @@ function DesktopMenu(props: {
             )}
             {props.item.kind === "app" && props.canPinApp && (
               <button type="button" role="menuitem" onClick={() => props.onPinApp(props.item!.id)}>{props.labels.pinApp}</button>
+            )}
+            {props.item.kind === "app" && props.canOpenStandaloneApp && (
+              <button type="button" role="menuitem" onClick={() => props.onOpenStandaloneApp(props.item!.id)}>{props.labels.openStandaloneApp}</button>
             )}
             {props.item.kind === "app" && props.canEditApp && (
               <button type="button" role="menuitem" onClick={() => props.onEditApp(props.item!.id)}>{props.labels.editApp}</button>

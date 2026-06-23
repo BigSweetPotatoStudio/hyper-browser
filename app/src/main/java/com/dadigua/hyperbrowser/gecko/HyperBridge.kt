@@ -47,6 +47,7 @@ object HyperBridge {
         "history.remove",
         "history.clear",
         "apps.open",
+        "apps.openStandalone",
         "apps.pin",
         "apps.edit",
         "apps.update",

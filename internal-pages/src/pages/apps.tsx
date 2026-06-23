@@ -41,6 +41,7 @@ function AppsPage() {
     folder: t("home.folder"),
     folderEmpty: t("home.folderEmpty"),
     open: t("home.open"),
+    openStandaloneApp: t("apps.openStandalone"),
     editHomeScreen: t("home.editHomeScreen"),
     done: t("home.done"),
     newFolder: t("home.newFolder"),
@@ -132,12 +133,16 @@ function AppsPage() {
         )}
       </main>
       {menuApp && (
-        <AppActionSheet
-          app={menuApp}
-          onClose={() => setMenuApp(null)}
-          onPin={() => {
-            window.hyperBrowser.pinApp(menuApp.id);
-            setMenuApp(null);
+          <AppActionSheet
+            app={menuApp}
+            onClose={() => setMenuApp(null)}
+            onOpenStandalone={() => {
+              window.hyperBrowser.openStandaloneApp(menuApp.id);
+              setMenuApp(null);
+            }}
+            onPin={() => {
+              window.hyperBrowser.pinApp(menuApp.id);
+              setMenuApp(null);
           }}
           onEdit={() => {
             setEditingApp(menuApp);
@@ -309,6 +314,7 @@ function AppTile({ app, onMenu }: { app: WebAppItem; onMenu: (app: WebAppItem) =
 function AppActionSheet(props: {
   app: WebAppItem;
   onClose: () => void;
+  onOpenStandalone: () => void;
   onPin: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -317,6 +323,7 @@ function AppActionSheet(props: {
     <div className="app-menu-scrim" onClick={props.onClose}>
       <div className="app-menu" role="menu" onClick={(event) => event.stopPropagation()}>
         <div className="app-menu-title">{props.app.name || hostLabel(props.app.startUrl)}</div>
+        <button type="button" role="menuitem" onClick={props.onOpenStandalone}>{t("apps.openStandalone")}</button>
         <button type="button" role="menuitem" onClick={props.onPin}>{t("apps.pin")}</button>
         <button type="button" role="menuitem" onClick={props.onEdit}>{t("common.edit")}</button>
         <button className="danger" type="button" role="menuitem" onClick={props.onDelete}>{t("common.delete")}</button>

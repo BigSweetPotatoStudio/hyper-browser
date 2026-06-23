@@ -167,6 +167,7 @@ type HyperBridgeMessageType =
   | "history.remove"
   | "history.clear"
   | "apps.open"
+  | "apps.openStandalone"
   | "apps.pin"
   | "apps.edit"
   | "apps.update"
@@ -229,6 +230,7 @@ type HyperBrowserApi = {
   removeHistory(url: string): void;
   clearHistory(): void;
   openApp(id: string): void;
+  openStandaloneApp(id: string): void;
   pinApp(id: string): void;
   editApp(id: string): Promise<WebAppItem[]>;
   updateApp(id: string, name: string, startUrl: string, iconDataUrl?: string | null): Promise<WebAppItem[]>;
@@ -424,6 +426,9 @@ window.hyperBrowser = {
   },
   openApp(id) {
     command("apps.open", { id });
+  },
+  openStandaloneApp(id) {
+    command("apps.openStandalone", { id });
   },
   pinApp(id) {
     command("apps.pin", { id });

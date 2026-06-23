@@ -140,6 +140,9 @@ function HomePage() {
     openApp: (app) => {
       window.hyperBrowser.openApp(app.id);
     },
+    openStandaloneApp: (app) => {
+      window.hyperBrowser.openStandaloneApp(app.id);
+    },
     openSystem: (action) => {
       if (action === "bookmarks") window.hyperBrowser.showBookmarks();
       if (action === "history") window.hyperBrowser.showHistory();
@@ -164,6 +167,7 @@ function HomePage() {
     folder: t("home.folder"),
     folderEmpty: t("home.folderEmpty"),
     open: t("home.open"),
+    openStandaloneApp: t("apps.openStandalone"),
     editHomeScreen: t("home.editHomeScreen"),
     done: t("home.done"),
     newFolder: t("home.newFolder"),
