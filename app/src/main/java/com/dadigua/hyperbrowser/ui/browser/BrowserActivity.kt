@@ -1841,6 +1841,7 @@ private fun BrowserScreen(
                     tabs = tabs,
                     faviconStore = faviconStore,
                     selectedTabId = selectedTabId,
+                    toolbarPosition = settings.toolbarPosition,
                     onBack = ::closePanel,
                     onSelect = {
                         selectedTabId = it

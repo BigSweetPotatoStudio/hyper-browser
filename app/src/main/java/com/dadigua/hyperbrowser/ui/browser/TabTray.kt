@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -46,78 +47,102 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.browser.FaviconRepository
+import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
 
 private val TabActionBarHeight = 48.dp
 private val TabActionButtonSize = 40.dp
 private val TabActionIconSize = 24.sp
+private val TabCardGridPadding = 10.dp
+private val TabCardGridSpacing = 10.dp
+private val TabCardHeight = 302.dp
+private val TabCardHorizontalPadding = 10.dp
+private val TabCardHeaderVerticalPadding = 8.dp
+private val TabCardPreviewPadding = 8.dp
+private val TabCardCloseButtonSize = 28.dp
 
 @Composable
 internal fun TabTray(
     tabs: List<BrowserTabRuntime>,
     faviconStore: FaviconRepository,
     selectedTabId: String,
+    toolbarPosition: String,
     onBack: () -> Unit,
     onSelect: (String) -> Unit,
     onClose: (String) -> Unit,
     onNewTab: () -> Unit
 ) {
     var mode by remember { mutableStateOf(TabTrayMode.Card) }
+    val actionBarAtBottom = BrowserSettings.isBottomToolbarPosition(toolbarPosition)
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFFF4F5FA))
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            ChromeTabHeader(
-                mode = mode,
-                onBack = onBack,
-                onModeChange = { mode = it },
-                onNewTab = onNewTab
-            )
-            if (mode == TabTrayMode.List) {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 18.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(tabs, key = { it.id }) { tab ->
-                        val pageState = tabPageState(tab)
-                        ChromeTabListRow(
-                            tab = tab,
-                            pageState = pageState,
-                            faviconStore = faviconStore,
-                            selected = tab.id == selectedTabId,
-                            onSelect = { onSelect(tab.id) },
-                            onClose = { onClose(tab.id) }
-                        )
+            if (!actionBarAtBottom) {
+                ChromeTabHeader(
+                    mode = mode,
+                    actionBarAtBottom = false,
+                    onBack = onBack,
+                    onModeChange = { mode = it },
+                    onNewTab = onNewTab
+                )
+            }
+            Box(modifier = Modifier.weight(1f)) {
+                if (mode == TabTrayMode.List) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 18.dp, vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(tabs, key = { it.id }) { tab ->
+                            val pageState = tabPageState(tab)
+                            ChromeTabListRow(
+                                tab = tab,
+                                pageState = pageState,
+                                faviconStore = faviconStore,
+                                selected = tab.id == selectedTabId,
+                                onSelect = { onSelect(tab.id) },
+                                onClose = { onClose(tab.id) }
+                            )
+                        }
+                    }
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(2),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = TabCardGridPadding, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(TabCardGridSpacing),
+                        horizontalArrangement = Arrangement.spacedBy(TabCardGridSpacing)
+                    ) {
+                        items(tabs, key = { it.id }) { tab ->
+                            val pageState = tabPageState(tab)
+                            ChromeTabCard(
+                                tab = tab,
+                                pageState = pageState,
+                                faviconStore = faviconStore,
+                                selected = tab.id == selectedTabId,
+                                onSelect = { onSelect(tab.id) },
+                                onClose = { onClose(tab.id) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(TabCardHeight)
+                            )
+                        }
                     }
                 }
-            } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 18.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
-                    horizontalArrangement = Arrangement.spacedBy(18.dp)
-                ) {
-                    items(tabs, key = { it.id }) { tab ->
-                        val pageState = tabPageState(tab)
-                        ChromeTabCard(
-                            tab = tab,
-                            pageState = pageState,
-                            faviconStore = faviconStore,
-                            selected = tab.id == selectedTabId,
-                            onSelect = { onSelect(tab.id) },
-                            onClose = { onClose(tab.id) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(302.dp)
-                        )
-                    }
-                }
+            }
+            if (actionBarAtBottom) {
+                ChromeTabHeader(
+                    mode = mode,
+                    actionBarAtBottom = true,
+                    onBack = onBack,
+                    onModeChange = { mode = it },
+                    onNewTab = onNewTab
+                )
             }
         }
     }
@@ -141,13 +166,19 @@ private enum class TabTrayMode {
 @Composable
 private fun ChromeTabHeader(
     mode: TabTrayMode,
+    actionBarAtBottom: Boolean,
     onBack: () -> Unit,
     onModeChange: (TabTrayMode) -> Unit,
     onNewTab: () -> Unit
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (actionBarAtBottom) Modifier.navigationBarsPadding() else Modifier)
     ) {
+        if (actionBarAtBottom) {
+            HorizontalDivider(color = Color(0xFFDADCE3))
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -201,7 +232,9 @@ private fun ChromeTabHeader(
                 Text("+", fontSize = TabActionIconSize, color = Color(0xFF202124))
             }
         }
-        HorizontalDivider(color = Color(0xFFDADCE3))
+        if (!actionBarAtBottom) {
+            HorizontalDivider(color = Color(0xFFDADCE3))
+        }
     }
 }
 
@@ -222,7 +255,7 @@ private fun ChromeTabCard(
     val openNewTabTitle = stringResource(R.string.tabs_open_new_tab)
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xFF5669A6) else Color(0xFFE0E2EA)),
         border = null,
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
@@ -231,7 +264,7 @@ private fun ChromeTabCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                    .padding(horizontal = TabCardHorizontalPadding, vertical = TabCardHeaderVerticalPadding),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TabFavicon(
@@ -240,29 +273,28 @@ private fun ChromeTabCard(
                     fallbackLabel = displayTitle.ifBlank { displayUrl },
                     faviconStore = faviconStore,
                     selected = selected,
-                    size = 30.dp
+                    size = 28.dp
                 )
                 Text(
                     displayTitle.ifBlank { openNewTabTitle },
                     modifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = 8.dp)
+                        .padding(start = 8.dp, end = 4.dp)
                         .clickable { onSelect() },
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleSmall,
-                    lineHeight = 16.sp,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 15.sp,
                     color = if (selected) Color.White else Color(0xFF202124)
                 )
-                IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
-                    Text("×", fontSize = 28.sp, lineHeight = 28.sp, color = if (selected) Color.White else Color(0xFF202124))
-                }
+                TabCloseButton(selected = selected, size = TabCardCloseButtonSize, onClose = onClose)
             }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
-                    .clip(RoundedCornerShape(20.dp))
+                    .padding(start = TabCardPreviewPadding, end = TabCardPreviewPadding, bottom = TabCardPreviewPadding)
+                    .clip(RoundedCornerShape(18.dp))
                     .background(Color.White)
                     .clickable { onSelect() },
                 contentAlignment = Alignment.TopStart
@@ -368,9 +400,29 @@ private fun ChromeTabListRow(
                 }
             }
         }
-        IconButton(onClick = onClose, modifier = Modifier.size(44.dp)) {
-            Text("×", fontSize = 28.sp, lineHeight = 28.sp, color = if (selected) Color.White else Color(0xFF202124))
-        }
+        TabCloseButton(selected = selected, size = 34.dp, onClose = onClose)
+    }
+}
+
+@Composable
+private fun TabCloseButton(
+    selected: Boolean,
+    size: Dp,
+    onClose: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(CircleShape)
+            .clickable(onClick = onClose),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            "×",
+            fontSize = (size.value * 0.78f).sp,
+            lineHeight = (size.value * 0.78f).sp,
+            color = if (selected) Color.White else Color(0xFF202124)
+        )
     }
 }
 
