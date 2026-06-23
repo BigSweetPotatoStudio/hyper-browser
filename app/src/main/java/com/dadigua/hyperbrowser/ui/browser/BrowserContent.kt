@@ -87,7 +87,7 @@ internal fun BrowserTip(
     modifier: Modifier = Modifier
 ) {
     if (message == null) return
-    val bottomPadding = if (toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) 72.dp else 24.dp
+    val bottomPadding = if (BrowserSettings.isBottomToolbarPosition(toolbarPosition)) 72.dp else 24.dp
     Box(
         modifier = modifier
             .fillMaxWidth()

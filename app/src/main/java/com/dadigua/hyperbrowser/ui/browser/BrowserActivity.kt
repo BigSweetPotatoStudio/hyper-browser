@@ -1060,6 +1060,7 @@ private fun BrowserScreen(
     val toolbarCollapseRangePx = with(density) { ToolbarAutoHideDragRange.toPx() }
     val canAutoCollapseToolbar = !pageFullScreen &&
         activePanel == BrowserPanel.None &&
+        BrowserSettings.isDynamicBottomToolbarPosition(settings.toolbarPosition) &&
         !onSearchPage
     val animatedToolbarCollapseFraction by animateFloatAsState(
         targetValue = toolbarCollapseFraction,
@@ -1071,12 +1072,7 @@ private fun BrowserScreen(
             toolbarCollapseFraction = 0f
             return
         }
-        val toolbarDeltaY = if (settings.toolbarPosition == BrowserSettings.TOOLBAR_POSITION_TOP) {
-            -deltaY
-        } else {
-            deltaY
-        }
-        toolbarCollapseFraction = (toolbarCollapseFraction + toolbarDeltaY / toolbarCollapseRangePx)
+        toolbarCollapseFraction = (toolbarCollapseFraction + deltaY / toolbarCollapseRangePx)
             .coerceIn(0f, 1f)
     }
 
@@ -1984,7 +1980,7 @@ private fun BrowserScreen(
                         )
                         Box(
                             modifier = Modifier.align(
-                                if (settings.toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) {
+                                if (BrowserSettings.isBottomToolbarPosition(settings.toolbarPosition)) {
                                     Alignment.BottomCenter
                                 } else {
                                     Alignment.TopCenter
@@ -1994,7 +1990,7 @@ private fun BrowserScreen(
                             toolbar()
                         }
                     }
-                } else if (settings.toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) {
+                } else if (BrowserSettings.isBottomToolbarPosition(settings.toolbarPosition)) {
                     BrowserContent(
                         controller = controller,
                         tabId = tab.id,

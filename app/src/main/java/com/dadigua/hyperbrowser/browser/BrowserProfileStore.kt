@@ -28,7 +28,7 @@ data class BrowserBookmark(
 data class BrowserSettings(
     val searchEngineId: String = SEARCH_ENGINE_GOOGLE,
     val customSearchUrl: String = "",
-    val toolbarPosition: String = TOOLBAR_POSITION_BOTTOM,
+    val toolbarPosition: String = TOOLBAR_POSITION_DYNAMIC_BOTTOM,
     val backgroundVideoEnhancementEnabled: Boolean = false,
     val openNewTabsInCurrentTab: Boolean = false,
     val dohEnabled: Boolean = false,
@@ -71,6 +71,7 @@ data class BrowserSettings(
         const val DEFAULT_SEARCH_URL_TEMPLATE = "https://www.google.com/search?q=%s"
         const val TOOLBAR_POSITION_TOP = "top"
         const val TOOLBAR_POSITION_BOTTOM = "bottom"
+        const val TOOLBAR_POSITION_DYNAMIC_BOTTOM = "dynamic_bottom"
         const val DEFAULT_DOH_PROVIDER_URL = "https://mozilla.cloudflare-dns.com/dns-query"
         const val PRIVACY_PROTECTION_NONE = "none"
         const val PRIVACY_PROTECTION_STANDARD = "standard"
@@ -89,8 +90,16 @@ data class BrowserSettings(
         fun normalizedToolbarPosition(value: String): String =
             when (value) {
                 TOOLBAR_POSITION_TOP -> TOOLBAR_POSITION_TOP
-                else -> TOOLBAR_POSITION_BOTTOM
+                TOOLBAR_POSITION_BOTTOM -> TOOLBAR_POSITION_BOTTOM
+                TOOLBAR_POSITION_DYNAMIC_BOTTOM -> TOOLBAR_POSITION_DYNAMIC_BOTTOM
+                else -> TOOLBAR_POSITION_DYNAMIC_BOTTOM
             }
+
+        fun isBottomToolbarPosition(value: String): Boolean =
+            value == TOOLBAR_POSITION_BOTTOM || value == TOOLBAR_POSITION_DYNAMIC_BOTTOM
+
+        fun isDynamicBottomToolbarPosition(value: String): Boolean =
+            value == TOOLBAR_POSITION_DYNAMIC_BOTTOM
     }
 }
 
@@ -570,7 +579,7 @@ class BrowserProfileStore(context: Context) {
                     searchEngineId = item.optString("searchEngineId", BrowserSettings.SEARCH_ENGINE_GOOGLE),
                     customSearchUrl = item.optString("customSearchUrl"),
                     toolbarPosition = BrowserSettings.normalizedToolbarPosition(
-                        item.optString("toolbarPosition", BrowserSettings.TOOLBAR_POSITION_BOTTOM)
+                        item.optString("toolbarPosition", BrowserSettings.TOOLBAR_POSITION_DYNAMIC_BOTTOM)
                     ),
                     backgroundVideoEnhancementEnabled = item.optBoolean("backgroundVideoEnhancementEnabled", false),
                     openNewTabsInCurrentTab = item.optBoolean("openNewTabsInCurrentTab", false),

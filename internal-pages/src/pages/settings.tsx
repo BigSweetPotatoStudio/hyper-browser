@@ -405,7 +405,9 @@ function SettingsPage() {
   }
 
   function toolbarPositionLabel(toolbarPosition?: BrowserSettings["toolbarPosition"]) {
-    return toolbarPosition === "bottom" ? t("settings.bottom") : t("settings.top");
+    if (toolbarPosition === "bottom") return t("settings.bottom");
+    if (toolbarPosition === "top") return t("settings.top");
+    return t("settings.dynamicBottom");
   }
 
   function languagePreferenceLabel(value: LocalePreference = languagePreference) {
@@ -689,7 +691,15 @@ function SettingsPage() {
             {toolbarVisibleExpanded && (
               <div className="settings-options">
                 <button
-                  className={settings?.toolbarPosition !== "bottom" ? "settings-option selected" : "settings-option"}
+                  className={settings?.toolbarPosition === "bottom" ? "settings-option selected" : "settings-option"}
+                  type="button"
+                  onClick={() => updateToolbarPosition("bottom")}
+                >
+                  <span>{t("settings.bottom")}</span>
+                  <span>{t("settings.toolbarBottomHelp")}</span>
+                </button>
+                <button
+                  className={settings?.toolbarPosition === "top" ? "settings-option selected" : "settings-option"}
                   type="button"
                   onClick={() => updateToolbarPosition("top")}
                 >
@@ -697,12 +707,12 @@ function SettingsPage() {
                   <span>{t("settings.toolbarTopHelp")}</span>
                 </button>
                 <button
-                  className={settings?.toolbarPosition === "bottom" ? "settings-option selected" : "settings-option"}
+                  className={settings?.toolbarPosition === "dynamic_bottom" ? "settings-option selected" : "settings-option"}
                   type="button"
-                  onClick={() => updateToolbarPosition("bottom")}
+                  onClick={() => updateToolbarPosition("dynamic_bottom")}
                 >
-                  <span>{t("settings.bottom")}</span>
-                  <span>{t("settings.toolbarBottomHelp")}</span>
+                  <span>{t("settings.dynamicBottom")}</span>
+                  <span>{t("settings.toolbarDynamicBottomHelp")}</span>
                 </button>
               </div>
             )}

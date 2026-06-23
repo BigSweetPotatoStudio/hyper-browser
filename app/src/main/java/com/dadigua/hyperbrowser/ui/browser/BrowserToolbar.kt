@@ -106,7 +106,7 @@ internal fun BrowserToolbar(
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val imeVisible = imeBottomPx > 0
     val enabledExtensions = installedExtensions.filter { it.enabled }
-    val toolbarPadding = if (toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM && !imeVisible) {
+    val toolbarPadding = if (BrowserSettings.isBottomToolbarPosition(toolbarPosition) && !imeVisible) {
         Modifier.navigationBarsPadding()
     } else {
         Modifier
@@ -214,7 +214,7 @@ private fun Modifier.collapsibleToolbarLayout(
 ): Modifier {
     val fraction = collapseFraction.coerceIn(0f, 1f)
     if (fraction <= 0f) return this
-    val isBottomToolbar = toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM
+    val isBottomToolbar = BrowserSettings.isBottomToolbarPosition(toolbarPosition)
     return this
         .layout { measurable, constraints ->
             val placeable = measurable.measure(constraints)

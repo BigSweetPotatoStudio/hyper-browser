@@ -44,7 +44,7 @@ type BrowserSettings = {
   searchEngineId: "google" | "bing" | "custom";
   searchEngineName: string;
   customSearchUrl: string;
-  toolbarPosition: "top" | "bottom";
+  toolbarPosition: "top" | "bottom" | "dynamic_bottom";
   backgroundVideoEnhancementEnabled: boolean;
   openNewTabsInCurrentTab: boolean;
   dohEnabled: boolean;
