@@ -1121,6 +1121,9 @@ class GeckoSessionController(
     fun setVisible(visible: Boolean, focused: Boolean = visible) {
         session.setActive(visible)
         session.setFocused(focused)
+        session.setPriorityHint(
+            if (visible) GeckoSession.PRIORITY_HIGH else GeckoSession.PRIORITY_DEFAULT
+        )
         if (focused) {
             focusForUserInteraction()
         }
@@ -1129,6 +1132,7 @@ class GeckoSessionController(
     fun focusForUserInteraction() {
         session.setActive(true)
         session.setFocused(true)
+        session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
         view?.apply {
             isFocusable = true
             isFocusableInTouchMode = true
