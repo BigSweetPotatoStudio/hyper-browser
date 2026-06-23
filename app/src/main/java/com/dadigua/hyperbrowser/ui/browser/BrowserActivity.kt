@@ -1023,7 +1023,6 @@ private fun BrowserScreen(
     val controller = tab.ensureController()
     val pageState by controller.state.collectAsState()
     val pageFullScreen by controller.fullScreen.collectAsState()
-    val onHomePage = GeckoSessionController.isHomeUrl(pageState.url)
     val onSearchPage = GeckoSessionController.isSearchUrl(pageState.url)
     val history by profileStore.observeHistory().collectAsState()
     val bookmarks by profileStore.observeBookmarks().collectAsState()
@@ -1061,7 +1060,6 @@ private fun BrowserScreen(
     val toolbarCollapseRangePx = with(density) { ToolbarAutoHideDragRange.toPx() }
     val canAutoCollapseToolbar = !pageFullScreen &&
         activePanel == BrowserPanel.None &&
-        !onHomePage &&
         !onSearchPage
     val animatedToolbarCollapseFraction by animateFloatAsState(
         targetValue = toolbarCollapseFraction,
