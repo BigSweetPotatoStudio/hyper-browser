@@ -60,3 +60,39 @@ jobs:
 
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug --console=plain
+
+  companion-extension:
+    name: Build companion extension packages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: companion-extension/pnpm-lock.yaml
+
+      - name: Install companion extension dependencies
+        run: pnpm --dir companion-extension install --frozen-lockfile
+
+      - name: Check companion extension TypeScript
+        run: pnpm --dir companion-extension typecheck
+
+      - name: Package companion extension
+        run: pnpm --dir companion-extension zip
+
+      - name: Upload companion extension packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: HyperBrowser-companion-extension
+          path: companion-extension/.output/*.zip
+          if-no-files-found: error
