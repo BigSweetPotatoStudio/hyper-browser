@@ -33,8 +33,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -47,6 +50,7 @@ import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.extensions.ExtensionMenuActionState
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
+import kotlin.math.roundToInt
 
 private val ToolbarActionBarHeight = 48.dp
 private val ToolbarActionButtonSize = 40.dp
@@ -74,6 +78,7 @@ internal fun BrowserToolbar(
     installedExtensions: List<InstalledExtensionState>,
     extensionActions: Map<String, ExtensionMenuActionState>,
     toolbarPosition: String,
+    collapseFraction: Float = 0f,
     downloads: List<BrowserDownloadEntry>,
     addressSecurityLevel: AddressSecurityLevel,
     onOpenSearchPage: () -> Unit,
@@ -96,6 +101,7 @@ internal fun BrowserToolbar(
     var extensionsExpanded by remember { mutableStateOf(false) }
     val placeholder = stringResource(R.string.browser_placeholder_search_or_url)
     val currentAddress = browserAddressText(pageState.url, input, placeholder)
+    val normalizedCollapseFraction = collapseFraction.coerceIn(0f, 1f)
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val imeVisible = imeBottomPx > 0
@@ -192,6 +198,7 @@ internal fun BrowserToolbar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .collapsibleToolbarLayout(normalizedCollapseFraction, toolbarPosition)
             .then(toolbarPadding)
             .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -199,6 +206,34 @@ internal fun BrowserToolbar(
     ) {
         toolbarRow()
     }
+}
+
+private fun Modifier.collapsibleToolbarLayout(
+    collapseFraction: Float,
+    toolbarPosition: String
+): Modifier {
+    val fraction = collapseFraction.coerceIn(0f, 1f)
+    if (fraction <= 0f) return this
+    val isBottomToolbar = toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM
+    return this
+        .layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints)
+            val visibleHeight = (placeable.height * (1f - fraction))
+                .roundToInt()
+                .coerceIn(0, placeable.height)
+            layout(placeable.width, visibleHeight) {
+                val y = if (isBottomToolbar) {
+                    0
+                } else {
+                    visibleHeight - placeable.height
+                }
+                placeable.placeRelative(0, y)
+            }
+        }
+        .clipToBounds()
+        .graphicsLayer {
+            alpha = 1f - fraction
+        }
 }
 
 @Composable

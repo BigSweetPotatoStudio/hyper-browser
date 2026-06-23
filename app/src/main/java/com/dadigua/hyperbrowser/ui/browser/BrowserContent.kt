@@ -34,7 +34,8 @@ internal fun BrowserContent(
     onClosePopup: () -> Unit,
     modifier: Modifier = Modifier,
     imeAvoidanceEnabled: Boolean = true,
-    onContentTouchStarted: () -> Unit = {}
+    onContentTouchStarted: () -> Unit = {},
+    onContentScrollDelta: (Float) -> Unit = {}
 ) {
     val contentPageState by controller.state.collectAsState()
     Box(modifier = modifier.fillMaxSize()) {
@@ -43,7 +44,8 @@ internal fun BrowserContent(
                 controller = controller,
                 modifier = Modifier.fillMaxSize(),
                 imeAvoidanceEnabled = imeAvoidanceEnabled,
-                onContentTouchStarted = onContentTouchStarted
+                onContentTouchStarted = onContentTouchStarted,
+                onContentScrollDelta = onContentScrollDelta
             )
         }
         TopPageLoadingProgressBar(

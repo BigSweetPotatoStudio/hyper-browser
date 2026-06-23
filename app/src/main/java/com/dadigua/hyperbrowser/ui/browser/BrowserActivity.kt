@@ -15,9 +15,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -26,6 +28,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,8 +40,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -187,6 +192,7 @@ private enum class BrowserPanel {
 }
 
 private const val TAB_THUMBNAIL_PAGE_STOP_REFRESH_DELAY_MS = 700L
+private val ToolbarAutoHideDragRange = 72.dp
 
 @Composable
 private fun BrowserScreen(
@@ -205,6 +211,7 @@ private fun BrowserScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val clipboard = LocalClipboard.current
     val focusManager = LocalFocusManager.current
+    val density = LocalDensity.current
     val imageCopiedText = stringResource(R.string.browser_toast_image_url_copied)
     val linkCopiedText = stringResource(R.string.browser_toast_link_copied)
     val faviconStore = remember { FaviconRepository(app) }
@@ -1050,9 +1057,32 @@ private fun BrowserScreen(
         }
     }
     var optimisticBookmarkState by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    var toolbarCollapseFraction by remember { mutableFloatStateOf(0f) }
+    val toolbarCollapseRangePx = with(density) { ToolbarAutoHideDragRange.toPx() }
+    val canAutoCollapseToolbar = !pageFullScreen &&
+        activePanel == BrowserPanel.None &&
+        !onHomePage &&
+        !onSearchPage
+    val animatedToolbarCollapseFraction by animateFloatAsState(
+        targetValue = toolbarCollapseFraction,
+        label = "toolbar-collapse"
+    )
+
+    fun updateToolbarCollapse(deltaY: Float) {
+        if (!canAutoCollapseToolbar) {
+            toolbarCollapseFraction = 0f
+            return
+        }
+        toolbarCollapseFraction = (toolbarCollapseFraction + deltaY / toolbarCollapseRangePx)
+            .coerceIn(0f, 1f)
+    }
 
     fun handlePageContentTouchStarted() {
         focusManager.clearFocus(force = true)
+    }
+
+    fun handlePageContentScrollDelta(deltaY: Float) {
+        updateToolbarCollapse(deltaY)
     }
 
     fun openWebAppInCurrentTab(webAppId: String, closeCurrentPanel: Boolean = false) {
@@ -1416,6 +1446,10 @@ private fun BrowserScreen(
                 message = null
             }
         }
+    }
+
+    LaunchedEffect(selectedTabId, activePanel, pageFullScreen, settings.toolbarPosition, canAutoCollapseToolbar) {
+        toolbarCollapseFraction = 0f
     }
 
     LaunchedEffect(showDownloads, downloads) {
@@ -1847,6 +1881,7 @@ private fun BrowserScreen(
                         installedExtensions = installedExtensions,
                         extensionActions = extensionActions,
                         toolbarPosition = settings.toolbarPosition,
+                        collapseFraction = animatedToolbarCollapseFraction,
                         downloads = downloads,
                         addressSecurityLevel = addressSecurityLevel(pageState.securityLevel, settings),
                         onOpenSearchPage = {
@@ -1927,14 +1962,42 @@ private fun BrowserScreen(
                         }
                     )
                 }
-                if (settings.toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) {
+                if (canAutoCollapseToolbar) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    ) {
+                        BrowserContent(
+                            controller = controller,
+                            tabId = tab.id,
+                            extensionPopup = extensionPopup,
+                            onClosePopup = app.extensions::closePopup,
+                            modifier = Modifier.fillMaxSize(),
+                            onContentTouchStarted = ::handlePageContentTouchStarted,
+                            onContentScrollDelta = ::handlePageContentScrollDelta
+                        )
+                        Box(
+                            modifier = Modifier.align(
+                                if (settings.toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) {
+                                    Alignment.BottomCenter
+                                } else {
+                                    Alignment.TopCenter
+                                }
+                            )
+                        ) {
+                            toolbar()
+                        }
+                    }
+                } else if (settings.toolbarPosition == BrowserSettings.TOOLBAR_POSITION_BOTTOM) {
                     BrowserContent(
                         controller = controller,
                         tabId = tab.id,
                         extensionPopup = extensionPopup,
                         onClosePopup = app.extensions::closePopup,
                         modifier = Modifier.weight(1f),
-                        onContentTouchStarted = ::handlePageContentTouchStarted
+                        onContentTouchStarted = ::handlePageContentTouchStarted,
+                        onContentScrollDelta = ::handlePageContentScrollDelta
                     )
                     toolbar()
                 } else {
@@ -1945,7 +2008,8 @@ private fun BrowserScreen(
                         extensionPopup = extensionPopup,
                         onClosePopup = app.extensions::closePopup,
                         modifier = Modifier.weight(1f),
-                        onContentTouchStarted = ::handlePageContentTouchStarted
+                        onContentTouchStarted = ::handlePageContentTouchStarted,
+                        onContentScrollDelta = ::handlePageContentScrollDelta
                     )
                 }
             } else {
@@ -1954,7 +2018,8 @@ private fun BrowserScreen(
                     tabId = tab.id,
                     extensionPopup = extensionPopup,
                     onClosePopup = app.extensions::closePopup,
-                    onContentTouchStarted = ::handlePageContentTouchStarted
+                    onContentTouchStarted = ::handlePageContentTouchStarted,
+                    onContentScrollDelta = ::handlePageContentScrollDelta
                 )
             }
         }

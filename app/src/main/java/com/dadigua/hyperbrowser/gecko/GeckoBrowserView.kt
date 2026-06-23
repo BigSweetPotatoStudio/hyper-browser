@@ -43,7 +43,8 @@ fun GeckoBrowserView(
     controller: GeckoSessionController,
     modifier: Modifier = Modifier,
     imeAvoidanceEnabled: Boolean = true,
-    onContentTouchStarted: () -> Unit = {}
+    onContentTouchStarted: () -> Unit = {},
+    onContentScrollDelta: (Float) -> Unit = {}
 ) {
     val pageState by controller.state.collectAsState()
     val sessionChangeVersion by controller.sessionChangeVersion.collectAsState()
@@ -106,6 +107,7 @@ fun GeckoBrowserView(
                         onContentTouchStarted()
                         controller.focusForUserInteraction()
                     },
+                    onContentScrollDelta = onContentScrollDelta,
                     contentCanStartPullRefresh = controller::canStartPullRefreshFromContent,
                     onPull = { pullDistancePx = it },
                     onRefresh = {
@@ -136,11 +138,13 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
     private var maxPullDistancePx = 0f
     private var startX = 0f
     private var startY = 0f
+    private var lastContentDragY = 0f
     private var startedInUpperHalf = false
     private var pullDistancePx = 0f
     private var pulling = false
     private var onGestureStarted: () -> Unit = {}
     private var onContentTouchStarted: () -> Unit = {}
+    private var onContentScrollDelta: (Float) -> Unit = {}
     private var contentCanStartPullRefresh: () -> Boolean = { true }
     private var onPull: (Float) -> Unit = {}
     private var onRefresh: () -> Unit = {}
@@ -165,6 +169,7 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
         maxPullDistancePx: Float,
         onGestureStarted: () -> Unit,
         onContentTouchStarted: () -> Unit,
+        onContentScrollDelta: (Float) -> Unit,
         contentCanStartPullRefresh: () -> Boolean,
         onPull: (Float) -> Unit,
         onRefresh: () -> Unit
@@ -174,6 +179,7 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
         this.maxPullDistancePx = maxPullDistancePx
         this.onGestureStarted = onGestureStarted
         this.onContentTouchStarted = onContentTouchStarted
+        this.onContentScrollDelta = onContentScrollDelta
         this.contentCanStartPullRefresh = contentCanStartPullRefresh
         this.onPull = onPull
         this.onRefresh = onRefresh
@@ -193,6 +199,9 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
             geckoView.isFocusableInTouchMode = true
             geckoView.requestFocusFromTouch()
             onContentTouchStarted()
+            lastContentDragY = event.rawY
+        } else if (event.actionMasked == MotionEvent.ACTION_MOVE) {
+            reportContentScrollDelta(event)
         }
         if (!enabled) {
             return super.dispatchTouchEvent(event)
@@ -202,6 +211,7 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
             MotionEvent.ACTION_DOWN -> {
                 startX = event.rawX
                 startY = event.rawY
+                lastContentDragY = event.rawY
                 startedInUpperHalf = event.y <= height / 3f
                 resetPull()
                 if (startedInUpperHalf) {
@@ -213,7 +223,7 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
             MotionEvent.ACTION_MOVE -> {
                 val dy = event.rawY - startY
                 val dx = abs(event.rawX - startX)
-                val canStartPull = !geckoView.canScrollVertically(-1) && contentCanStartPullRefresh()
+                val canStartPull = contentCanStartPullRefresh()
                 val shouldStartPull = startedInUpperHalf &&
                     canStartPull &&
                     dy > touchSlop &&
@@ -246,6 +256,13 @@ private class PullRefreshGeckoContainer(context: Context) : FrameLayout(context)
         }
 
         return super.dispatchTouchEvent(event)
+    }
+
+    private fun reportContentScrollDelta(event: MotionEvent) {
+        val dy = event.rawY - lastContentDragY
+        lastContentDragY = event.rawY
+        if (abs(dy) < 0.5f) return
+        onContentScrollDelta(-dy)
     }
 
     private fun resetPull() {
