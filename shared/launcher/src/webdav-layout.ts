@@ -2,6 +2,7 @@ import type { LauncherLayout, LauncherLayoutStorage } from "./index";
 
 const LAUNCHER_FILE = "launcher.json";
 const MAX_SYNC_ATTEMPTS = 3;
+const MAX_DOCK_ITEMS = 4;
 
 export type LauncherLayoutSyncSettings = {
   webDavUrl: string;
@@ -170,7 +171,7 @@ function layoutSignature(layout: LauncherLayout): string {
         index: cell.index,
       }))
       .sort((left, right) => left.id.localeCompare(right.id)),
-    dock: layout.dock,
+    dock: layout.dock.slice(0, MAX_DOCK_ITEMS),
     folders: [...layout.folders]
       .map((folder) => ({
         id: folder.id,
@@ -228,7 +229,8 @@ function sanitizeLayout(layout: LauncherLayout | null, deprecatedEntryIds: Set<s
     if (!keep) changed = true;
     if (!keepFolder) changed = true;
     return keep && keepFolder;
-  });
+  }).slice(0, MAX_DOCK_ITEMS);
+  if (dock.length !== layout.dock.length) changed = true;
   return {
     layout: changed ? { ...layout, cells, dock, folders } : layout,
     changed,

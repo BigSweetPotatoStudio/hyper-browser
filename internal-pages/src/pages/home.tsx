@@ -181,6 +181,7 @@ function HomePage() {
     unpackFolder: t("home.unpackFolder"),
     moveToDesktop: t("home.moveToDesktop"),
     moveToDock: t("home.moveToDock"),
+    dockFull: t("home.dockFull"),
     pinApp: t("apps.pin"),
     editApp: t("apps.editTitle"),
     editIcon: t("apps.editIcon"),

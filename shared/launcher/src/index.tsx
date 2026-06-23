@@ -33,6 +33,7 @@ const DESKTOP_CELL_WIDTH = 116;
 const DESKTOP_CELL_HEIGHT = 125;
 const MOBILE_GRID_COLUMNS = 4;
 const MOBILE_CELL_HEIGHT = 112;
+const MAX_DOCK_ITEMS = 4;
 
 export type LauncherApp = {
   id: string;
@@ -160,6 +161,7 @@ export type LauncherLabels = {
   unpackFolder: string;
   moveToDesktop: string;
   moveToDock: string;
+  dockFull: string;
   pinApp: string;
   editApp: string;
   editIcon: string;
@@ -202,6 +204,7 @@ const defaultLabels: LauncherLabels = {
   unpackFolder: "Move items out",
   moveToDesktop: "Move to desktop",
   moveToDock: "Move to Dock",
+  dockFull: "Dock can hold up to 4 items.",
   pinApp: "Send to home screen",
   editApp: "Edit WebApp",
   editIcon: "Edit icon",
@@ -453,7 +456,12 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
 
   function commitLayout(updater: (current: LauncherLayout) => LauncherLayout) {
     setLayout((current) => {
-      const next = { ...pruneEmptyFolders(removeDeprecatedEntryIds(updater(current), deprecatedEntryIds)), version: LAYOUT_VERSION, gridColumns: gridMetrics.columns, updatedAt: Date.now() };
+      const next = {
+        ...limitDockItems(pruneEmptyFolders(removeDeprecatedEntryIds(updater(current), deprecatedEntryIds))),
+        version: LAYOUT_VERSION,
+        gridColumns: gridMetrics.columns,
+        updatedAt: Date.now(),
+      };
       onLayoutChanged?.(next);
       return next;
     });
@@ -462,7 +470,7 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
   useEffect(() => {
     if (loading) return;
     setLayout((current) => {
-      const pruned = pruneEmptyFolders(removeDeprecatedEntryIds(current, deprecatedEntryIds));
+      const pruned = limitDockItems(pruneEmptyFolders(removeDeprecatedEntryIds(current, deprecatedEntryIds)));
       const preservedCellIds = pruned.cells
         .map((cell) => cell.id)
         .filter((id) => !pruned.dock.includes(id) && !pruned.folders.some((folder) => folder.childIds.includes(id)));
@@ -499,6 +507,16 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
 
   function showToast(message: string) {
     setToast(message);
+  }
+
+  function canPlaceInDock(itemId: string): boolean {
+    return dockIds.includes(itemId) || dockIds.length < MAX_DOCK_ITEMS;
+  }
+
+  function rejectDockIfFull(itemId: string): boolean {
+    if (canPlaceInDock(itemId)) return false;
+    showToast(labels.dockFull);
+    return true;
   }
 
   function startLongPress(event: React.PointerEvent<HTMLElement>, itemId: string, sourceContainer: LauncherContainer, folderId?: string) {
@@ -653,6 +671,7 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
     if (targetEntry.kind === "folder") {
       if (placement === "inside") return itemIsFolder ? null : { kind: "folder", targetId, placement: "inside", slotDropId };
       if (targetContainer === "dock") {
+        if (!canPlaceInDock(itemId)) return null;
         return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "after") };
       }
       if (!targetFolderId) {
@@ -662,6 +681,9 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
     }
     if (sourceFolderId && targetFolderId === sourceFolderId) {
       return { kind: "insert", targetId, placement: normalizeInsertPlacement(placement, "before") };
+    }
+    if (targetContainer === "dock" && placement !== "inside" && !canPlaceInDock(itemId)) {
+      return null;
     }
     if (!targetFolderId && !itemIsFolder && placement === "inside") {
       return { kind: "folder", targetId, placement, slotDropId };
@@ -853,6 +875,7 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
   }
 
   function moveToDockNear(itemId: string, targetId: string, placement: DropPlacement) {
+    if (rejectDockIfFull(itemId)) return;
     commitLayout((current) => ({
       ...current,
       cells: removeFromCells(current.cells, itemId),
@@ -863,6 +886,7 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
   }
 
   function moveToDockEnd(itemId: string) {
+    if (rejectDockIfFull(itemId)) return;
     commitLayout((current) => ({
       ...current,
       cells: removeFromCells(current.cells, itemId),
@@ -897,6 +921,10 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
   }
 
   function moveToDock(itemId: string) {
+    if (rejectDockIfFull(itemId)) {
+      closeMenu();
+      return;
+    }
     commitLayout((current) => ({
       ...current,
       cells: removeFromCells(current.cells, itemId),
@@ -1188,6 +1216,7 @@ export function LauncherPage({ platform, storage, labels: labelOverrides, classN
           onEditApp={editApp}
           onEditIcon={editIcon}
           onDeleteApp={deleteApp}
+          canMoveToDock={menu.sourceContainer === "dock" || canPlaceInDock(menu.itemId)}
           canPinApp={!!platform.pinApp}
           canEditApp={!!platform.saveApp || !!platform.editApp}
           canEditIcon={!platform.saveApp && !!platform.updateAppIcon}
@@ -1738,6 +1767,7 @@ function DesktopMenu(props: {
   onEditApp: (itemId: string) => void;
   onEditIcon: (itemId: string) => void;
   onDeleteApp: (itemId: string) => void;
+  canMoveToDock: boolean;
   canPinApp: boolean;
   canEditApp: boolean;
   canEditIcon: boolean;
@@ -1760,7 +1790,7 @@ function DesktopMenu(props: {
             {props.sourceContainer === "dock" ? (
               <button type="button" role="menuitem" onClick={() => props.onMoveToDesktop(props.item!.id)}>{props.labels.moveToDesktop}</button>
             ) : (
-              <button type="button" role="menuitem" onClick={() => props.onMoveToDock(props.item!.id)}>{props.labels.moveToDock}</button>
+              <button type="button" role="menuitem" disabled={!props.canMoveToDock} onClick={() => props.onMoveToDock(props.item!.id)}>{props.labels.moveToDock}</button>
             )}
           </>
         ) : (
@@ -1770,7 +1800,7 @@ function DesktopMenu(props: {
               <button type="button" role="menuitem" onClick={() => props.onMoveToDesktop(props.item!.id)}>{props.labels.moveToDesktop}</button>
             ) : null}
             {props.sourceContainer !== "dock" && (
-              <button type="button" role="menuitem" onClick={() => props.onMoveToDock(props.item!.id)}>{props.labels.moveToDock}</button>
+              <button type="button" role="menuitem" disabled={!props.canMoveToDock} onClick={() => props.onMoveToDock(props.item!.id)}>{props.labels.moveToDock}</button>
             )}
             {props.item.kind === "app" && props.canPinApp && (
               <button type="button" role="menuitem" onClick={() => props.onPinApp(props.item!.id)}>{props.labels.pinApp}</button>
@@ -1799,7 +1829,8 @@ function normalizeStoredLayout(
   deprecatedEntryIds: Set<string>,
 ): LauncherLayout {
   const dock = (Array.isArray(value?.dock) ? uniqueStrings(value.dock) : [...defaultDockEntryIds])
-    .filter((id) => !deprecatedEntryIds.has(id));
+    .filter((id) => !deprecatedEntryIds.has(id))
+    .slice(0, MAX_DOCK_ITEMS);
   const dockSet = new Set(dock);
   const legacyOrder = Array.isArray(value?.order)
     ? uniqueStrings(value.order).filter((id) => !dockSet.has(id) && !deprecatedEntryIds.has(id))
@@ -2295,6 +2326,11 @@ function removeDeprecatedEntryIds(layout: LauncherLayout, deprecatedEntryIds: Se
     return { ...folder, childIds };
   });
   return changed ? { ...layout, cells, dock, folders } : layout;
+}
+
+function limitDockItems(layout: LauncherLayout): LauncherLayout {
+  const dock = uniqueStrings(layout.dock).slice(0, MAX_DOCK_ITEMS);
+  return sameStringList(dock, layout.dock) ? layout : { ...layout, dock };
 }
 
 function pruneEmptyFolders(layout: LauncherLayout, availableEntryIds?: Set<string>): LauncherLayout {
