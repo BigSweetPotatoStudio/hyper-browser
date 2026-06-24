@@ -6,7 +6,7 @@ import "../styles.css";
 import { readBootstrapData } from "../bootstrap";
 import { t } from "../i18n";
 import type { WebAppItem } from "../hyper-browser";
-import { runAndroidWebDavSyncIfEnabled } from "../webdav-sync";
+import { sendBackgroundCommand } from "../background-command";
 
 function AppsPage() {
   const [apps, setApps] = useState<WebAppItem[] | null>(() => readBootstrapData<WebAppItem>());
@@ -92,7 +92,7 @@ function AppsPage() {
         setApps(items);
         setFailed(false);
         setEditingApp(null);
-        runAndroidWebDavSyncIfEnabled().catch((error) => console.warn("Unable to sync WebApp edit.", error));
+        sendBackgroundCommand("sync.soon").catch((error) => console.warn("Unable to schedule WebApp sync.", error));
       })
       .catch(() => loadApps(false));
   }
@@ -161,8 +161,8 @@ function AppsPage() {
           onClose={() => setDeletingApp(null)}
           onConfirm={() => {
             window.hyperBrowser.deleteApp(deletingApp.id)
-              .then(() => runAndroidWebDavSyncIfEnabled())
-              .catch((error) => console.warn("Unable to sync WebApp deletion.", error));
+              .then(() => sendBackgroundCommand("sync.soon"))
+              .catch((error) => console.warn("Unable to schedule WebApp deletion sync.", error));
             setApps((current) => (current || []).filter((app) => app.id !== deletingApp.id));
             setDeletingApp(null);
           }}

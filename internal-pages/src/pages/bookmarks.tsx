@@ -5,7 +5,7 @@ import "../styles.css";
 import { readBootstrapData } from "../bootstrap";
 import { t } from "../i18n";
 import type { BookmarkItem } from "../hyper-browser";
-import { runAndroidWebDavSyncIfEnabled } from "../webdav-sync";
+import { sendBackgroundCommand } from "../background-command";
 
 function BookmarksPage() {
   const [bookmarks, setBookmarks] = useState<BookmarkItem[] | null>(() => readBootstrapData<BookmarkItem>());
@@ -35,8 +35,8 @@ function BookmarksPage() {
     setEditingUrl((current) => current === url ? null : current);
     setPendingRemove(null);
     window.hyperBrowser.removeBookmark(url)
-      .then(() => runAndroidWebDavSyncIfEnabled())
-      .catch((error) => console.warn("Unable to sync bookmark removal.", error));
+      .then(() => sendBackgroundCommand("sync.soon"))
+      .catch((error) => console.warn("Unable to schedule bookmark removal sync.", error));
   }
 
   function save(oldUrl: string, title: string, url: string) {
@@ -48,8 +48,8 @@ function BookmarksPage() {
     )));
     setEditingUrl(null);
     window.hyperBrowser.editBookmark(oldUrl, cleanTitle, cleanUrl)
-      .then(() => runAndroidWebDavSyncIfEnabled())
-      .catch((error) => console.warn("Unable to sync bookmark edit.", error));
+      .then(() => sendBackgroundCommand("sync.soon"))
+      .catch((error) => console.warn("Unable to schedule bookmark edit sync.", error));
   }
 
   const items = bookmarks || [];

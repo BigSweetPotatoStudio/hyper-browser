@@ -24,6 +24,7 @@ export default defineConfig({
     assetsDir: "internal",
     rollupOptions: {
       input: {
+        background: resolve(__dirname, "background.html"),
         home: resolve(__dirname, "home.html"),
         apps: resolve(__dirname, "apps.html"),
         search: resolve(__dirname, "search.html"),

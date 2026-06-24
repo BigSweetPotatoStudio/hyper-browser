@@ -11,15 +11,26 @@ import {
   type SyncV2State,
   type SyncV2Store,
 } from "@hyper-sync/op-log";
-import type { BrowserSettings, WebDavLocalSyncData, WebDavSyncResult } from "./hyper-browser";
+import type { BookmarkRecord, WebAppRecord } from "@hyper-sync";
+import type { BrowserSettings, WebDavLocalSyncData, WebDavSyncResult, WebDavSyncSettings } from "./hyper-browser";
 import { waitForLauncherLayoutSaves } from "./launcher-layout-storage";
 
 const ANDROID_SYNC_V2_STORAGE_KEY = "hyper-browser-sync-v2-store";
+const NATIVE_APP = "hyperBrowser";
+
+type BridgePayload = Record<string, string>;
+
+type BridgeResponse = {
+  ok?: boolean;
+  error?: string;
+  data?: unknown;
+  itemsJson?: string;
+};
 
 let localLock: Promise<void> = Promise.resolve();
 
 export async function runAndroidWebDavSync(baseSettings?: BrowserSettings): Promise<WebDavSyncResult> {
-  const initialSettings = baseSettings || await window.hyperBrowser.requestSettingsData();
+  const initialSettings = baseSettings || await requestSettingsData();
   if (!initialSettings.webDavSyncUrl.trim()) throw new Error("WebDAV URL is required.");
   const settings = await ensureAndroidDeviceId(initialSettings);
   const before = (await readStoredStore(settings.webDavSyncDeviceId)).state;
@@ -35,38 +46,15 @@ export async function runAndroidWebDavSync(baseSettings?: BrowserSettings): Prom
 }
 
 export async function runAndroidWebDavSyncIfEnabled(): Promise<WebDavSyncResult | null> {
-  const settings = await window.hyperBrowser.requestSettingsData();
+  const settings = await requestSettingsData();
   if (!settings.webDavSyncEnabled || !settings.webDavSyncUrl.trim()) return null;
   return runAndroidWebDavSync(settings);
 }
 
-export async function checkAndroidWebDavRemoteChanges(): Promise<{
-  changed: boolean;
-  stateChanged: boolean;
-  launcherChanged: boolean;
-  synced: boolean;
-  updatedAt: number;
-  syncResult?: WebDavSyncResult;
-}> {
-  const settings = await window.hyperBrowser.requestSettingsData();
-  if (!settings.webDavSyncEnabled || !settings.webDavSyncUrl.trim()) {
-    return { changed: false, stateChanged: false, launcherChanged: false, synced: false, updatedAt: 0 };
-  }
-  const syncResult = await runAndroidWebDavSync(settings);
-  return {
-    changed: syncResult.launcherChanged,
-    stateChanged: syncResult.stateChanged,
-    launcherChanged: syncResult.launcherChanged,
-    synced: true,
-    updatedAt: Date.now(),
-    syncResult,
-  };
-}
-
 async function loadLocalSnapshot(): Promise<SyncV2LocalSnapshot> {
-  const localData = await window.hyperBrowser.requestWebDavLocalData();
+  const localData = await requestWebDavLocalData();
   await waitForLauncherLayoutSaves();
-  const layout = await window.hyperBrowser.requestLauncherLayout();
+  const layout = await requestLauncherLayout();
   return {
     bookmarks: activeLocalBookmarks(localData),
     webApps: activeLocalWebApps(localData),
@@ -76,14 +64,14 @@ async function loadLocalSnapshot(): Promise<SyncV2LocalSnapshot> {
 
 async function applyAndroidState(state: SyncV2State): Promise<void> {
   const clean = state;
-  await window.hyperBrowser.applyWebDavSyncRecords({
+  await applyWebDavSyncRecords({
     bookmarks: activeBookmarksFromState(clean),
     webApps: activeWebAppsFromState(clean),
   });
   const nextLayout = layoutFromState(clean);
-  const currentLayout = await window.hyperBrowser.requestLauncherLayout().catch(() => null);
+  const currentLayout = await requestLauncherLayout().catch(() => null);
   if (canonicalLauncherLayout(currentLayout) !== canonicalLauncherLayout(nextLayout)) {
-    await window.hyperBrowser.saveLauncherLayout(nextLayout);
+    await saveLauncherLayout(nextLayout);
   }
 }
 
@@ -109,7 +97,7 @@ async function withLocalLock<T>(operation: () => Promise<T>): Promise<T> {
 
 async function ensureAndroidDeviceId(settings: BrowserSettings): Promise<BrowserSettings> {
   if (settings.webDavSyncDeviceId) return settings;
-  return window.hyperBrowser.updateWebDavSyncSettings({
+  return updateWebDavSyncSettings({
     webDavSyncEnabled: settings.webDavSyncEnabled,
     webDavSyncUrl: settings.webDavSyncUrl,
     webDavSyncUsername: settings.webDavSyncUsername,
@@ -118,14 +106,14 @@ async function ensureAndroidDeviceId(settings: BrowserSettings): Promise<Browser
   });
 }
 
-function readStoredStore(deviceId: string): SyncV2Store {
-  const raw = window.localStorage.getItem(ANDROID_SYNC_V2_STORAGE_KEY);
-  if (!raw) return createEmptyStore(deviceId);
+async function readStoredStore(deviceId: string): Promise<SyncV2Store> {
+  const raw = await readStoredValue();
+  if (raw === null || raw === undefined || raw === "") return createEmptyStore(deviceId);
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
     const store = ensureStore(parsed, deviceId);
     if (canonicalJson(parsed) !== canonicalJson(store)) {
-      window.localStorage.setItem(ANDROID_SYNC_V2_STORAGE_KEY, canonicalJson(store));
+      await writeStoredStore(store, deviceId);
     }
     return store;
   } catch {
@@ -134,7 +122,53 @@ function readStoredStore(deviceId: string): SyncV2Store {
 }
 
 async function writeStoredStore(store: SyncV2Store, deviceId: string): Promise<void> {
-  window.localStorage.setItem(ANDROID_SYNC_V2_STORAGE_KEY, canonicalJson(ensureStore(store, deviceId)));
+  await writeStoredValue(canonicalJson(ensureStore(store, deviceId)));
+}
+
+async function readStoredValue(): Promise<unknown> {
+  const storage = browser?.storage?.local;
+  if (storage?.get) {
+    const result = await storage.get(ANDROID_SYNC_V2_STORAGE_KEY);
+    if (Object.prototype.hasOwnProperty.call(result, ANDROID_SYNC_V2_STORAGE_KEY)) {
+      return result[ANDROID_SYNC_V2_STORAGE_KEY];
+    }
+    const legacy = readLegacyLocalStorage();
+    if (legacy !== null) {
+      await storage.set({ [ANDROID_SYNC_V2_STORAGE_KEY]: legacy });
+      return legacy;
+    }
+    return null;
+  }
+  return readLegacyLocalStorage();
+}
+
+async function writeStoredValue(value: string): Promise<void> {
+  const storage = browser?.storage?.local;
+  if (storage?.set) {
+    await storage.set({ [ANDROID_SYNC_V2_STORAGE_KEY]: value });
+    return;
+  }
+  writeLegacyLocalStorage(value);
+}
+
+function readLegacyLocalStorage(): string | null {
+  try {
+    return typeof window !== "undefined" && window.localStorage
+      ? window.localStorage.getItem(ANDROID_SYNC_V2_STORAGE_KEY)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLegacyLocalStorage(value: string): void {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.setItem(ANDROID_SYNC_V2_STORAGE_KEY, value);
+    }
+  } catch {
+    // Ignore storage fallback failures; the next sync can rebuild from local data.
+  }
 }
 
 function webDavSettings(settings: BrowserSettings) {
@@ -182,4 +216,79 @@ function syncResultFromState(
     pendingOperationCount: sync.pendingOperationCount,
     settings,
   };
+}
+
+async function requestSettingsData(): Promise<BrowserSettings> {
+  return requestObject<BrowserSettings>("data.settings");
+}
+
+async function requestLauncherLayout(): Promise<object | null> {
+  const result = await requestObject<{ layout?: object | null }>("data.launcherLayout");
+  return result.layout && typeof result.layout === "object" ? result.layout : null;
+}
+
+async function saveLauncherLayout(layout: object): Promise<void> {
+  await sendNativeBridge("launcher.layout.save", { layout: JSON.stringify(layout) });
+}
+
+async function updateWebDavSyncSettings(settings: WebDavSyncSettings): Promise<BrowserSettings> {
+  return requestObject<BrowserSettings>("sync.webdav.update", {
+    enabled: settings.webDavSyncEnabled ? "true" : "false",
+    url: settings.webDavSyncUrl,
+    username: settings.webDavSyncUsername,
+    password: settings.webDavSyncPassword,
+    deviceName: settings.webDavSyncDeviceName,
+  });
+}
+
+async function requestWebDavLocalData(): Promise<WebDavLocalSyncData> {
+  return requestObject<WebDavLocalSyncData>("sync.webdav.localData");
+}
+
+async function applyWebDavSyncRecords(records: { bookmarks: BookmarkRecord[] | object; webApps: WebAppRecord[] | object }): Promise<WebDavSyncResult> {
+  return requestObject<WebDavSyncResult>("sync.webdav.applyRecords", {
+    bookmarks: JSON.stringify(records.bookmarks),
+    webApps: JSON.stringify(records.webApps),
+  });
+}
+
+async function requestObject<T>(type: string, payload?: BridgePayload): Promise<T> {
+  const response = await sendNativeBridge(type, payload);
+  return response.data as T;
+}
+
+async function sendNativeBridge(type: string, payload: BridgePayload = {}): Promise<BridgeResponse> {
+  const runtime = browser?.runtime;
+  if (!runtime) throw new Error("Hyper bridge unavailable.");
+
+  const response = isBackgroundContext() && runtime.sendNativeMessage
+    ? await runtime.sendNativeMessage(NATIVE_APP, { type, payload })
+    : await sendViaBackground(type, payload);
+
+  const parsed = parseBridgeResponse(response);
+  if (!parsed || parsed.ok !== true) {
+    throw new Error(parsed?.error || "Hyper bridge request failed.");
+  }
+  return parsed;
+}
+
+async function sendViaBackground(type: string, payload: BridgePayload): Promise<unknown> {
+  const sendMessage = browser?.runtime?.sendMessage;
+  if (sendMessage) return sendMessage({ nativeApp: NATIVE_APP, type, payload });
+  const sendNativeMessage = browser?.runtime?.sendNativeMessage;
+  if (sendNativeMessage) return sendNativeMessage(NATIVE_APP, { type, payload });
+  throw new Error("Hyper bridge unavailable.");
+}
+
+function isBackgroundContext(): boolean {
+  try {
+    return typeof window !== "undefined" && new URL(window.location.href).pathname.endsWith("/background.html");
+  } catch {
+    return false;
+  }
+}
+
+function parseBridgeResponse(response: unknown): BridgeResponse {
+  if (typeof response === "string") return JSON.parse(response) as BridgeResponse;
+  return response as BridgeResponse;
 }

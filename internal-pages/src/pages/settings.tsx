@@ -4,7 +4,7 @@ import "../hyper-browser";
 import "../styles.css";
 import { getLocalePreference, matchesI18nText, setLocalePreference, t, type LocalePreference } from "../i18n";
 import type { BatteryOptimizationState, BrowserSettings, UpdateCheckResult, UpdateDownloadState, WebDavSyncResult, WebDavSyncSettings } from "../hyper-browser";
-import { runAndroidWebDavSync } from "../webdav-sync";
+import { sendBackgroundCommand } from "../background-command";
 
 function SettingsPage() {
   const [query, setQuery] = useState("");
@@ -320,7 +320,7 @@ function SettingsPage() {
     commit
       .then((value) => {
         if (!value) return null;
-        return runAndroidWebDavSync(value);
+        return sendBackgroundCommand<WebDavSyncResult>("sync.run");
       })
       .then(async (result) => {
         if (!result) return;

@@ -193,6 +193,25 @@ declare global {
   const browser: {
     runtime?: {
       sendMessage?: (message: unknown) => Promise<unknown>;
+      sendNativeMessage?: (application: string, message: unknown) => Promise<unknown>;
+      getURL?: (path: string) => string;
+      onMessage?: {
+        addListener: (listener: (message: unknown, sender?: unknown) => unknown) => void;
+        removeListener: (listener: (message: unknown, sender?: unknown) => unknown) => void;
+      };
+    };
+    storage?: {
+      local?: {
+        get: (key?: string | string[] | Record<string, unknown> | null) => Promise<Record<string, unknown>>;
+        set: (items: Record<string, unknown>) => Promise<void>;
+        remove: (keys: string | string[]) => Promise<void>;
+      };
+    };
+    alarms?: {
+      create: (name: string, alarmInfo: { delayInMinutes?: number; periodInMinutes?: number; when?: number }) => void | Promise<void>;
+      onAlarm?: {
+        addListener: (listener: (alarm: { name: string }) => void) => void;
+      };
     };
   } | undefined;
 

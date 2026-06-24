@@ -11,16 +11,14 @@
     "nativeMessaging",
     "nativeMessagingFromContent",
     "geckoViewAddons",
+    "alarms",
+    "storage",
     "webRequest",
     "webRequestBlocking",
     "<all_urls>"
   ],
   "background": {
-    "scripts": [
-      "background.js",
-      "site-compat/x-prelude-worker-fallback.js",
-      "site-compat/index.js"
-    ]
+    "page": "background.html"
   },
   "content_scripts": [
     {

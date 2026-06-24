@@ -6,12 +6,11 @@ import "../hyper-browser";
 import type { BrowserSettings, WebDavSyncResult } from "../hyper-browser";
 import "../styles.css";
 import { t } from "../i18n";
-import { createLauncherLayoutStorage } from "../launcher-layout-storage";
-import { checkAndroidWebDavRemoteChanges, runAndroidWebDavSync } from "../webdav-sync";
+import { createLauncherLayoutStorage, waitForLauncherLayoutSaves } from "../launcher-layout-storage";
+import { isPlainObject, sendBackgroundCommand, type RemoteCheckResult } from "../background-command";
 
 const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"];
 const AUTO_SYNC_DEBOUNCE_MS = 1800;
-const REMOTE_POLL_MS = 30000;
 
 function HomePage() {
   const [settingsConfigured, setSettingsConfigured] = useState(false);
@@ -19,9 +18,6 @@ function HomePage() {
   const [syncMessage, setSyncMessage] = useState("");
   const [layoutRevision, setLayoutRevision] = useState(0);
   const autoSyncTimer = useRef<number | null>(null);
-  const autoSyncRunning = useRef(false);
-  const autoSyncPending = useRef(false);
-  const lastSeenRemoteUpdatedAt = useRef(0);
   const remoteCheckRunning = useRef(false);
 
   useEffect(() => {
@@ -32,41 +28,11 @@ function HomePage() {
 
   const storage = useMemo(() => createLauncherLayoutStorage(), []);
 
-  const runAutoSync = useCallback(async (options: { refreshLauncher?: boolean } = {}) => {
-    if (autoSyncRunning.current) {
-      autoSyncPending.current = true;
-      return;
-    }
-    autoSyncRunning.current = true;
-    try {
-      do {
-        autoSyncPending.current = false;
-        const settings = await window.hyperBrowser.requestSettingsData();
-        if (!settings.webDavSyncEnabled || !isWebDavConfigured(settings)) return;
-        const result = await runAndroidWebDavSync(settings);
-        const importedWebApps = result.importedWebAppCount + result.removedWebAppCount > 0;
-        if (importedWebApps || options.refreshLauncher) {
-          setLayoutRevision((current) => current + 1);
-        }
-        setSyncState("success");
-        setSyncMessage(webDavSyncSummary(result));
-      } while (autoSyncPending.current);
-    } catch (error) {
-      setSyncState("error");
-      setSyncMessage(error instanceof Error ? error.message : t("settings.webDavSyncFailed"));
-    } finally {
-      autoSyncRunning.current = false;
-    }
-  }, [storage]);
-
   const checkRemoteChanges = useCallback(async () => {
     if (remoteCheckRunning.current || document.visibilityState !== "visible") return;
     remoteCheckRunning.current = true;
     try {
-      const settings = await window.hyperBrowser.requestSettingsData();
-      if (!settings.webDavSyncEnabled || !isWebDavConfigured(settings)) return;
-      const remoteCheck = await checkAndroidWebDavRemoteChanges();
-      if (remoteCheck.updatedAt > 0) lastSeenRemoteUpdatedAt.current = remoteCheck.updatedAt;
+      const remoteCheck = await sendBackgroundCommand<RemoteCheckResult>("remote.check");
       const syncResult = remoteCheck.syncResult || null;
       if (syncResult && shouldUpdateSyncStatusAfterRemoteCheck(remoteCheck)) {
         setSyncState("success");
@@ -86,9 +52,11 @@ function HomePage() {
     }
     autoSyncTimer.current = window.setTimeout(() => {
       autoSyncTimer.current = null;
-      runAutoSync();
+      waitForLauncherLayoutSaves()
+        .then(() => sendBackgroundCommand("launcher.syncSoon"))
+        .catch((error) => console.warn("Unable to schedule launcher sync.", error));
     }, AUTO_SYNC_DEBOUNCE_MS);
-  }, [runAutoSync]);
+  }, []);
 
   useEffect(() => () => {
     if (autoSyncTimer.current !== null) {
@@ -99,18 +67,29 @@ function HomePage() {
 
   useEffect(() => {
     checkRemoteChanges();
-    const interval = window.setInterval(() => {
-      checkRemoteChanges();
-    }, REMOTE_POLL_MS);
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") checkRemoteChanges();
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
-      window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [checkRemoteChanges]);
+
+  useEffect(() => {
+    const onMessage = (message: unknown) => {
+      if (!isPlainObject(message)) return;
+      if (message.type !== "remote.synced" && message.type !== "launcher.changed") return;
+      const syncResult = isPlainObject(message.syncResult) ? message.syncResult as WebDavSyncResult : null;
+      if (syncResult) {
+        setSyncState("success");
+        setSyncMessage(webDavSyncSummary(syncResult));
+      }
+      setLayoutRevision((current) => current + 1);
+    };
+    browser?.runtime?.onMessage?.addListener(onMessage);
+    return () => browser?.runtime?.onMessage?.removeListener(onMessage);
+  }, []);
 
   const systemEntries = useMemo<LauncherSystemEntry[]>(() => ([
     { id: "system:bookmarks", kind: "system", title: t("home.bookmarks"), mark: "B", color: "#34a853", action: "bookmarks" },
@@ -135,12 +114,12 @@ function HomePage() {
     },
     deleteApp: async (app) => {
       const items = await window.hyperBrowser.deleteApp(app.id);
-      runAutoSync({ refreshLauncher: true });
+      scheduleAutoSync();
       return items;
     },
     saveApp: async (app, changes) => {
       const items = await window.hyperBrowser.updateApp(app.id, changes.name, changes.startUrl, changes.iconDataUrl);
-      runAutoSync({ refreshLauncher: true });
+      scheduleAutoSync();
       return items;
     },
     chooseAppIcon: (app) => window.hyperBrowser.chooseAppIcon(app.id),
@@ -149,10 +128,10 @@ function HomePage() {
     },
     updateAppIcon: async (app, iconDataUrl) => {
       const items = await window.hyperBrowser.updateAppIcon(app.id, iconDataUrl);
-      runAutoSync({ refreshLauncher: true });
+      scheduleAutoSync();
       return items;
     },
-  }), [runAutoSync, systemEntries]);
+  }), [scheduleAutoSync, systemEntries]);
 
   const labels = useMemo(() => ({
     loading: t("apps.loading"),
@@ -219,16 +198,15 @@ function HomePage() {
           window.hyperBrowser.showSettings();
           return null;
         }
-        return runAndroidWebDavSync(settings);
+        return waitForLauncherLayoutSaves().then(() => sendBackgroundCommand<WebDavSyncResult>("sync.run"));
       })
       .then(async (result) => {
         if (!result) return;
         const settings = result.settings;
         if (settings) {
           setSettingsConfigured(isWebDavConfigured(settings));
-          const importedWebApps = result.importedWebAppCount + result.removedWebAppCount > 0;
-          if (importedWebApps) setLayoutRevision((current) => current + 1);
         }
+        if (shouldRefreshLauncherAfterSync(result)) setLayoutRevision((current) => current + 1);
         setSyncState("success");
         setSyncMessage(webDavSyncSummary(result));
       })
