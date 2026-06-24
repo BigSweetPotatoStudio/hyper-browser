@@ -1,101 +1,81 @@
 import { browser, type Browser } from "wxt/browser";
+import { hostLabel, isHttpUrl } from "@hyper-sync";
 import {
-  activeWebApps,
-  applyLocalWebAppTombstones,
-  BOOKMARKS_FILE,
-  bookmarksDocument,
-  hostLabel,
-  indexWebApps,
-  isHttpUrl,
-  MANIFEST_FILE,
-  mergeBookmarkRecords,
-  normalizeTimestamp,
-  sameBookmarkRecords,
-  tombstoneWebAppRecord,
-  upsertWebAppRecord,
-  WEBAPPS_FILE,
-  webAppsDocument,
-} from "@hyper-sync";
-import { COMPANION_CLIENT_NAME, DEFAULT_DEVICE_NAME, DEVICE_STATE_PREFIX } from "./identity";
-import { loadMetadata, loadSettings, saveMetadata, saveSettings } from "./storage";
-import type { BookmarkRecord, RemoteSyncManifest, SyncDocument, SyncMetadata, SyncResult, SyncSettings, WebAppRecord } from "./types";
-import { WebDavClient, WebDavConflictError } from "./webdav";
+  activeBookmarksFromState,
+  activeWebAppsFromState,
+  appendLocalSnapshotOperations,
+  appendWebAppDelete,
+  appendWebAppUpsert,
+  canonicalJson,
+  layoutFromState,
+  syncV2,
+  type SyncV2State,
+  type SyncV2Store,
+} from "@hyper-sync/op-log";
+import { DEFAULT_DEVICE_NAME } from "./identity";
+import { launcherLayoutStorage } from "./launcher-layout";
+import { loadSettings, loadSyncV2Store, saveSettings, saveSyncV2Store } from "./storage";
+import type { BookmarkRecord, SyncResult, SyncSettings, WebAppRecord } from "./types";
 
-const MAX_SYNC_ATTEMPTS = 3;
+let localLock: Promise<void> = Promise.resolve();
 
 export async function syncNow(): Promise<SyncResult> {
   let settings = await loadSettings();
   settings = await ensureBookmarkFolder(settings);
-  const client = new WebDavClient(settings);
-  await client.ensureCollections();
-
-  let lastConflict: unknown;
-  for (let attempt = 1; attempt <= MAX_SYNC_ATTEMPTS; attempt += 1) {
-    const metadata = await loadMetadata();
-    const remote = await client.getJson<SyncDocument<BookmarkRecord>>(BOOKMARKS_FILE);
-    const remoteRecords = remote?.data.items || [];
-    const localRecords = await collectLocalBookmarkRecords(settings, metadata);
-    const merged = mergeBookmarkRecords(remoteRecords, localRecords);
-    const mergedItems = Object.values(merged);
-    const remoteChanged = !sameBookmarkRecords(remoteRecords, mergedItems);
-
-    try {
-      if (remoteChanged) {
-        await client.putJson(BOOKMARKS_FILE, bookmarksDocument(mergedItems), remote?.etag);
-        await putManifest(client, settings);
-      }
-      await putDeviceState(client, settings);
-      const applied = await applyBookmarkRecords(settings, mergedItems);
-      const latestMetadata = await loadMetadata();
-      await saveMetadata({ ...latestMetadata, bookmarks: merged });
-      return {
-        bookmarkCount: mergedItems.filter((item) => !item.deletedAt).length,
-        deletedBookmarkCount: mergedItems.filter((item) => !!item.deletedAt).length,
-        importedBookmarkCount: applied.imported,
-        removedBookmarkCount: applied.removed,
+  const before = (await loadSyncV2Store()).state;
+  let result = {
+    state: before,
+    uploadedOperationCount: 0,
+    remoteOperationCount: 0,
+    pendingOperationCount: 0,
+    syncedAt: Date.now(),
+  };
+  if (settings.webDavUrl.trim()) {
+    result = await syncV2({
+      settings,
+      loadStore: loadSyncV2Store,
+      saveStore: saveSyncV2Store,
+      loadLocalSnapshot: () => loadLocalSnapshot(settings),
+      applyState: (state) => saveLocalState(settings, state),
+      withLocalLock,
+    });
+  } else {
+    await withLocalLock(async () => {
+      const current = await loadSyncV2Store();
+      const next = appendLocalSnapshotOperations(current, await loadLocalSnapshot(settings));
+      await saveSyncV2Store(next);
+      await saveLocalState(settings, next.state);
+      result = {
+        state: next.state,
+        uploadedOperationCount: 0,
+        remoteOperationCount: 0,
+        pendingOperationCount: next.outbox.length,
         syncedAt: Date.now(),
-        folderTitle: settings.folderTitle,
-        attemptCount: attempt,
       };
-    } catch (error) {
-      if (error instanceof WebDavConflictError) {
-        lastConflict = error;
-        continue;
-      }
-      throw error;
-    }
+    });
   }
-  throw lastConflict instanceof Error ? lastConflict : new Error("WebDAV sync failed.");
+  return syncResultFromState(result.state, before, settings, result);
 }
 
 export async function loadRemoteWebApps(): Promise<WebAppRecord[]> {
   const settings = await loadSettings();
-  const client = new WebDavClient(settings);
-  const remote = await client.getJson<SyncDocument<WebAppRecord>>(WEBAPPS_FILE);
-  const metadata = await loadMetadata();
-  const records = indexWebApps(remote?.data.items || []);
-  applyLocalWebAppTombstones(records, metadata);
-  return activeWebApps(records);
-}
-
-export async function readRemoteSyncManifest(settings?: SyncSettings): Promise<RemoteSyncManifest | null> {
-  settings = settings || await loadSettings();
-  if (!settings.webDavUrl.trim()) return null;
-  const client = new WebDavClient(settings);
-  const remote = await client.getJson<Partial<RemoteSyncManifest>>(MANIFEST_FILE);
-  if (!remote) return null;
-  const updatedAt = normalizeTimestamp(remote.data.updatedAt);
-  if (!updatedAt) return null;
-  return {
-    updatedAt,
-    lastWriter: typeof remote.data.lastWriter === "string" ? remote.data.lastWriter : "",
-  };
+  if (settings.webDavUrl.trim()) await syncNow();
+  return activeWebAppsFromState((await loadSyncV2Store()).state);
 }
 
 export async function saveRemoteWebApp(input: Partial<WebAppRecord> & { name: string; startUrl: string }): Promise<WebAppRecord[]> {
-  return updateRemoteWebApps((records, settings) => {
-    upsertWebAppRecord(records, input, settings.deviceId);
+  const settings = await loadSettings();
+  await withLocalLock(async () => {
+    const current = await loadSyncV2Store();
+    const itemId = input.id ? `app:${input.id}` : "";
+    const placement = itemId && current.state.layout.items[itemId]
+      ? undefined
+      : { container: "desktop:0", order: nextDesktopOrder(current.state) };
+    const { store } = appendWebAppUpsert(current, input, placement);
+    await saveSyncV2Store(store);
   });
+  if (settings.webDavUrl.trim()) await syncNow();
+  return activeWebAppsFromState((await loadSyncV2Store()).state);
 }
 
 export async function addBookmarkToSyncFolder(input: { title: string; url: string }): Promise<SyncResult> {
@@ -114,65 +94,47 @@ export async function addBookmarkToSyncFolder(input: { title: string; url: strin
 }
 
 export async function deleteRemoteWebApp(input: string | Partial<WebAppRecord> | null | undefined): Promise<WebAppRecord[]> {
-  let tombstone: WebAppRecord | null = null;
-  const webApps = await updateRemoteWebApps((records, settings) => {
-    tombstone = tombstoneWebAppRecord(records, input, settings.deviceId);
-  });
-  if (tombstone) await saveLocalWebAppRecord(tombstone);
-  return webApps;
-}
-
-async function updateRemoteWebApps(mutator: (records: Record<string, WebAppRecord>, settings: SyncSettings) => void): Promise<WebAppRecord[]> {
   const settings = await loadSettings();
-  const client = new WebDavClient(settings);
-  await client.ensureCollections();
-  let lastConflict: unknown;
+  const id = typeof input === "string" ? input.trim() : input?.id?.trim();
+  if (!id) return activeWebAppsFromState((await loadSyncV2Store()).state);
+  await withLocalLock(async () => {
+    const current = await loadSyncV2Store();
+    await saveSyncV2Store(appendWebAppDelete(current, id));
+  });
+  if (settings.webDavUrl.trim()) await syncNow();
+  return activeWebAppsFromState((await loadSyncV2Store()).state);
+}
 
-  for (let attempt = 0; attempt < MAX_SYNC_ATTEMPTS; attempt += 1) {
-    const remote = await client.getJson<SyncDocument<WebAppRecord>>(WEBAPPS_FILE);
-    const metadata = await loadMetadata();
-    const records = indexWebApps(remote?.data.items || []);
-    applyLocalWebAppTombstones(records, metadata);
-    mutator(records, settings);
-    try {
-      await client.putJson(WEBAPPS_FILE, webAppsDocument(Object.values(records)), remote?.etag);
-      await putManifest(client, settings);
-      await putDeviceState(client, settings);
-      return activeWebApps(records);
-    } catch (error) {
-      if (error instanceof WebDavConflictError) {
-        lastConflict = error;
-        continue;
-      }
-      throw error;
-    }
+async function loadLocalSnapshot(settings: SyncSettings) {
+  return {
+    bookmarks: await collectLocalBookmarkRecords(settings),
+    layout: await launcherLayoutStorage.load(),
+  };
+}
+
+async function saveLocalState(settings: SyncSettings, state: SyncV2State): Promise<void> {
+  await applyBookmarkRecords(settings, activeBookmarksFromState(state));
+  void layoutFromState(state);
+}
+
+async function withLocalLock<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = localLock;
+  let release!: () => void;
+  localLock = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
   }
-
-  throw lastConflict instanceof Error ? lastConflict : new Error("Unable to save WebApps.");
 }
 
-async function saveLocalWebAppRecord(record: WebAppRecord): Promise<void> {
-  const metadata = await loadMetadata();
-  await saveMetadata({
-    ...metadata,
-    webApps: {
-      ...metadata.webApps,
-      [record.id]: record,
-    },
-  });
-}
-
-function putManifest(client: WebDavClient, settings: SyncSettings): Promise<void> {
-  return client.putManifest(settings.deviceId);
-}
-
-function putDeviceState(client: WebDavClient, settings: SyncSettings): Promise<void> {
-  return client.putDeviceState({
-    deviceId: settings.deviceId,
-    deviceName: settings.deviceName || DEFAULT_DEVICE_NAME,
-    clientName: COMPANION_CLIENT_NAME,
-    deviceStatePrefix: DEVICE_STATE_PREFIX,
-  });
+function nextDesktopOrder(state: SyncV2State): number {
+  return Object.values(state.layout.items)
+    .filter((item) => item.container === "desktop:0")
+    .reduce((max, item) => Math.max(max, item.order), -1000) + 1000;
 }
 
 async function ensureBookmarkFolder(settings: SyncSettings): Promise<SyncSettings> {
@@ -197,42 +159,20 @@ async function ensureBookmarkFolder(settings: SyncSettings): Promise<SyncSetting
   return next;
 }
 
-async function collectLocalBookmarkRecords(settings: SyncSettings, metadata: SyncMetadata): Promise<BookmarkRecord[]> {
+async function collectLocalBookmarkRecords(settings: SyncSettings): Promise<BookmarkRecord[]> {
   const now = Date.now();
   const nodes = await getFolderBookmarks(settings.folderId);
-  const localByUrl = new Map<string, Browser.bookmarks.BookmarkTreeNode>();
-  nodes.forEach((node) => {
-    if (node.url) localByUrl.set(node.url, node);
-  });
-  const records: Record<string, BookmarkRecord> = {};
-
-  Object.values(metadata.bookmarks)
-    .filter((known) => !!known.deletedAt)
-    .forEach((known) => {
-      records[known.url] = known;
-    });
-
-  Object.values(metadata.bookmarks)
-    .filter((known) => !known.deletedAt && !localByUrl.has(known.url))
-    .forEach((known) => {
-      records[known.url] = { ...known, updatedAt: now, deletedAt: now, sourceDeviceId: settings.deviceId };
-    });
-
-  localByUrl.forEach((node, url) => {
-    const known = metadata.bookmarks[url];
-    const changed = !known || !!known.deletedAt || known.title !== node.title;
-    records[url] = {
-      url,
-      title: node.title || url,
-      createdAt: known?.createdAt || now,
-      updatedAt: changed ? now : known.updatedAt,
+  return nodes
+    .filter((node) => !!node.url)
+    .map((node) => ({
+      url: node.url!,
+      title: node.title || node.url!,
+      createdAt: node.dateAdded || now,
+      updatedAt: now,
       deletedAt: null,
-      sourceDeviceId: changed ? settings.deviceId : known.sourceDeviceId,
-      iconDataUrl: known?.iconDataUrl || null,
-    };
-  });
-
-  return Object.values(records);
+      sourceDeviceId: settings.deviceId,
+      iconDataUrl: null,
+    }));
 }
 
 async function applyBookmarkRecords(settings: SyncSettings, records: BookmarkRecord[]): Promise<{ imported: number; removed: number }> {
@@ -242,18 +182,17 @@ async function applyBookmarkRecords(settings: SyncSettings, records: BookmarkRec
     if (!node.url) return;
     byUrl.set(node.url, [...(byUrl.get(node.url) || []), node]);
   });
-
   let imported = 0;
   let removed = 0;
-  for (const record of records.sort((a, b) => b.updatedAt - a.updatedAt)) {
-    const currentNodes = byUrl.get(record.url) || [];
-    if (record.deletedAt) {
-      for (const node of currentNodes) {
-        await removeBookmark(node.id);
-        removed += 1;
-      }
-      continue;
+  const activeUrls = new Set(records.map((record) => record.url));
+  for (const node of nodes) {
+    if (node.url && !activeUrls.has(node.url)) {
+      await removeBookmark(node.id);
+      removed += 1;
     }
+  }
+  for (const record of records.sort((a, b) => a.title.localeCompare(b.title))) {
+    const currentNodes = byUrl.get(record.url) || [];
     const [first, ...duplicates] = currentNodes;
     if (!first) {
       await createBookmark({ parentId: settings.folderId, title: record.title || record.url, url: record.url });
@@ -268,6 +207,33 @@ async function applyBookmarkRecords(settings: SyncSettings, records: BookmarkRec
     }
   }
   return { imported, removed };
+}
+
+function syncResultFromState(
+  state: SyncV2State,
+  previous: SyncV2State,
+  settings: SyncSettings,
+  sync: { uploadedOperationCount: number; remoteOperationCount: number; pendingOperationCount: number; syncedAt: number },
+): SyncResult {
+  const bookmarks = activeBookmarksFromState(state);
+  const webApps = activeWebAppsFromState(state);
+  const previousBookmarks = new Set(activeBookmarksFromState(previous).map((bookmark) => bookmark.url));
+  const previousWebApps = new Set(activeWebAppsFromState(previous).map((app) => app.id));
+  return {
+    bookmarkCount: bookmarks.length,
+    deletedBookmarkCount: Object.keys(state.bookmarkTombstones).length,
+    importedBookmarkCount: bookmarks.filter((bookmark) => !previousBookmarks.has(bookmark.url)).length,
+    removedBookmarkCount: [...previousBookmarks].filter((url) => !state.bookmarks[url]).length,
+    webAppCount: webApps.length,
+    deletedWebAppCount: Object.keys(state.appTombstones).length,
+    importedWebAppCount: webApps.filter((app) => !previousWebApps.has(app.id)).length,
+    removedWebAppCount: [...previousWebApps].filter((id) => !state.apps[id]).length,
+    syncedAt: sync.syncedAt,
+    folderTitle: settings.folderTitle,
+    uploadedOperationCount: sync.uploadedOperationCount,
+    remoteOperationCount: sync.remoteOperationCount,
+    pendingOperationCount: sync.pendingOperationCount,
+  };
 }
 
 function getBookmarkTree(): Promise<Browser.bookmarks.BookmarkTreeNode[]> {

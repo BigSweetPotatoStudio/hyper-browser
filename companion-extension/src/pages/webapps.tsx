@@ -100,7 +100,7 @@ function WebAppsPage() {
       <header className="header">
         <div>
           <h1 className="title">Hyper Browser WebApps</h1>
-          <p className="subtitle">Manage WebApps stored in WebDAV webapps.json.</p>
+          <p className="subtitle">Manage WebApps synced through WebDAV v2 operations.</p>
         </div>
         <button className="button" type="button" onClick={refresh} disabled={busy}>Refresh</button>
       </header>

@@ -1,90 +1,37 @@
 import {
-  applyLocalWebAppTombstones,
-  BOOKMARKS_FILE,
-  bookmarksDocument,
-  indexBookmarks,
-  indexWebApps,
-  mergeBookmarkRecords,
-  mergeWebAppRecordsRemoteFirst,
-  sameBookmarkRecords,
-  sameWebAppRecords,
-  WEBAPPS_FILE,
-  webAppsDocument,
-  MANIFEST_FILE,
-  normalizeTimestamp,
-  type BookmarkRecord,
-  type RemoteSyncManifest,
-  type SyncDocument,
-  type SyncMetadata,
-  type WebAppRecord,
-} from "@hyper-sync";
-import { WebDavClient, WebDavConflictError } from "@hyper-sync/webdav";
+  activeBookmarksFromState,
+  activeWebAppsFromState,
+  canonicalJson,
+  createEmptyStore,
+  ensureStore,
+  layoutFromState,
+  syncV2,
+  type SyncV2LocalSnapshot,
+  type SyncV2Result,
+  type SyncV2State,
+  type SyncV2Store,
+} from "@hyper-sync/op-log";
 import type { BrowserSettings, WebDavLocalSyncData, WebDavSyncResult } from "./hyper-browser";
+import { waitForLauncherLayoutSaves } from "./launcher-layout-storage";
 
-const MAX_SYNC_ATTEMPTS = 3;
-const ANDROID_CLIENT_NAME = "hyper-browser-android";
-const ANDROID_DEVICE_STATE_PREFIX = "android";
+const ANDROID_SYNC_V2_STORAGE_KEY = "hyper-browser-sync-v2-store";
 
-let lastSeenRemoteManifestUpdatedAt = 0;
+let localLock: Promise<void> = Promise.resolve();
 
 export async function runAndroidWebDavSync(baseSettings?: BrowserSettings): Promise<WebDavSyncResult> {
   const initialSettings = baseSettings || await window.hyperBrowser.requestSettingsData();
-  if (!initialSettings.webDavSyncUrl.trim()) {
-    throw new Error("WebDAV URL is required.");
-  }
-  const localData = await window.hyperBrowser.requestWebDavLocalData();
-  const settings = localData.settings || initialSettings;
-  const client = new WebDavClient(webDavSettings(settings));
-  await client.ensureCollections();
-
-  let lastConflict: unknown;
-  for (let attempt = 1; attempt <= MAX_SYNC_ATTEMPTS; attempt += 1) {
-    const remoteBookmarks = await client.getJson<SyncDocument<BookmarkRecord>>(BOOKMARKS_FILE);
-    const remoteWebApps = await client.getJson<SyncDocument<WebAppRecord>>(WEBAPPS_FILE);
-    const metadata = normalizeMetadata(localData);
-    const localBookmarkRecords = localData.bookmarks || [];
-    const mergedBookmarks = mergeBookmarkRecords(remoteBookmarks?.data.items || [], localBookmarkRecords);
-    const mergedBookmarkItems = Object.values(mergedBookmarks);
-
-    const remoteWebAppRecords = indexWebApps(remoteWebApps?.data.items || []);
-    applyLocalWebAppTombstones(remoteWebAppRecords, metadata);
-    const localWebAppRecords = Object.values(indexWebApps(localData.webApps || []));
-    const mergedWebAppItems = mergeWebAppRecordsRemoteFirst(Object.values(remoteWebAppRecords), localWebAppRecords);
-
-    const bookmarksChanged = !sameBookmarkRecords(remoteBookmarks?.data.items || [], mergedBookmarkItems);
-    const webAppsChanged = !sameWebAppRecords(remoteWebApps?.data.items || [], mergedWebAppItems);
-
-    try {
-      if (bookmarksChanged) {
-        await client.putJson(BOOKMARKS_FILE, bookmarksDocument(mergedBookmarkItems), remoteBookmarks?.etag);
-      }
-      if (webAppsChanged) {
-        await client.putJson(WEBAPPS_FILE, webAppsDocument(mergedWebAppItems), remoteWebApps?.etag);
-      }
-      if (bookmarksChanged || webAppsChanged) {
-        await client.putManifest(settings.webDavSyncDeviceId || localData.deviceId);
-      }
-      await client.putDeviceState({
-        deviceId: settings.webDavSyncDeviceId || localData.deviceId,
-        deviceName: settings.webDavSyncDeviceName || localData.deviceName || "Hyper Browser Android",
-        clientName: ANDROID_CLIENT_NAME,
-        deviceStatePrefix: ANDROID_DEVICE_STATE_PREFIX,
-      });
-      const result = await window.hyperBrowser.applyWebDavSyncRecords({
-        bookmarks: mergedBookmarkItems,
-        webApps: mergedWebAppItems,
-      });
-      return { ...result, attemptCount: attempt };
-    } catch (error) {
-      if (error instanceof WebDavConflictError) {
-        lastConflict = error;
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw lastConflict instanceof Error ? lastConflict : new Error("WebDAV sync failed.");
+  if (!initialSettings.webDavSyncUrl.trim()) throw new Error("WebDAV URL is required.");
+  const settings = await ensureAndroidDeviceId(initialSettings);
+  const before = (await readStoredStore(settings.webDavSyncDeviceId)).state;
+  const result = await syncV2({
+    settings: webDavSettings(settings),
+    loadStore: async () => readStoredStore(settings.webDavSyncDeviceId),
+    saveStore: (store) => writeStoredStore(store, settings.webDavSyncDeviceId),
+    loadLocalSnapshot: () => loadLocalSnapshot(),
+    applyState: (state) => applyAndroidState(state),
+    withLocalLock,
+  });
+  return syncResultFromState(result.state, before, settings, result);
 }
 
 export async function runAndroidWebDavSyncIfEnabled(): Promise<WebDavSyncResult | null> {
@@ -93,7 +40,7 @@ export async function runAndroidWebDavSyncIfEnabled(): Promise<WebDavSyncResult 
   return runAndroidWebDavSync(settings);
 }
 
-export async function checkAndroidWebDavRemoteChanges(pageLastSeenRemoteManifestUpdatedAt = 0): Promise<{
+export async function checkAndroidWebDavRemoteChanges(): Promise<{
   changed: boolean;
   synced: boolean;
   updatedAt: number;
@@ -103,35 +50,75 @@ export async function checkAndroidWebDavRemoteChanges(pageLastSeenRemoteManifest
   if (!settings.webDavSyncEnabled || !settings.webDavSyncUrl.trim()) {
     return { changed: false, synced: false, updatedAt: 0 };
   }
-  const manifest = await readRemoteSyncManifest(settings);
-  if (!manifest) return { changed: false, synced: false, updatedAt: 0 };
-  const deviceId = settings.webDavSyncDeviceId;
-  const pageNeedsRefresh = manifest.updatedAt > Math.max(0, pageLastSeenRemoteManifestUpdatedAt || 0) &&
-    manifest.lastWriter !== deviceId;
-
-  if (manifest.lastWriter === deviceId) {
-    lastSeenRemoteManifestUpdatedAt = manifest.updatedAt;
-    return { changed: false, synced: false, updatedAt: manifest.updatedAt };
-  }
-  if (manifest.updatedAt <= lastSeenRemoteManifestUpdatedAt) {
-    return { changed: pageNeedsRefresh, synced: false, updatedAt: manifest.updatedAt };
-  }
-
+  const before = await readStoredStore(settings.webDavSyncDeviceId);
   const syncResult = await runAndroidWebDavSync(settings);
-  lastSeenRemoteManifestUpdatedAt = manifest.updatedAt;
+  const after = await readStoredStore(settings.webDavSyncDeviceId);
+  const changed = canonicalJson(before.state) !== canonicalJson(after.state);
   return {
-    changed: true,
+    changed,
     synced: true,
-    updatedAt: manifest.updatedAt,
+    updatedAt: Date.now(),
     syncResult,
   };
 }
 
-function normalizeMetadata(localData: WebDavLocalSyncData): SyncMetadata {
+async function loadLocalSnapshot(): Promise<SyncV2LocalSnapshot> {
+  const localData = await window.hyperBrowser.requestWebDavLocalData();
+  await waitForLauncherLayoutSaves();
+  const layout = await window.hyperBrowser.requestLauncherLayout();
   return {
-    bookmarks: indexBookmarks(localData.metadata?.bookmarks || []),
-    webApps: indexWebApps(localData.metadata?.webApps || []),
+    bookmarks: activeLocalBookmarks(localData),
+    webApps: activeLocalWebApps(localData),
+    layout,
   };
+}
+
+async function applyAndroidState(state: SyncV2State): Promise<void> {
+  const clean = state;
+  await window.hyperBrowser.applyWebDavSyncRecords({
+    bookmarks: activeBookmarksFromState(clean),
+    webApps: activeWebAppsFromState(clean),
+  });
+  await window.hyperBrowser.saveLauncherLayout(layoutFromState(clean));
+}
+
+async function withLocalLock<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = localLock;
+  let release!: () => void;
+  localLock = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+  }
+}
+
+async function ensureAndroidDeviceId(settings: BrowserSettings): Promise<BrowserSettings> {
+  if (settings.webDavSyncDeviceId) return settings;
+  return window.hyperBrowser.updateWebDavSyncSettings({
+    webDavSyncEnabled: settings.webDavSyncEnabled,
+    webDavSyncUrl: settings.webDavSyncUrl,
+    webDavSyncUsername: settings.webDavSyncUsername,
+    webDavSyncPassword: settings.webDavSyncPassword,
+    webDavSyncDeviceName: settings.webDavSyncDeviceName,
+  });
+}
+
+function readStoredStore(deviceId: string): SyncV2Store {
+  const raw = window.localStorage.getItem(ANDROID_SYNC_V2_STORAGE_KEY);
+  if (!raw) return createEmptyStore(deviceId);
+  try {
+    return ensureStore(JSON.parse(raw), deviceId);
+  } catch {
+    return createEmptyStore(deviceId);
+  }
+}
+
+async function writeStoredStore(store: SyncV2Store, deviceId: string): Promise<void> {
+  window.localStorage.setItem(ANDROID_SYNC_V2_STORAGE_KEY, canonicalJson(ensureStore(store, deviceId)));
 }
 
 function webDavSettings(settings: BrowserSettings) {
@@ -139,17 +126,42 @@ function webDavSettings(settings: BrowserSettings) {
     webDavUrl: settings.webDavSyncUrl,
     username: settings.webDavSyncUsername,
     password: settings.webDavSyncPassword,
+    deviceId: settings.webDavSyncDeviceId,
   };
 }
 
-async function readRemoteSyncManifest(settings: BrowserSettings): Promise<RemoteSyncManifest | null> {
-  const client = new WebDavClient(webDavSettings(settings));
-  const remote = await client.getJson<Partial<RemoteSyncManifest>>(MANIFEST_FILE);
-  if (!remote) return null;
-  const updatedAt = normalizeTimestamp(remote.data.updatedAt);
-  if (!updatedAt) return null;
+function activeLocalBookmarks(localData: WebDavLocalSyncData) {
+  return (localData.bookmarks || []).filter((bookmark) => bookmark.deletedAt == null);
+}
+
+function activeLocalWebApps(localData: WebDavLocalSyncData) {
+  return (localData.webApps || []).filter((app) => app.deletedAt == null);
+}
+
+function syncResultFromState(
+  state: SyncV2State,
+  previous: SyncV2State,
+  settings: BrowserSettings,
+  sync: SyncV2Result,
+): WebDavSyncResult {
+  const bookmarks = activeBookmarksFromState(state);
+  const webApps = activeWebAppsFromState(state);
+  const previousBookmarks = new Set(activeBookmarksFromState(previous).map((bookmark) => bookmark.url));
+  const previousWebApps = new Set(activeWebAppsFromState(previous).map((app) => app.id));
   return {
-    updatedAt,
-    lastWriter: typeof remote.data.lastWriter === "string" ? remote.data.lastWriter : "",
+    bookmarkCount: bookmarks.length,
+    webAppCount: webApps.length,
+    deletedBookmarkCount: Object.keys(state.bookmarkTombstones).length,
+    deletedWebAppCount: Object.keys(state.appTombstones).length,
+    importedBookmarkCount: bookmarks.filter((bookmark) => !previousBookmarks.has(bookmark.url)).length,
+    removedBookmarkCount: [...previousBookmarks].filter((url) => !state.bookmarks[url]).length,
+    importedWebAppCount: webApps.filter((app) => !previousWebApps.has(app.id)).length,
+    removedWebAppCount: [...previousWebApps].filter((id) => !state.apps[id]).length,
+    syncedAt: sync.syncedAt,
+    deviceId: settings.webDavSyncDeviceId,
+    uploadedOperationCount: sync.uploadedOperationCount,
+    remoteOperationCount: sync.remoteOperationCount,
+    pendingOperationCount: sync.pendingOperationCount,
+    settings,
   };
 }

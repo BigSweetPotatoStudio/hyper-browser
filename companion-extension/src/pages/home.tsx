@@ -80,7 +80,9 @@ function CompanionHomePage() {
         return;
       }
       const result = await sendCommand<SyncResult>("sync.run");
-      if (result.launcherLayout?.changed || options.refreshLauncher) setLayoutRevision((current) => current + 1);
+      if (result.importedWebAppCount + result.removedWebAppCount > 0 || options.refreshLauncher) {
+        setLayoutRevision((current) => current + 1);
+      }
       setSyncState("success");
       setSyncMessage(syncResultMessage(result));
     } catch (syncError) {
@@ -169,7 +171,9 @@ function CompanionHomePage() {
           onSyncResult={(result) => {
             setSyncState("success");
             setSyncMessage(syncResultMessage(result));
-            if (result.launcherLayout?.changed) setLayoutRevision((current) => current + 1);
+            if (result.importedWebAppCount + result.removedWebAppCount > 0) {
+              setLayoutRevision((current) => current + 1);
+            }
           }}
           onClose={() => setSettingsOpen(false)}
         />
@@ -263,7 +267,7 @@ function SettingsDialog(props: {
             <input className="input" type="text" value={settings.deviceName} onChange={(event) => update("deviceName", event.currentTarget.value)} />
           </label>
         </div>
-        <p className="message">Remote files are stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, manifest.json, and devices/.</p>
+        <p className="message">Remote data is stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, and manifest.json.</p>
         <div className="actions">
           <button className="button primary" type="button" disabled={busy || !settings.webDavUrl.trim()} onClick={sync}>
             {busy ? "Syncing..." : "Sync"}
@@ -283,11 +287,10 @@ function isWebDavConfigError(error: unknown): boolean {
 }
 
 function syncResultMessage(result: SyncResult): string {
-  const deleted = result.deletedBookmarkCount > 0 ? `, ${result.deletedBookmarkCount} deleted` : "";
-  const layout = result.launcherLayout?.direction && result.launcherLayout.direction !== "none"
-    ? `, launcher ${result.launcherLayout.direction}`
-    : "";
-  return `Synced ${result.bookmarkCount} bookmarks${deleted}${layout}`;
+  const deleted = result.deletedBookmarkCount + result.deletedWebAppCount;
+  const tombstones = deleted > 0 ? `, ${deleted} tombstones` : "";
+  const pending = result.pendingOperationCount > 0 ? `, ${result.pendingOperationCount} pending changes` : "";
+  return `Synced ${result.bookmarkCount} bookmarks and ${result.webAppCount} WebApps${tombstones}${pending}`;
 }
 
 function normalizeSettings(settings: SyncSettings): SyncSettings {

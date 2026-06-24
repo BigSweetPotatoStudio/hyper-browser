@@ -3,9 +3,12 @@ import type { LauncherLayout, LauncherLayoutStorage } from "@hyper-launcher";
 const LAYOUT_STORAGE_KEY = "hyper-home-launcher-layout-v3";
 const LEGACY_LAYOUT_STORAGE_KEY = "hyper-home-launcher-layout-v1";
 
+let launcherLayoutSaveQueue: Promise<void> = Promise.resolve();
+
 export function createLauncherLayoutStorage(): LauncherLayoutStorage {
   return {
     async load() {
+      await waitForLauncherLayoutSaves();
       const nativeLayout = await window.hyperBrowser.requestLauncherLayout().catch((error) => {
         console.warn("Unable to load native launcher layout.", error);
         return null;
@@ -20,9 +23,15 @@ export function createLauncherLayoutStorage(): LauncherLayoutStorage {
       return legacyLayout as Partial<LauncherLayout> | null;
     },
     save(layout: LauncherLayout) {
-      return window.hyperBrowser.saveLauncherLayout(layout);
+      const run = launcherLayoutSaveQueue.then(() => window.hyperBrowser.saveLauncherLayout(layout));
+      launcherLayoutSaveQueue = run.catch(() => undefined);
+      return run;
     },
   };
+}
+
+export function waitForLauncherLayoutSaves(): Promise<void> {
+  return launcherLayoutSaveQueue;
 }
 
 function readJson(key: string): Record<string, unknown> | null {

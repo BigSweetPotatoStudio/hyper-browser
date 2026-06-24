@@ -1,7 +1,7 @@
 import { browser, type Browser } from "wxt/browser";
-import { appendWebAppToLauncher, syncLauncherLayoutNow } from "./launcher-layout";
-import { loadRemoteSyncState, loadSettings, saveRemoteSyncState } from "./storage";
-import { addBookmarkToSyncFolder, deleteRemoteWebApp, loadRemoteWebApps, readRemoteSyncManifest, saveRemoteWebApp, syncNow } from "./sync";
+import { canonicalJson } from "@hyper-sync/op-log";
+import { loadSettings, loadSyncV2Store } from "./storage";
+import { addBookmarkToSyncFolder, deleteRemoteWebApp, loadRemoteWebApps, saveRemoteWebApp, syncNow } from "./sync";
 import type { WebAppRecord } from "./types";
 
 const MAX_CAPTURED_ICON_BYTES = 1024 * 1024;
@@ -13,7 +13,6 @@ const REMOTE_SYNC_ALARM_MINUTES = 1;
 let launcherSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let launcherSyncRunning = false;
 let launcherSyncPending = false;
-let launcherSyncAppendMissingApps = true;
 let bookmarkSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let bookmarkSyncRunning = false;
 let bookmarkSyncPending = false;
@@ -58,7 +57,7 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     case "sync.run":
       return runFullSyncNow();
     case "launcher.syncSoon":
-      scheduleLauncherAutoSync({ appendMissingApps: false });
+      scheduleLauncherAutoSync();
       return null;
     case "remote.check":
       return checkRemoteChanges({ notifyPages: false });
@@ -70,12 +69,8 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
         startUrl: page.url,
         ...(iconDataUrl ? { iconDataUrl, iconSource: "site" as const } : {}),
       });
-      const savedApp = webApps.find((app) => app.startUrl === page.url);
-      if (savedApp) {
-        await appendWebAppToLauncher(savedApp.id, webApps.map((app) => app.id));
-        notifyLauncherChanged();
-        scheduleLauncherAutoSync({ appendMissingApps: false });
-      }
+      notifyLauncherChanged();
+      scheduleLauncherAutoSync();
       return webApps;
     }
     case "current.addBookmark": {
@@ -87,16 +82,13 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     case "webapps.save":
       return saveRemoteWebApp(message.payload as never).then((webApps) => {
         notifyLauncherChanged();
-        scheduleLauncherAutoSync({ appendMissingApps: false });
+        scheduleLauncherAutoSync();
         return webApps;
       });
     case "webapps.delete": {
       const webApps = await deleteRemoteWebApp(message.payload as string | Partial<WebAppRecord>);
-      await syncLauncherLayoutNow(webApps.map((app) => app.id), { appendMissingApps: false }).catch((error) => {
-        console.warn("Unable to sync launcher after deleting WebApp.", error);
-      });
       notifyLauncherChanged();
-      scheduleLauncherAutoSync({ appendMissingApps: false });
+      scheduleLauncherAutoSync();
       return webApps;
     }
     case "open.options":
@@ -120,8 +112,7 @@ function ensureRemoteSyncAlarm() {
   });
 }
 
-function scheduleLauncherAutoSync(options: { appendMissingApps?: boolean } = {}) {
-  if (options.appendMissingApps === false) launcherSyncAppendMissingApps = false;
+function scheduleLauncherAutoSync() {
   if (launcherSyncTimer) clearTimeout(launcherSyncTimer);
   launcherSyncTimer = setTimeout(() => {
     launcherSyncTimer = null;
@@ -138,13 +129,10 @@ async function runLauncherAutoSync(): Promise<void> {
   try {
     do {
       launcherSyncPending = false;
-      const appendMissingApps = launcherSyncAppendMissingApps;
-      launcherSyncAppendMissingApps = true;
       const settings = await loadSettings();
       if (!settings.webDavUrl.trim()) return;
-      const webApps = await loadRemoteWebApps();
-      const result = await syncLauncherLayoutNow(webApps.map((app) => app.id), { appendMissingApps });
-      if (result.changed) notifyLauncherChanged();
+      await syncNow();
+      notifyLauncherChanged();
     } while (launcherSyncPending);
   } finally {
     launcherSyncRunning = false;
@@ -187,13 +175,12 @@ async function runBookmarkSyncNow() {
 }
 
 async function runFullSyncNow() {
-  const result = await runBookmarkSyncNow();
-  const webApps = await loadRemoteWebApps();
-  const launcherLayout = await syncLauncherLayoutNow(webApps.map((app) => app.id));
-  return {
-    ...result,
-    launcherLayout,
-  };
+  if (launcherSyncTimer) {
+    clearTimeout(launcherSyncTimer);
+    launcherSyncTimer = null;
+  }
+  launcherSyncPending = false;
+  return runBookmarkSyncNow();
 }
 
 async function withBookmarkEventsMuted<T>(operation: () => Promise<T>): Promise<T> {
@@ -211,23 +198,12 @@ async function checkRemoteChanges(options: { notifyPages: boolean } = { notifyPa
   try {
     const settings = await loadSettings();
     if (!settings.webDavUrl.trim()) return { changed: false, synced: false, updatedAt: 0 };
-    const manifest = await readRemoteSyncManifest(settings);
-    if (!manifest) return { changed: false, synced: false, updatedAt: 0 };
-    const state = await loadRemoteSyncState();
-    if (manifest.updatedAt <= state.manifestUpdatedAt) {
-      return { changed: false, synced: false, updatedAt: manifest.updatedAt };
-    }
-    if (manifest.lastWriter === settings.deviceId) {
-      await saveRemoteSyncState({ manifestUpdatedAt: manifest.updatedAt });
-      return { changed: false, synced: false, updatedAt: manifest.updatedAt };
-    }
-
+    const before = canonicalJson(await loadSyncV2Store());
     await runBookmarkSyncNow();
-    const webApps = await loadRemoteWebApps();
-    await syncLauncherLayoutNow(webApps.map((app) => app.id));
-    await saveRemoteSyncState({ manifestUpdatedAt: manifest.updatedAt });
-    if (options.notifyPages) notifyRemoteSynced(manifest.updatedAt);
-    return { changed: true, synced: true, updatedAt: manifest.updatedAt };
+    const changed = before !== canonicalJson(await loadSyncV2Store());
+    const updatedAt = Date.now();
+    if (changed && options.notifyPages) notifyRemoteSynced(updatedAt);
+    return { changed, synced: true, updatedAt };
   } finally {
     remoteCheckRunning = false;
   }

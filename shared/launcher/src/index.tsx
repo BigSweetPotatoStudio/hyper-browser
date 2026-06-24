@@ -433,12 +433,17 @@ export function LauncherPage({ platform, layoutStorage, labels: labelOverrides, 
     .map((id) => folderEntries.get(id) || availableEntries.get(id))
     .filter((item): item is LauncherEntry => !!item), [availableEntries, dockIds, folderEntries]);
 
+  const autoDesktopIds = useMemo(() => systemEntries
+    .map((item) => item.id)
+    .filter((id) => !containedIds.has(id) && !dockIds.includes(id) && availableEntries.has(id)), [availableEntries, containedIds, dockIds, systemEntries]);
+
+  const explicitDesktopIds = useMemo(() => layout.cells
+    .map((cell) => cell.id)
+    .filter((id) => !containedIds.has(id) && !dockIds.includes(id) && (availableEntries.has(id) || folderEntries.has(id))), [availableEntries, containedIds, dockIds, folderEntries, layout.cells]);
+
   const visibleDesktopIds = useMemo(() => {
-    const allIds = [...availableEntries.keys(), ...folderEntries.keys()];
-    return allIds
-      .filter((id) => !containedIds.has(id) && !dockIds.includes(id))
-      .sort(compareLauncherIds);
-  }, [availableEntries, containedIds, dockIds, folderEntries]);
+    return uniqueStrings([...explicitDesktopIds, ...autoDesktopIds]);
+  }, [autoDesktopIds, explicitDesktopIds]);
 
   const desktopCells = useMemo(
     () => normalizeDesktopCells(layout.cells, visibleDesktopIds, gridMetrics),
@@ -489,7 +494,7 @@ export function LauncherPage({ platform, layoutStorage, labels: labelOverrides, 
       const preservedCellIds = pruned.cells
         .map((cell) => cell.id)
         .filter((id) => visibleDesktopIdSet.has(id));
-      const nextCellIds = uniqueStrings([...preservedCellIds, ...visibleDesktopIds]);
+      const nextCellIds = uniqueStrings([...preservedCellIds, ...autoDesktopIds]);
       const nextCells = normalizeDesktopCells(pruned.cells, nextCellIds, gridMetrics);
       const next = sameCells(pruned.cells, nextCells, gridMetrics) && pruned.gridColumns === gridMetrics.columns
         ? pruned
@@ -502,7 +507,7 @@ export function LauncherPage({ platform, layoutStorage, labels: labelOverrides, 
           };
       return next === current ? current : next;
     });
-  }, [availableEntries, deprecatedEntryIds, gridMetrics, loading, visibleDesktopIds]);
+  }, [autoDesktopIds, availableEntries, deprecatedEntryIds, gridMetrics, loading, visibleDesktopIds]);
 
   useEffect(() => {
     if (openFolderId && !folderEntries.has(openFolderId)) {

@@ -81,7 +81,9 @@ type WebDavSyncResult = {
   removedWebAppCount: number;
   syncedAt: number;
   deviceId: string;
-  attemptCount: number;
+  uploadedOperationCount: number;
+  remoteOperationCount: number;
+  pendingOperationCount: number;
   settings?: BrowserSettings;
 };
 

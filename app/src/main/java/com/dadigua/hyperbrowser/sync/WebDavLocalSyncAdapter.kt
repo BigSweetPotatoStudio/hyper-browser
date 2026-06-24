@@ -15,7 +15,7 @@ import org.json.JSONObject
 import java.io.File
 import java.util.UUID
 
-class WebDavSyncManager(
+class WebDavLocalSyncAdapter(
     context: Context,
     private val profileStore: BrowserProfileStore,
     private val webAppRepository: WebAppRepository,
@@ -61,7 +61,9 @@ class WebDavSyncManager(
             removedWebAppCount = appliedWebApps.removed,
             syncedAt = now,
             deviceId = config.deviceId,
-            attemptCount = 1
+            uploadedOperationCount = 0,
+            remoteOperationCount = 0,
+            pendingOperationCount = 0
         )
     }
 
@@ -173,16 +175,18 @@ class WebDavSyncManager(
 
     private fun applyBookmarks(records: Collection<SyncBookmarkRecord>): ApplyCounts {
         val currentByUrl = profileStore.observeBookmarks().value.associateBy { it.url }
+        val activeRecords = records
+            .filter { it.deletedAt == null }
+            .associateBy { it.url.trim() }
         var removed = 0
         val imports = mutableListOf<BrowserBookmark>()
-        records.sortedByDescending { it.updatedAt }.forEach { record ->
-            if (record.deletedAt != null) {
-                if (record.url in currentByUrl) {
-                    profileStore.removeBookmark(record.url)
-                    removed += 1
-                }
-                return@forEach
+        currentByUrl.values.forEach { current ->
+            if (current.url !in activeRecords) {
+                profileStore.removeBookmark(current.url)
+                removed += 1
             }
+        }
+        activeRecords.values.sortedByDescending { it.updatedAt }.forEach { record ->
             val current = currentByUrl[record.url]
             if (current == null || current.title != record.title) {
                 imports += BrowserBookmark(
@@ -199,15 +203,15 @@ class WebDavSyncManager(
 
     private suspend fun applyWebApps(records: Collection<SyncWebAppRecord>): ApplyCounts {
         val currentById = webAppRepository.observeAll().value.associateBy { it.id }
+        val activeRecords = webAppRecordsById(records.filter { it.deletedAt == null })
         var removed = 0
         val imports = mutableListOf<WebAppDefinition>()
-        records.sortedByDescending { it.updatedAt }.forEach { record ->
-            if (record.deletedAt != null) {
-                currentById[record.id]?.let {
-                    if (webAppRepository.delete(it.id)) removed += 1
-                }
-                return@forEach
+        currentById.values.forEach { current ->
+            if (current.id !in activeRecords) {
+                if (webAppRepository.delete(current.id)) removed += 1
             }
+        }
+        activeRecords.values.sortedByDescending { it.updatedAt }.forEach { record ->
             val current = currentById[record.id]
             if (current == null ||
                 current.name != record.name ||
@@ -253,7 +257,9 @@ data class WebDavSyncResult(
     val removedWebAppCount: Int,
     val syncedAt: Long,
     val deviceId: String,
-    val attemptCount: Int
+    val uploadedOperationCount: Int,
+    val remoteOperationCount: Int,
+    val pendingOperationCount: Int
 ) {
     fun toJson(): JSONObject =
         JSONObject()
@@ -267,7 +273,9 @@ data class WebDavSyncResult(
             .put("removedWebAppCount", removedWebAppCount)
             .put("syncedAt", syncedAt)
             .put("deviceId", deviceId)
-            .put("attemptCount", attemptCount)
+            .put("uploadedOperationCount", uploadedOperationCount)
+            .put("remoteOperationCount", remoteOperationCount)
+            .put("pendingOperationCount", pendingOperationCount)
 }
 
 private data class WebDavSyncConfig(

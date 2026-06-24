@@ -74,7 +74,7 @@ import com.dadigua.hyperbrowser.gecko.GeckoRuntimeProvider
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import com.dadigua.hyperbrowser.gecko.HyperCommand
 import com.dadigua.hyperbrowser.gecko.HyperRoute
-import com.dadigua.hyperbrowser.sync.WebDavSyncManager
+import com.dadigua.hyperbrowser.sync.WebDavLocalSyncAdapter
 import com.dadigua.hyperbrowser.ui.FullscreenSystemBarsEffect
 import com.dadigua.hyperbrowser.ui.theme.HyperBrowserTheme
 import com.dadigua.hyperbrowser.ui.withAppLocale
@@ -214,7 +214,7 @@ private fun BrowserScreen(
     val linkCopiedText = stringResource(R.string.browser_toast_link_copied)
     val faviconStore = remember { FaviconRepository(app) }
     val backupManager = remember { BrowserBackupManager(profileStore, app.webApps, faviconStore) }
-    val webDavSyncManager = remember { WebDavSyncManager(app, profileStore, app.webApps, faviconStore) }
+    val webDavLocalSyncAdapter = remember { WebDavLocalSyncAdapter(app, profileStore, app.webApps, faviconStore) }
     val downloadStore = remember { DownloadStore(app) }
     val downloadHandler = remember { DownloadHandler(app, downloadStore) }
     val updateManager = remember { AppUpdateManager(app, UpdateSettingsStore(app)) }
@@ -607,7 +607,7 @@ private fun BrowserScreen(
                     currentSettings
                 }
                 runCatching {
-                    webDavSyncManager.localData(syncSettings)
+                    webDavLocalSyncAdapter.localData(syncSettings)
                 }.fold(
                     onSuccess = { data ->
                         okData(data.put("settings", profileStore.observeSettings().value.toJson()))
@@ -637,7 +637,7 @@ private fun BrowserScreen(
                         } else {
                             currentSettings
                         }
-                        webDavSyncManager.applyRecords(syncSettings, bookmarksJson, webAppsJson)
+                        webDavLocalSyncAdapter.applyRecords(syncSettings, bookmarksJson, webAppsJson)
                     }.fold(
                         onSuccess = { applyResult ->
                             okData(applyResult.toJson().put("settings", profileStore.observeSettings().value.toJson()))

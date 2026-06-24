@@ -1,4 +1,4 @@
-import { SYNC_FILES, SYNC_ROOT } from "./index";
+import { SYNC_ROOT } from "./index";
 
 export type WebDavSettings = {
   webDavUrl: string;
@@ -11,11 +11,11 @@ export type RemoteJson<T> = {
   etag: string | null;
 };
 
-export type WebDavDeviceState = {
-  deviceId: string;
-  deviceName: string;
-  clientName: string;
-  deviceStatePrefix?: string;
+export type WebDavEntry = {
+  href: string;
+  path: string;
+  name: string;
+  isCollection: boolean;
 };
 
 export class WebDavClient {
@@ -27,56 +27,61 @@ export class WebDavClient {
 
   async ensureCollections(): Promise<void> {
     await this.mkcol("");
-    await this.mkcol("devices/");
   }
 
-  async getJson<T>(path: string): Promise<RemoteJson<T> | null> {
+  async ensureCollection(path: string): Promise<void> {
+    await this.mkcol(path.endsWith("/") ? path : `${path}/`);
+  }
+
+  async getJson<T>(path: string, options: { requireStrongEtag?: boolean } = {}): Promise<RemoteJson<T> | null> {
     const response = await fetch(this.urlFor(path), {
       method: "GET",
       headers: this.headers(),
     });
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`WebDAV GET failed: HTTP ${response.status}`);
+    const etag = response.headers.get("ETag");
+    if (options.requireStrongEtag && (!etag || etag.startsWith("W/"))) {
+      throw new Error("WebDAV server must provide a strong ETag.");
+    }
     return {
       data: await response.json() as T,
-      etag: response.headers.get("ETag"),
+      etag,
     };
   }
 
-  async putJson(path: string, body: unknown, etag?: string | null): Promise<void> {
+  async putJson(
+    path: string,
+    body: unknown,
+    etag?: string | null,
+    options: { ifNoneMatch?: boolean; bodyText?: string } = {},
+  ): Promise<void> {
     const headers = this.headers({ "Content-Type": "application/json; charset=utf-8" });
-    if (etag) headers.set("If-Match", etag);
+    if (options.ifNoneMatch) {
+      headers.set("If-None-Match", "*");
+    } else if (etag) {
+      headers.set("If-Match", etag);
+    }
     const response = await fetch(this.urlFor(path), {
       method: "PUT",
       headers,
-      body: JSON.stringify(body, null, 2),
+      body: options.bodyText ?? JSON.stringify(body, null, 2),
     });
     if (response.status === 409 || response.status === 412) {
-      throw new WebDavConflictError();
+      throw new WebDavConflictError(response.status);
     }
     if (!response.ok) throw new Error(`WebDAV PUT failed: HTTP ${response.status}`);
   }
 
-  async putManifest(lastWriter: string): Promise<void> {
-    await this.putJson("manifest.json", {
-      type: "hyper-browser-sync",
-      schemaVersion: 1,
-      updatedAt: Date.now(),
-      syncRoot: SYNC_ROOT,
-      lastWriter,
-      files: [...SYNC_FILES],
+  async list(path = ""): Promise<WebDavEntry[]> {
+    const response = await fetch(this.urlFor(path), {
+      method: "PROPFIND",
+      headers: this.headers({ Depth: "1" }),
+      body: "<?xml version=\"1.0\" encoding=\"utf-8\" ?><propfind xmlns=\"DAV:\"><prop><resourcetype /></prop></propfind>",
     });
-  }
-
-  async putDeviceState(state: WebDavDeviceState): Promise<void> {
-    const prefix = state.deviceStatePrefix || state.clientName;
-    await this.putJson(`devices/${safeSegment(prefix)}-${safeSegment(state.deviceId)}.json`, {
-      schemaVersion: 1,
-      deviceId: state.deviceId,
-      deviceName: state.deviceName,
-      client: state.clientName,
-      lastSyncAt: Date.now(),
-    });
+    if (response.status === 404) return [];
+    if (!response.ok && response.status !== 207) throw new Error(`WebDAV PROPFIND failed: HTTP ${response.status}`);
+    return parsePropfind(await response.text(), this.rootUrl, path);
   }
 
   private async mkcol(path: string): Promise<void> {
@@ -85,10 +90,6 @@ export class WebDavClient {
       headers: this.headers(),
     });
     if (response.ok || response.status === 405) return;
-    if (response.status === 409 && path === "devices/") {
-      await this.mkcol("");
-      return;
-    }
     throw new Error(`WebDAV MKCOL failed: HTTP ${response.status}`);
   }
 
@@ -111,8 +112,11 @@ export class WebDavClient {
 }
 
 export class WebDavConflictError extends Error {
-  constructor() {
+  readonly status: number;
+
+  constructor(status = 412) {
     super("WebDAV write conflict.");
+    this.status = status;
   }
 }
 
@@ -132,6 +136,54 @@ function base64Utf8(value: string): string {
   return btoa(binary);
 }
 
-function safeSegment(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]/g, "_") || crypto.randomUUID();
+function parsePropfind(xml: string, rootUrl: string, requestedPath: string): WebDavEntry[] {
+  const root = new URL(rootUrl);
+  const rootPath = ensureTrailingSlash(decodeURIComponent(root.pathname));
+  const requested = normalizeDavPath(requestedPath);
+  const responseMatches = [...xml.matchAll(/<[^:>]*(?::)?response\b[\s\S]*?<\/[^:>]*(?::)?response>/gi)];
+  return responseMatches
+    .map((match) => {
+      const block = match[0];
+      const hrefMatch = block.match(/<[^:>]*(?::)?href\b[^>]*>([\s\S]*?)<\/[^:>]*(?::)?href>/i);
+      if (!hrefMatch) return null;
+      const href = decodeXml(hrefMatch[1].trim());
+      const hrefUrl = new URL(href, rootUrl);
+      const decodedPath = ensureLeadingSlash(decodeURIComponent(hrefUrl.pathname));
+      const relativePath = normalizeDavPath(decodedPath.startsWith(rootPath)
+        ? decodedPath.slice(rootPath.length)
+        : decodedPath.replace(/^\/+/, ""));
+      if (relativePath === requested) return null;
+      const isCollection = /<[^:>]*(?::)?collection\s*\/?>/i.test(block) || hrefUrl.pathname.endsWith("/");
+      const cleanPath = isCollection ? ensureTrailingSlash(relativePath) : relativePath;
+      const name = cleanPath.split("/").filter(Boolean).at(-1) || "";
+      if (!name) return null;
+      return {
+        href,
+        path: cleanPath,
+        name,
+        isCollection,
+      };
+    })
+    .filter((entry): entry is WebDavEntry => !!entry);
+}
+
+function normalizeDavPath(path: string): string {
+  return path.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function ensureTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value : `${value}/`;
+}
+
+function ensureLeadingSlash(value: string): string {
+  return value.startsWith("/") ? value : `/${value}`;
+}
+
+function decodeXml(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'");
 }

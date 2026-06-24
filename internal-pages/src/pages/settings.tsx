@@ -1,14 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { syncLauncherLayout } from "@hyper-launcher/webdav-layout";
 import "../hyper-browser";
 import "../styles.css";
 import { getLocalePreference, matchesI18nText, setLocalePreference, t, type LocalePreference } from "../i18n";
 import type { BatteryOptimizationState, BrowserSettings, UpdateCheckResult, UpdateDownloadState, WebDavSyncResult, WebDavSyncSettings } from "../hyper-browser";
-import { createLauncherLayoutStorage } from "../launcher-layout-storage";
 import { runAndroidWebDavSync } from "../webdav-sync";
-
-const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"];
 
 function SettingsPage() {
   const [query, setQuery] = useState("");
@@ -52,7 +48,6 @@ function SettingsPage() {
   const [updateSettingsExpanded, setUpdateSettingsExpanded] = useState(false);
   const customInputRef = useRef<HTMLInputElement | null>(null);
   const didAutoCheckUpdateRef = useRef(false);
-  const launcherLayoutStorage = useMemo(() => createLauncherLayoutStorage(), []);
   const showSearchEngine = useMemo(() => {
     return matchesI18nText("settings.searchEngineTerms", query);
   }, [query]);
@@ -338,16 +333,6 @@ function SettingsPage() {
             webDavSyncPassword: result.settings.webDavSyncPassword,
             webDavSyncDeviceName: result.settings.webDavSyncDeviceName,
           });
-          if (result.settings.webDavSyncEnabled && result.settings.webDavSyncUrl.trim()) {
-            await syncLauncherLayout(launcherLayoutStorage, {
-              webDavUrl: result.settings.webDavSyncUrl,
-              username: result.settings.webDavSyncUsername,
-              password: result.settings.webDavSyncPassword,
-              deviceId: result.settings.webDavSyncDeviceId,
-              deviceName: result.settings.webDavSyncDeviceName || "Hyper Browser Android",
-              clientName: "hyper-browser-android",
-            }, await launcherSyncOptions());
-          }
         }
         setWebDavDirty(false);
         setWebDavMessage(webDavSyncSummary(result));
@@ -360,16 +345,14 @@ function SettingsPage() {
   }
 
   function webDavSyncSummary(result: WebDavSyncResult) {
-    return t("settings.webDavSyncComplete", {
+    const summary = t("settings.webDavSyncComplete", {
       bookmarks: result.bookmarkCount,
       webApps: result.webAppCount,
       deleted: result.deletedBookmarkCount + result.deletedWebAppCount,
     });
-  }
-
-  async function launcherSyncOptions(): Promise<{ availableEntryIds: string[]; defaultDockEntryIds: string[] }> {
-    const apps = await window.hyperBrowser.requestAppsData().catch(() => []);
-    return { availableEntryIds: apps.map((app) => app.id), defaultDockEntryIds: DEFAULT_DOCK_ENTRY_IDS };
+    return result.pendingOperationCount > 0
+      ? `${summary}${t("settings.webDavSyncPending", { pending: result.pendingOperationCount })}`
+      : summary;
   }
 
   function webDavStatusLabel() {

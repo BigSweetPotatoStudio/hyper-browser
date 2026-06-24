@@ -1,6 +1,7 @@
 import { browser } from "wxt/browser";
 import { DEFAULT_DEVICE_NAME } from "./identity";
-import type { SyncMetadata, SyncSettings } from "./types";
+import type { SyncSettings } from "./types";
+import { createEmptyStore, ensureStore, type SyncV2Store } from "@hyper-sync/op-log";
 
 const DEFAULT_FOLDER_TITLE = "Hyper Browser";
 
@@ -32,30 +33,14 @@ export async function saveSettings(settings: SyncSettings): Promise<void> {
   await storageSet({ settings });
 }
 
-export async function loadMetadata(): Promise<SyncMetadata> {
-  const result = await storageGet<{ metadata?: Partial<SyncMetadata> }>("metadata");
-  return {
-    bookmarks: result.metadata?.bookmarks || {},
-    webApps: result.metadata?.webApps || {},
-  };
+export async function loadSyncV2Store(): Promise<SyncV2Store> {
+  const settings = await loadSettings();
+  const result = await storageGet<{ syncV2Store?: unknown }>("syncV2Store");
+  return result.syncV2Store ? ensureStore(result.syncV2Store, settings.deviceId) : createEmptyStore(settings.deviceId);
 }
 
-export async function saveMetadata(metadata: SyncMetadata): Promise<void> {
-  await storageSet({ metadata });
-}
-
-export async function loadRemoteSyncState(): Promise<{ manifestUpdatedAt: number }> {
-  const result = await storageGet<{ remoteSyncState?: { manifestUpdatedAt?: number } }>("remoteSyncState");
-  const manifestUpdatedAt = result.remoteSyncState?.manifestUpdatedAt;
-  return {
-    manifestUpdatedAt: typeof manifestUpdatedAt === "number" && Number.isFinite(manifestUpdatedAt) && manifestUpdatedAt > 0
-      ? manifestUpdatedAt
-      : 0,
-  };
-}
-
-export async function saveRemoteSyncState(state: { manifestUpdatedAt: number }): Promise<void> {
-  await storageSet({ remoteSyncState: state });
+export async function saveSyncV2Store(store: SyncV2Store): Promise<void> {
+  await storageSet({ syncV2Store: ensureStore(store, store.deviceId) });
 }
 
 export function storageGet<T>(keys: string | string[] | Record<string, unknown> | null): Promise<T> {

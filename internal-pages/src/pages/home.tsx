@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
-import { syncLauncherLayout } from "@hyper-launcher/webdav-layout";
 import "../hyper-browser";
 import type { BrowserSettings, WebDavSyncResult } from "../hyper-browser";
 import "../styles.css";
@@ -44,17 +43,8 @@ function HomePage() {
         const settings = await window.hyperBrowser.requestSettingsData();
         if (!settings.webDavSyncEnabled || !isWebDavConfigured(settings)) return;
         const result = await runAndroidWebDavSync(settings);
-        const syncSettings = result.settings || settings;
-        const layoutResult = await syncLauncherLayout(storage, {
-          webDavUrl: syncSettings.webDavSyncUrl,
-          username: syncSettings.webDavSyncUsername,
-          password: syncSettings.webDavSyncPassword,
-          deviceId: syncSettings.webDavSyncDeviceId,
-          deviceName: syncSettings.webDavSyncDeviceName || "Hyper Browser Android",
-          clientName: "hyper-browser-android",
-        }, await launcherSyncOptions());
         const importedWebApps = result.importedWebAppCount + result.removedWebAppCount > 0;
-        if (layoutResult.changed || importedWebApps || options.refreshLauncher) {
+        if (importedWebApps || options.refreshLauncher) {
           setLayoutRevision((current) => current + 1);
         }
         setSyncState("success");
@@ -74,23 +64,14 @@ function HomePage() {
     try {
       const settings = await window.hyperBrowser.requestSettingsData();
       if (!settings.webDavSyncEnabled || !isWebDavConfigured(settings)) return;
-      const remoteCheck = await checkAndroidWebDavRemoteChanges(lastSeenRemoteUpdatedAt.current);
+      const remoteCheck = await checkAndroidWebDavRemoteChanges();
       if (remoteCheck.updatedAt > 0) lastSeenRemoteUpdatedAt.current = remoteCheck.updatedAt;
       const syncResult = remoteCheck.syncResult || null;
-      const syncSettings = syncResult?.settings || settings;
-      const layoutResult = await syncLauncherLayout(storage, {
-        webDavUrl: syncSettings.webDavSyncUrl,
-        username: syncSettings.webDavSyncUsername,
-        password: syncSettings.webDavSyncPassword,
-        deviceId: syncSettings.webDavSyncDeviceId,
-        deviceName: syncSettings.webDavSyncDeviceName || "Hyper Browser Android",
-        clientName: "hyper-browser-android",
-      }, await launcherSyncOptions());
       if (syncResult) {
         setSyncState("success");
         setSyncMessage(webDavSyncSummary(syncResult));
       }
-      if (layoutResult.changed || remoteCheck.changed) setLayoutRevision((current) => current + 1);
+      if (remoteCheck.changed) setLayoutRevision((current) => current + 1);
     } catch (error) {
       console.warn("Remote sync check failed.", error);
     } finally {
@@ -244,16 +225,8 @@ function HomePage() {
         const settings = result.settings;
         if (settings) {
           setSettingsConfigured(isWebDavConfigured(settings));
-          const layoutResult = await syncLauncherLayout(storage, {
-            webDavUrl: settings.webDavSyncUrl,
-            username: settings.webDavSyncUsername,
-            password: settings.webDavSyncPassword,
-            deviceId: settings.webDavSyncDeviceId,
-            deviceName: settings.webDavSyncDeviceName || "Hyper Browser Android",
-            clientName: "hyper-browser-android",
-          }, await launcherSyncOptions());
           const importedWebApps = result.importedWebAppCount + result.removedWebAppCount > 0;
-          if (layoutResult.changed || importedWebApps) setLayoutRevision((current) => current + 1);
+          if (importedWebApps) setLayoutRevision((current) => current + 1);
         }
         setSyncState("success");
         setSyncMessage(webDavSyncSummary(result));
@@ -296,17 +269,15 @@ function isWebDavConfigured(settings: BrowserSettings): boolean {
   return settings.webDavSyncUrl.trim().length > 0;
 }
 
-async function launcherSyncOptions(): Promise<{ availableEntryIds: string[]; defaultDockEntryIds: string[] }> {
-  const apps = await window.hyperBrowser.requestAppsData().catch(() => []);
-  return { availableEntryIds: apps.map((app) => app.id), defaultDockEntryIds: DEFAULT_DOCK_ENTRY_IDS };
-}
-
 function webDavSyncSummary(result: WebDavSyncResult): string {
-  return t("settings.webDavSyncComplete", {
+  const summary = t("settings.webDavSyncComplete", {
     bookmarks: result.bookmarkCount,
     webApps: result.webAppCount,
     deleted: result.deletedBookmarkCount + result.deletedWebAppCount,
   });
+  return result.pendingOperationCount > 0
+    ? `${summary}${t("settings.webDavSyncPending", { pending: result.pendingOperationCount })}`
+    : summary;
 }
 
 createRoot(document.getElementById("root")!).render(

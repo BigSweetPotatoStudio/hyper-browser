@@ -82,7 +82,7 @@ function OptionsPage() {
             <input className="input" type="text" value={settings.deviceName} onChange={(event) => update("deviceName", event.currentTarget.value)} />
           </label>
         </div>
-        <p className="message">Remote files are stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, manifest.json, and devices/.</p>
+        <p className="message">Remote data is stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, and manifest.json.</p>
         <div className="actions">
           <button className="button primary" type="button" disabled={busy || !settings.webDavUrl.trim()} onClick={sync}>
             {busy ? "Syncing..." : "Sync"}
@@ -97,11 +97,10 @@ function OptionsPage() {
 }
 
 function syncResultMessage(result: SyncResult): string {
-  const deleted = result.deletedBookmarkCount > 0 ? ` Tombstones: ${result.deletedBookmarkCount}.` : "";
-  const layout = result.launcherLayout?.direction && result.launcherLayout.direction !== "none"
-    ? ` Launcher layout ${result.launcherLayout.direction}.`
-    : "";
-  return `Synced ${result.bookmarkCount} bookmarks in "${result.folderTitle}".${deleted}${layout}`;
+  const deleted = result.deletedBookmarkCount + result.deletedWebAppCount;
+  const tombstones = deleted > 0 ? ` Tombstones: ${deleted}.` : "";
+  const pending = result.pendingOperationCount > 0 ? ` Pending changes: ${result.pendingOperationCount}.` : "";
+  return `Synced ${result.bookmarkCount} bookmarks and ${result.webAppCount} WebApps in "${result.folderTitle}".${tombstones}${pending}`;
 }
 
 function normalizeSettings(settings: SyncSettings): SyncSettings {
