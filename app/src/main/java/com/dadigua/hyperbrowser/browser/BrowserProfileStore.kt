@@ -610,7 +610,7 @@ class BrowserProfileStore(context: Context) {
         val cleanUrl = if (cleanKind == BOOKMARK_KIND_FOLDER) "" else normalizeBookmarkUrl(bookmark.url)
         if (cleanKind == BOOKMARK_KIND_BOOKMARK && cleanUrl.isBlank()) return null
         val identityKey = if (cleanKind == BOOKMARK_KIND_FOLDER) {
-            folderBookmarkIdentityKey(cleanParentId, bookmark.title, cleanIndex)
+            bookmark.identityKey.trim().ifBlank { folderBookmarkIdentityKey(cleanParentId, bookmark.title, cleanIndex) }
         } else {
             bookmarkIdentityKey(bookmark.identityKey.ifBlank { cleanUrl })
         }

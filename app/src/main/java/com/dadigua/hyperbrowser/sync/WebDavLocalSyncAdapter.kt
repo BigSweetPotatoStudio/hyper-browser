@@ -124,12 +124,6 @@ class WebDavLocalSyncAdapter(
                     } else {
                         bookmarkIdentityKey(url)
                     }
-                }.let {
-                    if (kind == BOOKMARK_KIND_FOLDER) {
-                        folderBookmarkIdentityKey(bookmark.parentId, bookmark.title, bookmark.index)
-                    } else {
-                        it
-                    }
                 },
                 parentId = bookmark.parentId,
                 index = bookmark.index,
@@ -208,6 +202,9 @@ class WebDavLocalSyncAdapter(
     private fun applyBookmarks(records: Collection<SyncBookmarkRecord>): ApplyCounts {
         val currentById = profileStore.observeBookmarks().value.associateBy { it.id }
         val activeRecords = bookmarkRecordsById(records.filter { it.deletedAt == null })
+        if (activeRecords.isEmpty() && currentById.isNotEmpty()) {
+            return ApplyCounts(imported = 0, removed = 0)
+        }
         var removed = 0
         val imports = mutableListOf<BrowserBookmark>()
         currentById.values.forEach { current ->
@@ -349,8 +346,8 @@ private class WebDavSyncMetadataStore(context: Context) {
         return runCatching {
             val root = JSONObject(file.readText())
             SyncMetadata(
-                bookmarks = bookmarkRecordsById(parseBookmarkRecords(root.optJSONArray("bookmarks") ?: JSONArray())),
-                webApps = parseWebAppRecords(root.optJSONArray("webApps") ?: JSONArray()).associateBy { it.id }
+                bookmarks = bookmarkRecordsById(parseBookmarkRecords(root.opt("bookmarks") ?: JSONArray())),
+                webApps = parseWebAppRecords(root.opt("webApps") ?: JSONArray()).associateBy { it.id }
             )
         }.getOrDefault(SyncMetadata(emptyMap(), emptyMap()))
     }
@@ -469,7 +466,7 @@ private fun parseBookmarkRecords(raw: String?): List<SyncBookmarkRecord> {
     if (raw.isNullOrBlank()) return emptyList()
     return runCatching {
         val root = JSONObject(raw)
-        parseBookmarkRecords(root.optJSONArray("items") ?: root.optJSONArray("bookmarks") ?: JSONArray())
+        parseBookmarkRecords(root.opt("items") ?: root.opt("bookmarks") ?: JSONArray())
     }.getOrDefault(emptyList())
 }
 
@@ -485,55 +482,79 @@ private fun parseBookmarkRecordsPayload(raw: String?): List<SyncBookmarkRecord> 
     }.getOrDefault(emptyList())
 }
 
+private fun parseBookmarkRecords(value: Any?): List<SyncBookmarkRecord> =
+    when (value) {
+        is JSONArray -> parseBookmarkRecords(value)
+        is JSONObject -> parseBookmarkRecordsMap(value)
+        else -> emptyList()
+    }
+
+private fun parseBookmarkRecordsMap(map: JSONObject): List<SyncBookmarkRecord> =
+    buildList {
+        val keys = map.keys()
+        var index = 0
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val item = map.optJSONObject(key) ?: continue
+            parseBookmarkRecord(item, fallbackId = key, fallbackIndex = index)?.let(::add)
+            index += 1
+        }
+    }
+
 private fun parseBookmarkRecords(array: JSONArray): List<SyncBookmarkRecord> =
     buildList {
         for (index in 0 until array.length()) {
             val item = array.optJSONObject(index) ?: continue
-            val kind = if (item.optString("kind") == BOOKMARK_KIND_FOLDER) BOOKMARK_KIND_FOLDER else BOOKMARK_KIND_BOOKMARK
-            val parentId = item.optCleanString("parentId")
-            val recordIndex = if (item.has("index") && !item.isNull("index")) item.optInt("index") else index
-            val url = if (kind == BOOKMARK_KIND_FOLDER) "" else normalizeBookmarkUrl(item.optString("url"))
-            if (kind == BOOKMARK_KIND_BOOKMARK && url.isBlank()) continue
-            val updatedAt = item.optLong("updatedAt").takeIf { it > 0 }
-                ?: item.optLong("createdAt").takeIf { it > 0 }
-                ?: System.currentTimeMillis()
-            val title = item.optString("title").ifBlank { if (kind == BOOKMARK_KIND_FOLDER) "Folder" else url }
-            val identityKey = if (kind == BOOKMARK_KIND_FOLDER) {
-                folderBookmarkIdentityKey(parentId, title, recordIndex)
-            } else {
-                item.optCleanString("identityKey") ?: bookmarkIdentityKey(url)
-            }
-            val id = item.optString("id").trim().ifBlank {
-                if (kind == BOOKMARK_KIND_FOLDER) {
-                    stableFolderBookmarkId(parentId, title, recordIndex)
-                } else {
-                    stableBookmarkIdForUrl(url)
-                }
-            }
-            add(
-                SyncBookmarkRecord(
-                    id = id,
-                    kind = kind,
-                    identityKey = identityKey,
-                    parentId = parentId,
-                    index = recordIndex,
-                    url = url,
-                    title = title,
-                    createdAt = item.optLong("createdAt", updatedAt),
-                    updatedAt = updatedAt,
-                    deletedAt = item.optNullableLong("deletedAt"),
-                    sourceDeviceId = item.optString("sourceDeviceId"),
-                    iconDataUrl = item.optCleanString("iconDataUrl")
-                )
-            )
+            parseBookmarkRecord(item, fallbackId = null, fallbackIndex = index)?.let(::add)
         }
     }
+
+private fun parseBookmarkRecord(item: JSONObject, fallbackId: String?, fallbackIndex: Int): SyncBookmarkRecord? {
+    val kind = if (item.optString("kind") == BOOKMARK_KIND_FOLDER) BOOKMARK_KIND_FOLDER else BOOKMARK_KIND_BOOKMARK
+    val parentId = item.optCleanString("parentId")
+    val recordIndex = if (item.has("index") && !item.isNull("index")) item.optInt("index") else fallbackIndex
+    val url = if (kind == BOOKMARK_KIND_FOLDER) "" else normalizeBookmarkUrl(item.optString("url"))
+    if (kind == BOOKMARK_KIND_BOOKMARK && url.isBlank()) return null
+    val updatedAt = item.optLong("updatedAt").takeIf { it > 0 }
+        ?: item.optLong("createdAt").takeIf { it > 0 }
+        ?: System.currentTimeMillis()
+    val title = item.optString("title").ifBlank { if (kind == BOOKMARK_KIND_FOLDER) "Folder" else url }
+    val identityKey = item.optCleanString("identityKey") ?: if (kind == BOOKMARK_KIND_FOLDER) {
+        folderBookmarkIdentityKey(parentId, title, recordIndex)
+    } else {
+        bookmarkIdentityKey(url)
+    }
+    val id = item.optString("id").trim().ifBlank {
+        fallbackId?.trim().orEmpty().ifBlank {
+            if (kind == BOOKMARK_KIND_FOLDER) {
+                stableFolderBookmarkId(parentId, title, recordIndex)
+            } else {
+                stableBookmarkIdForUrl(url)
+            }
+        }
+    }
+    if (id.isBlank()) return null
+    return SyncBookmarkRecord(
+        id = id,
+        kind = kind,
+        identityKey = identityKey,
+        parentId = parentId,
+        index = recordIndex,
+        url = url,
+        title = title,
+        createdAt = item.optLong("createdAt", updatedAt),
+        updatedAt = updatedAt,
+        deletedAt = item.optNullableLong("deletedAt"),
+        sourceDeviceId = item.optString("sourceDeviceId"),
+        iconDataUrl = item.optCleanString("iconDataUrl")
+    )
+}
 
 private fun parseWebAppRecords(raw: String?): List<SyncWebAppRecord> {
     if (raw.isNullOrBlank()) return emptyList()
     return runCatching {
         val root = JSONObject(raw)
-        parseWebAppRecords(root.optJSONArray("items") ?: root.optJSONArray("webApps") ?: JSONArray())
+        parseWebAppRecords(root.opt("items") ?: root.opt("apps") ?: root.opt("webApps") ?: JSONArray())
     }.getOrDefault(emptyList())
 }
 
@@ -549,34 +570,57 @@ private fun parseWebAppRecordsPayload(raw: String?): List<SyncWebAppRecord> {
     }.getOrDefault(emptyList())
 }
 
+private fun parseWebAppRecords(value: Any?): List<SyncWebAppRecord> =
+    when (value) {
+        is JSONArray -> parseWebAppRecords(value)
+        is JSONObject -> parseWebAppRecordsMap(value)
+        else -> emptyList()
+    }
+
+private fun parseWebAppRecordsMap(map: JSONObject): List<SyncWebAppRecord> =
+    buildList {
+        val keys = map.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val item = map.optJSONObject(key) ?: continue
+            parseWebAppRecord(item, fallbackId = key)?.let(::add)
+        }
+    }
+
 private fun parseWebAppRecords(array: JSONArray): List<SyncWebAppRecord> =
     buildList {
         for (index in 0 until array.length()) {
             val item = array.optJSONObject(index) ?: continue
-            val startUrl = item.optString("startUrl").trim()
-            if (startUrl.isBlank()) continue
-            val updatedAt = item.optLong("updatedAt").takeIf { it > 0 }
-                ?: item.optLong("createdAt").takeIf { it > 0 }
-                ?: System.currentTimeMillis()
-            add(
-                SyncWebAppRecord(
-                    id = item.optString("id").ifBlank { UUID.nameUUIDFromBytes(startUrl.toByteArray(Charsets.UTF_8)).toString() },
-                    name = item.optString("name").ifBlank { startUrl },
-                    startUrl = startUrl,
-                    scopeUrl = item.optString("scopeUrl"),
-                    themeColor = item.optInt("themeColor", Color.rgb(18, 109, 106)),
-                    displayMode = item.optString("displayMode", "standalone"),
-                    createdAt = item.optLong("createdAt", updatedAt),
-                    lastOpenedAt = item.optLong("lastOpenedAt", updatedAt),
-                    updatedAt = updatedAt,
-                    deletedAt = item.optNullableLong("deletedAt"),
-                    sourceDeviceId = item.optString("sourceDeviceId"),
-                    iconDataUrl = item.optString("iconDataUrl").ifBlank { null },
-                    iconSource = item.optString("iconSource").ifBlank { null }
-                )
-            )
+            parseWebAppRecord(item, fallbackId = null)?.let(::add)
         }
     }
+
+private fun parseWebAppRecord(item: JSONObject, fallbackId: String?): SyncWebAppRecord? {
+    val startUrl = item.optString("startUrl").trim()
+    if (startUrl.isBlank()) return null
+    val updatedAt = item.optLong("updatedAt").takeIf { it > 0 }
+        ?: item.optLong("createdAt").takeIf { it > 0 }
+        ?: System.currentTimeMillis()
+    return SyncWebAppRecord(
+        id = item.optString("id").ifBlank {
+            fallbackId?.trim().orEmpty().ifBlank {
+                UUID.nameUUIDFromBytes(startUrl.toByteArray(Charsets.UTF_8)).toString()
+            }
+        },
+        name = item.optString("name").ifBlank { startUrl },
+        startUrl = startUrl,
+        scopeUrl = item.optString("scopeUrl"),
+        themeColor = item.optInt("themeColor", Color.rgb(18, 109, 106)),
+        displayMode = item.optString("displayMode", "standalone"),
+        createdAt = item.optLong("createdAt", updatedAt),
+        lastOpenedAt = item.optLong("lastOpenedAt", updatedAt),
+        updatedAt = updatedAt,
+        deletedAt = item.optNullableLong("deletedAt"),
+        sourceDeviceId = item.optString("sourceDeviceId"),
+        iconDataUrl = item.optString("iconDataUrl").ifBlank { null },
+        iconSource = item.optString("iconSource").ifBlank { null }
+    )
+}
 
 private fun bookmarksArray(records: Collection<SyncBookmarkRecord>): JSONArray =
     JSONArray().apply {

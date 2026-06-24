@@ -6,6 +6,9 @@ const BOOKMARKS_FILE = "bookmarks.json";
 const WEBAPPS_FILE = "webapps.json";
 const LAUNCHER_FILE = "launcher.json";
 const MANIFEST_FILE = "manifest.json";
+const TOMBSTONE_COMPACT_TRIGGER = 1500;
+const TOMBSTONE_COMPACT_TARGET = 500;
+const TOMBSTONE_MIN_RETENTION_MS = 0;
 
 export type Revision = {
   counter: number;
@@ -242,6 +245,8 @@ function sanitizeState(state: SyncV2State): SyncV2State {
     }
   });
 
+  compactStateTombstones(clean);
+
   return clean;
 }
 
@@ -360,7 +365,9 @@ function appendBookmarkSnapshotOperations(store: SyncV2Store, bookmarks: Bookmar
     localKeys.add(bookmarkTombstoneKey(record));
   });
   if (mode === "tree") {
-    activeBookmarksFromState(store.state).forEach((bookmark) => {
+    const remoteActive = activeBookmarksFromState(store.state);
+    if (local.size === 0 && remoteActive.length > 0) return next;
+    remoteActive.forEach((bookmark) => {
       if (!local.has(bookmark.id) && !localKeys.has(bookmarkTombstoneKey(bookmark))) {
         next = appendOperation(next, { type: "bookmark.delete", ...bookmarkDeleteInput(bookmark) });
       }
@@ -500,6 +507,11 @@ export async function syncV2(options: {
     await options.withLocalLock(async () => {
       let store = ensureStore(await options.loadStore(), options.settings.deviceId);
       const previousState = store.state;
+      store = {
+        ...store,
+        counter: Math.max(store.counter, maxStateCounter(remote.state)),
+        state: mergeState(store.state, remote.state),
+      };
       if (options.loadLocalSnapshot) {
         store = appendLocalSnapshotOperations(store, await options.loadLocalSnapshot());
       }
@@ -635,6 +647,52 @@ function pickLww<T extends { rev?: Revision }>(left?: T, right?: T): T | undefin
   if (order > 0) return cloneJson(left);
   if (order < 0) return cloneJson(right);
   return canonicalJson(left) >= canonicalJson(right) ? cloneJson(left) : cloneJson(right);
+}
+
+function compactStateTombstones(state: SyncV2State): void {
+  state.bookmarkTombstones = compactTombstones(state.bookmarkTombstones);
+  state.appTombstones = compactTombstones(state.appTombstones);
+  state.layout.itemTombstones = compactTombstones(state.layout.itemTombstones);
+}
+
+function compactTombstones(tombstones: Record<string, SyncV2Tombstone>): Record<string, SyncV2Tombstone> {
+  const entries = Object.entries(tombstones || {}).filter(([, tombstone]) => tombstone?.rev);
+  if (entries.length <= TOMBSTONE_COMPACT_TRIGGER) return tombstones;
+
+  const now = Date.now();
+  const retained: Array<[string, SyncV2Tombstone]> = [];
+  const compactable: Array<[string, SyncV2Tombstone]> = [];
+  entries.forEach((entry) => {
+    const deletedAt = tombstoneDeletedAtMs(entry[1]);
+    if (TOMBSTONE_MIN_RETENTION_MS > 0 && deletedAt > 0 && now - deletedAt <= TOMBSTONE_MIN_RETENTION_MS) {
+      retained.push(entry);
+    } else {
+      compactable.push(entry);
+    }
+  });
+
+  const compactableKeepCount = Math.max(0, TOMBSTONE_COMPACT_TARGET - retained.length);
+  const kept = [
+    ...retained,
+    ...compactable.sort(compareTombstoneEntriesNewestFirst).slice(0, compactableKeepCount),
+  ];
+  return Object.fromEntries(kept.sort(([left], [right]) => left.localeCompare(right)));
+}
+
+function compareTombstoneEntriesNewestFirst(
+  left: [string, SyncV2Tombstone],
+  right: [string, SyncV2Tombstone],
+): number {
+  const timeDelta = tombstoneDeletedAtMs(right[1]) - tombstoneDeletedAtMs(left[1]);
+  if (timeDelta !== 0) return timeDelta;
+  const revDelta = compareRevision(right[1].rev, left[1].rev);
+  if (revDelta !== 0) return revDelta;
+  return left[0].localeCompare(right[0]);
+}
+
+function tombstoneDeletedAtMs(tombstone: SyncV2Tombstone): number {
+  const value = Date.parse(tombstone.deletedAt || "");
+  return Number.isFinite(value) ? value : 0;
 }
 
 async function readRemoteStateFiles(client: WebDavClient): Promise<RemoteStateFiles> {
