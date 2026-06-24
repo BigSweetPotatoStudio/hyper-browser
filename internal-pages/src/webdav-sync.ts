@@ -42,20 +42,21 @@ export async function runAndroidWebDavSyncIfEnabled(): Promise<WebDavSyncResult 
 
 export async function checkAndroidWebDavRemoteChanges(): Promise<{
   changed: boolean;
+  stateChanged: boolean;
+  launcherChanged: boolean;
   synced: boolean;
   updatedAt: number;
   syncResult?: WebDavSyncResult;
 }> {
   const settings = await window.hyperBrowser.requestSettingsData();
   if (!settings.webDavSyncEnabled || !settings.webDavSyncUrl.trim()) {
-    return { changed: false, synced: false, updatedAt: 0 };
+    return { changed: false, stateChanged: false, launcherChanged: false, synced: false, updatedAt: 0 };
   }
-  const before = await readStoredStore(settings.webDavSyncDeviceId);
   const syncResult = await runAndroidWebDavSync(settings);
-  const after = await readStoredStore(settings.webDavSyncDeviceId);
-  const changed = canonicalJson(before.state) !== canonicalJson(after.state);
   return {
-    changed,
+    changed: syncResult.launcherChanged,
+    stateChanged: syncResult.stateChanged,
+    launcherChanged: syncResult.launcherChanged,
     synced: true,
     updatedAt: Date.now(),
     syncResult,
@@ -79,7 +80,17 @@ async function applyAndroidState(state: SyncV2State): Promise<void> {
     bookmarks: activeBookmarksFromState(clean),
     webApps: activeWebAppsFromState(clean),
   });
-  await window.hyperBrowser.saveLauncherLayout(layoutFromState(clean));
+  const nextLayout = layoutFromState(clean);
+  const currentLayout = await window.hyperBrowser.requestLauncherLayout().catch(() => null);
+  if (canonicalLauncherLayout(currentLayout) !== canonicalLauncherLayout(nextLayout)) {
+    await window.hyperBrowser.saveLauncherLayout(nextLayout);
+  }
+}
+
+function canonicalLauncherLayout(layout: unknown): string {
+  if (!layout || typeof layout !== "object" || Array.isArray(layout)) return "";
+  const { updatedAt: _updatedAt, ...rest } = layout as Record<string, unknown>;
+  return canonicalJson(rest);
 }
 
 async function withLocalLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -149,6 +160,8 @@ function syncResultFromState(
   const previousBookmarks = new Set(activeBookmarksFromState(previous).map((bookmark) => bookmark.url));
   const previousWebApps = new Set(activeWebAppsFromState(previous).map((app) => app.id));
   return {
+    stateChanged: sync.stateChanged,
+    launcherChanged: sync.launcherChanged,
     bookmarkCount: bookmarks.length,
     webAppCount: webApps.length,
     deletedBookmarkCount: Object.keys(state.bookmarkTombstones).length,

@@ -100,6 +100,8 @@ export type SyncV2LocalSnapshot = {
 
 export type SyncV2Result = {
   state: SyncV2State;
+  stateChanged: boolean;
+  launcherChanged: boolean;
   uploadedOperationCount: number;
   remoteOperationCount: number;
   pendingOperationCount: number;
@@ -432,16 +434,21 @@ export async function syncV2(options: {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const remote = await readRemoteStateFiles(client);
     let mergedState = createEmptyState();
+    let stateChanged = false;
+    let launcherChanged = false;
     let uploadedOperationCount = 0;
     let pendingOperationCount = 0;
 
     await options.withLocalLock(async () => {
       let store = ensureStore(await options.loadStore(), options.settings.deviceId);
+      const previousState = store.state;
       if (options.loadLocalSnapshot) {
         store = appendLocalSnapshotOperations(store, await options.loadLocalSnapshot());
       }
       uploadedOperationCount = store.outbox.length;
       mergedState = mergeState(store.state, remote.state);
+      stateChanged = canonicalJson(previousState) !== canonicalJson(mergedState);
+      launcherChanged = launcherStateSignature(previousState) !== launcherStateSignature(mergedState);
       store = {
         ...store,
         counter: Math.max(store.counter, maxStateCounter(mergedState)),
@@ -468,6 +475,8 @@ export async function syncV2(options: {
       if (pendingOperationCount > 0) continue;
       return {
         state: mergedState,
+        stateChanged,
+        launcherChanged,
         uploadedOperationCount,
         remoteOperationCount: countRemoteRecords(remote.state),
         pendingOperationCount,
@@ -496,6 +505,8 @@ export async function syncV2(options: {
 
     return {
       state: mergedState,
+      stateChanged,
+      launcherChanged,
       uploadedOperationCount,
       remoteOperationCount: countRemoteRecords(remote.state),
       pendingOperationCount,
@@ -504,6 +515,15 @@ export async function syncV2(options: {
   }
 
   throw new Error("WebDAV sync conflict retry limit reached.");
+}
+
+function launcherStateSignature(state: SyncV2State): string {
+  const clean = ensureState(state);
+  return canonicalJson({
+    apps: clean.apps,
+    appTombstones: clean.appTombstones,
+    layout: clean.layout,
+  });
 }
 
 function mergeState(leftState: SyncV2State, rightState: SyncV2State): SyncV2State {

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
+import { shouldRefreshLauncherAfterSync } from "@hyper-sync";
 import { DEFAULT_DEVICE_NAME } from "../identity";
 import { getDefaultSettings, loadSettings, saveSettings } from "../storage";
 import { DEFAULT_DOCK_ENTRY_IDS, DEPRECATED_ENTRY_IDS, launcherLayoutStorage } from "../launcher-layout";
@@ -100,8 +101,8 @@ function CompanionHomePage() {
     remoteCheckRunning.current = true;
     try {
       if (syncRunning.current) return;
-      const result = await sendCommand<{ changed: boolean; synced: boolean; updatedAt: number }>("remote.check");
-      if (result.changed || result.synced) setLayoutRevision((current) => current + 1);
+      const result = await sendCommand<{ changed: boolean; launcherChanged?: boolean; synced: boolean; updatedAt: number }>("remote.check");
+      if (shouldRefreshLauncherAfterSync(result)) setLayoutRevision((current) => current + 1);
     } catch (error) {
       console.warn("Remote sync check failed.", error);
     } finally {

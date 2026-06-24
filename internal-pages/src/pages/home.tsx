@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
+import { shouldRefreshLauncherAfterSync, shouldUpdateSyncStatusAfterRemoteCheck } from "@hyper-sync";
 import "../hyper-browser";
 import type { BrowserSettings, WebDavSyncResult } from "../hyper-browser";
 import "../styles.css";
@@ -67,11 +68,11 @@ function HomePage() {
       const remoteCheck = await checkAndroidWebDavRemoteChanges();
       if (remoteCheck.updatedAt > 0) lastSeenRemoteUpdatedAt.current = remoteCheck.updatedAt;
       const syncResult = remoteCheck.syncResult || null;
-      if (syncResult) {
+      if (syncResult && shouldUpdateSyncStatusAfterRemoteCheck(remoteCheck)) {
         setSyncState("success");
         setSyncMessage(webDavSyncSummary(syncResult));
       }
-      if (remoteCheck.changed) setLayoutRevision((current) => current + 1);
+      if (shouldRefreshLauncherAfterSync(remoteCheck)) setLayoutRevision((current) => current + 1);
     } catch (error) {
       console.warn("Remote sync check failed.", error);
     } finally {

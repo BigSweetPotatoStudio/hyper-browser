@@ -71,6 +71,8 @@ type WebDavSyncSettings = Pick<BrowserSettings,
 >;
 
 type WebDavSyncResult = {
+  stateChanged: boolean;
+  launcherChanged: boolean;
   bookmarkCount: number;
   webAppCount: number;
   deletedBookmarkCount: number;

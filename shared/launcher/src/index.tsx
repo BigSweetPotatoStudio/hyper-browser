@@ -334,6 +334,7 @@ export function LauncherPage({ platform, layoutStorage, labels: labelOverrides, 
   const [editMode, setEditMode] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dropPreview, setDropPreview] = useState<DropPreview | null>(null);
+  const hasLoadedDesktop = useRef(false);
   const longPressTimer = useRef<number | null>(null);
   const pointerX = useRef<number | null>(null);
   const pointerY = useRef<number | null>(null);
@@ -344,7 +345,7 @@ export function LauncherPage({ platform, layoutStorage, labels: labelOverrides, 
   useEffect(() => {
     let cancelled = false;
     async function loadDesktop() {
-      if (!cancelled) setLoading(true);
+      if (!cancelled && !hasLoadedDesktop.current) setLoading(true);
       let nextLayout: LauncherLayout | null = null;
       let nextApps: LauncherApp[] | null = null;
 
@@ -364,6 +365,7 @@ export function LauncherPage({ platform, layoutStorage, labels: labelOverrides, 
         if (!cancelled) {
           if (nextLayout) setLayout(nextLayout);
           if (nextApps) setApps(nextApps);
+          hasLoadedDesktop.current = true;
           setLoading(false);
         }
       }

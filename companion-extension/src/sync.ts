@@ -9,6 +9,7 @@ import {
   canonicalJson,
   layoutFromState,
   syncV2,
+  type SyncV2Result,
   type SyncV2State,
   type SyncV2Store,
 } from "@hyper-sync/op-log";
@@ -25,6 +26,8 @@ export async function syncNow(): Promise<SyncResult> {
   const before = (await loadSyncV2Store()).state;
   let result = {
     state: before,
+    stateChanged: false,
+    launcherChanged: false,
     uploadedOperationCount: 0,
     remoteOperationCount: 0,
     pendingOperationCount: 0,
@@ -47,6 +50,8 @@ export async function syncNow(): Promise<SyncResult> {
       await saveLocalState(settings, next.state);
       result = {
         state: next.state,
+        stateChanged: canonicalJson(before) !== canonicalJson(next.state),
+        launcherChanged: false,
         uploadedOperationCount: 0,
         remoteOperationCount: 0,
         pendingOperationCount: next.outbox.length,
@@ -213,13 +218,15 @@ function syncResultFromState(
   state: SyncV2State,
   previous: SyncV2State,
   settings: SyncSettings,
-  sync: { uploadedOperationCount: number; remoteOperationCount: number; pendingOperationCount: number; syncedAt: number },
+  sync: Pick<SyncV2Result, "stateChanged" | "launcherChanged" | "uploadedOperationCount" | "remoteOperationCount" | "pendingOperationCount" | "syncedAt">,
 ): SyncResult {
   const bookmarks = activeBookmarksFromState(state);
   const webApps = activeWebAppsFromState(state);
   const previousBookmarks = new Set(activeBookmarksFromState(previous).map((bookmark) => bookmark.url));
   const previousWebApps = new Set(activeWebAppsFromState(previous).map((app) => app.id));
   return {
+    stateChanged: sync.stateChanged,
+    launcherChanged: sync.launcherChanged,
     bookmarkCount: bookmarks.length,
     deletedBookmarkCount: Object.keys(state.bookmarkTombstones).length,
     importedBookmarkCount: bookmarks.filter((bookmark) => !previousBookmarks.has(bookmark.url)).length,

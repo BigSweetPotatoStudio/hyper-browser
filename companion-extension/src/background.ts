@@ -1,6 +1,5 @@
 import { browser, type Browser } from "wxt/browser";
-import { canonicalJson } from "@hyper-sync/op-log";
-import { loadSettings, loadSyncV2Store } from "./storage";
+import { loadSettings } from "./storage";
 import { addBookmarkToSyncFolder, deleteRemoteWebApp, loadRemoteWebApps, saveRemoteWebApp, syncNow } from "./sync";
 import type { WebAppRecord } from "./types";
 
@@ -192,18 +191,22 @@ async function withBookmarkEventsMuted<T>(operation: () => Promise<T>): Promise<
   }
 }
 
-async function checkRemoteChanges(options: { notifyPages: boolean } = { notifyPages: false }): Promise<{ changed: boolean; synced: boolean; updatedAt: number }> {
-  if (remoteCheckRunning) return { changed: false, synced: false, updatedAt: 0 };
+async function checkRemoteChanges(options: { notifyPages: boolean } = { notifyPages: false }): Promise<{ changed: boolean; stateChanged: boolean; launcherChanged: boolean; synced: boolean; updatedAt: number }> {
+  if (remoteCheckRunning) return { changed: false, stateChanged: false, launcherChanged: false, synced: false, updatedAt: 0 };
   remoteCheckRunning = true;
   try {
     const settings = await loadSettings();
-    if (!settings.webDavUrl.trim()) return { changed: false, synced: false, updatedAt: 0 };
-    const before = canonicalJson(await loadSyncV2Store());
-    await runBookmarkSyncNow();
-    const changed = before !== canonicalJson(await loadSyncV2Store());
+    if (!settings.webDavUrl.trim()) return { changed: false, stateChanged: false, launcherChanged: false, synced: false, updatedAt: 0 };
+    const result = await runBookmarkSyncNow();
     const updatedAt = Date.now();
-    if (changed && options.notifyPages) notifyRemoteSynced(updatedAt);
-    return { changed, synced: true, updatedAt };
+    if (result.launcherChanged && options.notifyPages) notifyRemoteSynced(updatedAt);
+    return {
+      changed: result.launcherChanged,
+      stateChanged: result.stateChanged,
+      launcherChanged: result.launcherChanged,
+      synced: true,
+      updatedAt,
+    };
   } finally {
     remoteCheckRunning = false;
   }

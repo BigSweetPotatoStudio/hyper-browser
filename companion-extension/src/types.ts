@@ -1,6 +1,8 @@
 export type { BookmarkRecord, SyncSettings, WebAppRecord } from "@hyper-sync";
 
 export type SyncResult = {
+  stateChanged: boolean;
+  launcherChanged: boolean;
   bookmarkCount: number;
   deletedBookmarkCount: number;
   importedBookmarkCount: number;
