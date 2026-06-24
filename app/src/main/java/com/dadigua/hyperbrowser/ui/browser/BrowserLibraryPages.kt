@@ -93,7 +93,7 @@ internal fun BookmarksPage(
         title = stringResource(R.string.library_bookmarks_title),
         emptyTitle = stringResource(R.string.library_bookmarks_empty_title),
         emptyBody = stringResource(R.string.library_bookmarks_empty_body),
-        items = bookmarks,
+        items = bookmarks.filterNot { it.isFolder },
         onBack = onBack,
         onOpen = { onOpen(it.url) },
         onRemove = { onRemove(it.url) },

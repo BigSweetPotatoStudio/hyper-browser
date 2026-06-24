@@ -1603,12 +1603,6 @@ sealed interface HyperCommand {
 
     sealed interface Bookmarks : HyperCommand {
         data class Open(val url: String) : Bookmarks
-        data class Remove(val url: String) : Bookmarks
-        data class Edit(
-            val oldUrl: String,
-            val title: String,
-            val url: String
-        ) : Bookmarks
     }
 
     sealed interface History : HyperCommand {

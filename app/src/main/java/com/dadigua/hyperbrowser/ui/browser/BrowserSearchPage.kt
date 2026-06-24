@@ -96,7 +96,7 @@ internal fun buildBrowserSearchSuggestions(
 
     val seenPageUrls = mutableSetOf<String>()
     val suggestions = mutableListOf<BrowserSearchSuggestion>()
-    bookmarks.forEach { bookmark ->
+    bookmarks.filterNot { it.isFolder }.forEach { bookmark ->
         if (seenPageUrls.add(bookmark.url)) {
             suggestions += BrowserSearchSuggestion(
                 title = bookmark.title,

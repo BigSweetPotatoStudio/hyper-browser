@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useRef, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
@@ -8,58 +8,110 @@ import type { BookmarkItem } from "../hyper-browser";
 import { sendBackgroundCommand } from "../background-command";
 
 function BookmarksPage() {
-  const [bookmarks, setBookmarks] = useState<BookmarkItem[] | null>(() => readBootstrapData<BookmarkItem>());
-  const [editingUrl, setEditingUrl] = useState<string | null>(null);
+  const [bookmarks, setBookmarks] = useState<BookmarkItem[] | null>(() => {
+    const bootstrap = readBootstrapData<BookmarkItem>();
+    return bootstrap ? normalizeBookmarkItems(bootstrap) : null;
+  });
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingRemove, setPendingRemove] = useState<BookmarkItem | null>(null);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
-    if (bookmarks !== null) return;
+    if (bookmarks !== null && bookmarks.length > 0) return;
     loadBookmarks();
-  }, [bookmarks]);
+  }, []);
+
+  useEffect(() => {
+    if (!currentFolderId || !bookmarks) return;
+    if (!bookmarks.some((bookmark) => bookmark.id === currentFolderId && bookmark.kind === "folder")) {
+      setCurrentFolderId(null);
+    }
+  }, [bookmarks, currentFolderId]);
 
   function loadBookmarks() {
     setFailed(false);
-    setBookmarks(null);
-    window.hyperBrowser.requestBookmarksData()
+    sendBackgroundCommand<BookmarkItem[]>("bookmarks.list")
       .then((items) => {
-        setBookmarks(items);
+        setBookmarks(normalizeBookmarkItems(items));
         setFailed(false);
       })
       .catch(() => setFailed(true));
   }
 
-  function remove(url: string) {
-    setBookmarks((items) => (items || []).filter((item) => item.url !== url));
-    setEditingUrl((current) => current === url ? null : current);
-    setPendingRemove(null);
-    window.hyperBrowser.removeBookmark(url)
-      .then(() => sendBackgroundCommand("sync.soon"))
-      .catch((error) => console.warn("Unable to schedule bookmark removal sync.", error));
+  function goBack() {
+    if (!currentFolderId || !bookmarks) {
+      window.location.href = "hyper://home";
+      return;
+    }
+    const current = bookmarks.find((bookmark) => bookmark.id === currentFolderId);
+    setCurrentFolderId(current?.parentId || null);
   }
 
-  function save(oldUrl: string, title: string, url: string) {
-    const cleanUrl = url.trim();
-    const cleanTitle = title.trim();
-    if (!cleanUrl) return;
-    setBookmarks((items) => (items || []).map((item) => (
-      item.url === oldUrl ? { ...item, title: cleanTitle || cleanUrl, url: cleanUrl } : item
+  function remove(bookmark: BookmarkItem) {
+    const id = bookmark.id || "";
+    const removeIds = id ? collectBookmarkDescendantIds(bookmarks || [], id) : new Set<string>();
+    setBookmarks((items) => (items || []).filter((item) => (
+      id ? !removeIds.has(item.id || "") : item.url !== bookmark.url
     )));
-    setEditingUrl(null);
-    window.hyperBrowser.editBookmark(oldUrl, cleanTitle, cleanUrl)
-      .then(() => sendBackgroundCommand("sync.soon"))
-      .catch((error) => console.warn("Unable to schedule bookmark edit sync.", error));
+    setEditingId((current) => current === id ? null : current);
+    setPendingRemove(null);
+    sendBackgroundCommand<BookmarkItem[]>("bookmarks.delete", { ...(id ? { id } : { url: bookmark.url }) })
+      .then((items) => setBookmarks(normalizeBookmarkItems(items)))
+      .catch((error) => {
+        console.warn("Unable to remove bookmark.", error);
+        loadBookmarks();
+      });
+  }
+
+  function save(bookmark: BookmarkItem, title: string, url: string) {
+    const kind: "bookmark" | "folder" = bookmark.kind === "folder" ? "folder" : "bookmark";
+    const cleanUrl = kind === "folder" ? "" : url.trim();
+    const cleanTitle = title.trim();
+    if (kind === "bookmark" && !cleanUrl) return;
+    const payload = {
+      id: bookmark.id,
+      oldUrl: bookmark.url,
+      title: cleanTitle || (kind === "folder" ? bookmark.title || t("bookmarks.folderLabel") : cleanUrl),
+      url: cleanUrl,
+      kind,
+      parentId: bookmark.parentId || "",
+      index: bookmark.index,
+    };
+    setBookmarks((items) => (items || []).map((item) => (
+      item.id === bookmark.id
+        ? {
+          ...item,
+          title: payload.title,
+          url: payload.url,
+          kind,
+          parentId: bookmark.parentId || null,
+          index: bookmark.index,
+        }
+        : item
+    )));
+    setEditingId(null);
+    sendBackgroundCommand<BookmarkItem[]>("bookmarks.save", payload)
+      .then((items) => setBookmarks(normalizeBookmarkItems(items)))
+      .catch((error) => {
+        console.warn("Unable to save bookmark.", error);
+        loadBookmarks();
+      });
   }
 
   const items = bookmarks || [];
-  const visibleItems = filterBookmarks(items, query);
+  const currentFolder = currentFolderId ? items.find((bookmark) => bookmark.id === currentFolderId) : null;
+  const visibleItems = useMemo(() => {
+    if (query.trim()) return sortBookmarks(filterBookmarks(items, query));
+    return sortBookmarks(items.filter((item) => (item.parentId || null) === (currentFolderId || null)));
+  }, [items, query, currentFolderId]);
 
   return (
     <div className="page">
       <header className="chrome-header">
-        <a className="back" href="hyper://home" aria-label={t("common.back")}>‹</a>
-        <h1 className="chrome-title">{t("bookmarks.title")}</h1>
+        <button className="back" type="button" aria-label={t("common.back")} onClick={goBack}>‹</button>
+        <h1 className="chrome-title">{currentFolder?.title || t("bookmarks.title")}</h1>
       </header>
       <main className="content">
         {failed ? (
@@ -80,17 +132,23 @@ function BookmarksPage() {
               onChange={setQuery}
             />
             {visibleItems.length === 0 ? (
-              <div className="empty">{t("bookmarks.noMatches")}</div>
+              <div className="empty">{query.trim() ? t("bookmarks.noMatches") : t("bookmarks.folderEmpty")}</div>
             ) : (
               <div className="list">
                 {visibleItems.map((bookmark) => (
                   <BookmarkRow
                     bookmark={bookmark}
-                    editing={editingUrl === bookmark.url}
-                    key={bookmark.url}
-                    onEdit={() => setEditingUrl(bookmark.url)}
-                    onCancel={() => setEditingUrl(null)}
-                    onOpen={() => window.hyperBrowser.openBookmark(bookmark.url)}
+                    editing={editingId === bookmark.id}
+                    key={bookmark.id || bookmark.url}
+                    onEdit={() => setEditingId(bookmark.id || bookmark.url)}
+                    onCancel={() => setEditingId(null)}
+                    onOpen={() => {
+                      if (bookmark.kind === "folder") {
+                        setCurrentFolderId(bookmark.id || null);
+                      } else {
+                        window.hyperBrowser.openBookmark(bookmark.url);
+                      }
+                    }}
                     onRemove={() => setPendingRemove(bookmark)}
                     onSave={save}
                   />
@@ -110,10 +168,10 @@ function BookmarksPage() {
             onClick={(event) => event.stopPropagation()}
           >
             <h2 id="remove-bookmark-title">{t("bookmarks.removeLabel")}</h2>
-            <p>{pendingRemove.title || pendingRemove.url}</p>
+            <p>{pendingRemove.title || pendingRemove.url || t("bookmarks.folderLabel")}</p>
             <div className="confirm-actions">
               <button type="button" onClick={() => setPendingRemove(null)}>{t("common.cancel")}</button>
-              <button className="danger" type="button" onClick={() => remove(pendingRemove.url)}>{t("common.delete")}</button>
+              <button className="danger" type="button" onClick={() => remove(pendingRemove)}>{t("common.delete")}</button>
             </div>
           </section>
         </div>
@@ -147,13 +205,48 @@ function SearchBox(props: {
   );
 }
 
+function normalizeBookmarkItems(items: BookmarkItem[]): BookmarkItem[] {
+  return items.map((item) => ({
+    ...item,
+    id: item.id || item.url,
+    kind: item.kind === "folder" ? "folder" : "bookmark",
+    parentId: item.parentId || null,
+    index: typeof item.index === "number" && Number.isFinite(item.index) ? item.index : undefined,
+    url: item.url || "",
+  }));
+}
+
+function sortBookmarks(items: BookmarkItem[]): BookmarkItem[] {
+  return [...items].sort((left, right) => (
+    (left.kind === right.kind ? 0 : left.kind === "folder" ? -1 : 1) ||
+    (left.index ?? 0) - (right.index ?? 0) ||
+    (left.title || left.url).localeCompare(right.title || right.url) ||
+    (left.id || left.url).localeCompare(right.id || right.url)
+  ));
+}
+
 function filterBookmarks(items: BookmarkItem[], query: string): BookmarkItem[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) return items;
   return items.filter((item) => (
     (item.title || "").toLocaleLowerCase().includes(normalizedQuery) ||
-    item.url.toLocaleLowerCase().includes(normalizedQuery)
+    (item.url || "").toLocaleLowerCase().includes(normalizedQuery)
   ));
+}
+
+function collectBookmarkDescendantIds(items: BookmarkItem[], id: string): Set<string> {
+  const result = new Set([id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const item of items) {
+      if (item.id && item.parentId && result.has(item.parentId) && !result.has(item.id)) {
+        result.add(item.id);
+        changed = true;
+      }
+    }
+  }
+  return result;
 }
 
 function BookmarkRow(props: {
@@ -163,17 +256,23 @@ function BookmarkRow(props: {
   onEdit: () => void;
   onRemove: () => void;
   onCancel: () => void;
-  onSave: (oldUrl: string, title: string, url: string) => void;
+  onSave: (bookmark: BookmarkItem, title: string, url: string) => void;
 }) {
   const { bookmark } = props;
+  const isFolder = bookmark.kind === "folder";
   const [title, setTitle] = useState(bookmark.title || "");
-  const [url, setUrl] = useState(bookmark.url);
+  const [url, setUrl] = useState(bookmark.url || "");
   const urlInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setTitle(bookmark.title || "");
+    setUrl(bookmark.url || "");
+  }, [bookmark.id, bookmark.title, bookmark.url]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
     const cleanUrl = url.trim();
-    if (!cleanUrl) {
+    if (!isFolder && !cleanUrl) {
       setUrl("");
       window.requestAnimationFrame(() => {
         urlInputRef.current?.focus();
@@ -181,18 +280,18 @@ function BookmarkRow(props: {
       });
       return;
     }
-    props.onSave(bookmark.url, title, cleanUrl);
+    props.onSave(bookmark, title, cleanUrl);
   }
 
   return (
-    <div className="item bookmark">
+    <div className={`item bookmark ${isFolder ? "folder" : ""}`}>
       <button className="item-open" type="button" onClick={props.onOpen}>
         <span className="item-favicon">
-          {bookmark.iconDataUrl ? <img src={bookmark.iconDataUrl} alt="" /> : "★"}
+          {isFolder ? "▣" : bookmark.iconDataUrl ? <img src={bookmark.iconDataUrl} alt="" /> : "★"}
         </span>
         <span className="item-text">
-          <span className="item-title">{bookmark.title || bookmark.url}</span>
-          <span className="item-url">{bookmark.url}</span>
+          <span className="item-title">{bookmark.title || bookmark.url || t("bookmarks.folderLabel")}</span>
+          <span className="item-url">{isFolder ? t("bookmarks.folderLabel") : bookmark.url}</span>
         </span>
       </button>
       <button className="icon-button" type="button" aria-label={t("bookmarks.editLabel")} onClick={props.onEdit}>✎</button>
@@ -200,14 +299,16 @@ function BookmarkRow(props: {
       {props.editing && (
         <form className="editor" onSubmit={submit}>
           <input value={title} placeholder={t("bookmarks.titlePlaceholder")} onChange={(event) => setTitle(event.currentTarget.value)} />
-          <input
-            ref={urlInputRef}
-            value={url}
-            placeholder={t("common.url")}
-            inputMode="url"
-            required
-            onChange={(event) => setUrl(event.currentTarget.value)}
-          />
+          {!isFolder && (
+            <input
+              ref={urlInputRef}
+              value={url}
+              placeholder={t("common.url")}
+              inputMode="url"
+              required
+              onChange={(event) => setUrl(event.currentTarget.value)}
+            />
+          )}
           <div className="editor-actions">
             <button className="cancel" type="button" onClick={props.onCancel}>{t("common.cancel")}</button>
             <button className="save" type="submit">{t("common.save")}</button>

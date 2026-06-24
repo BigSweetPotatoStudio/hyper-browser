@@ -22,8 +22,56 @@ data class BrowserBookmark(
     val url: String,
     val title: String,
     val createdAt: Long,
-    val iconPath: String? = null
-)
+    val iconPath: String? = null,
+    val id: String = stableBookmarkIdForUrl(url),
+    val kind: String = BOOKMARK_KIND_BOOKMARK,
+    val parentId: String? = null,
+    val index: Int? = null,
+    val identityKey: String = if (kind == BOOKMARK_KIND_FOLDER) {
+        folderBookmarkIdentityKey(parentId, title, index)
+    } else {
+        bookmarkIdentityKey(url)
+    }
+) {
+    val isFolder: Boolean
+        get() = kind == BOOKMARK_KIND_FOLDER
+}
+
+const val BOOKMARK_KIND_BOOKMARK = "bookmark"
+const val BOOKMARK_KIND_FOLDER = "folder"
+
+internal fun normalizeBookmarkUrl(value: String): String {
+    val trimmed = value.trim()
+    if (trimmed.isBlank()) return ""
+    return runCatching {
+        val uri = java.net.URI(trimmed)
+        val scheme = uri.scheme?.lowercase() ?: return@runCatching trimmed
+        val authority = uri.rawAuthority ?: return@runCatching trimmed.substringBefore('#')
+        val path = uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/"
+        buildString {
+            append(scheme).append("://").append(authority).append(path)
+            uri.rawQuery?.let { append('?').append(it) }
+        }
+    }.getOrDefault(trimmed.substringBefore('#'))
+}
+
+internal fun bookmarkIdentityKey(url: String): String =
+    normalizeBookmarkUrl(url)
+
+internal fun folderBookmarkIdentityKey(parentId: String?, title: String, index: Int?): String =
+    "folder:${parentId?.takeIf { it.isNotBlank() } ?: "root"}:${title.trim().lowercase()}"
+
+internal fun stableBookmarkIdForUrl(url: String): String {
+    val key = bookmarkIdentityKey(url)
+    return if (key.isBlank()) {
+        UUID.randomUUID().toString()
+    } else {
+        UUID.nameUUIDFromBytes("bookmark:$key".toByteArray(Charsets.UTF_8)).toString()
+    }
+}
+
+internal fun stableFolderBookmarkId(parentId: String?, title: String, index: Int?): String =
+    UUID.nameUUIDFromBytes("folder:${folderBookmarkIdentityKey(parentId, title, index)}".toByteArray(Charsets.UTF_8)).toString()
 
 data class BrowserSettings(
     val searchEngineId: String = SEARCH_ENGINE_GOOGLE,
@@ -109,6 +157,15 @@ private fun JSONObject.optPositiveLong(name: String): Long? {
     return value.takeIf { it > 0L }
 }
 
+private fun JSONObject.optCleanString(name: String): String? {
+    if (!has(name) || isNull(name)) return null
+    val value = optString(name).trim()
+    return value.takeIf { it.isNotBlank() && it != "null" && it != "undefined" }
+}
+
+private fun JSONObject.putCleanNullable(name: String, value: Any?): JSONObject =
+    put(name, value ?: JSONObject.NULL)
+
 data class SavedBrowserTab(
     val id: String,
     val title: String,
@@ -141,26 +198,45 @@ class BrowserProfileStore(context: Context) {
 
     fun mergeBookmarks(imported: List<BrowserBookmark>): Int {
         val accepted = mutableListOf<BrowserBookmark>()
-        val seenUrls = mutableSetOf<String>()
-        val existingByUrl = bookmarksState.value.associateBy { it.url }
-        imported.forEach { bookmark ->
-            val url = bookmark.url.trim()
-            if (url.isBlank() || !seenUrls.add(url)) return@forEach
-            val existing = existingByUrl[url]
-            accepted.add(
-                BrowserBookmark(
-                    url = url,
-                    title = bookmark.title.trim().ifBlank { existing?.title ?: url },
-                    createdAt = bookmark.createdAt.takeIf { it > 0 }
-                        ?: existing?.createdAt
-                        ?: System.currentTimeMillis(),
-                    iconPath = bookmark.iconPath ?: existing?.iconPath
-                )
-            )
+        val seenIds = mutableSetOf<String>()
+        val seenBookmarkIdentities = mutableSetOf<String>()
+        val seenFolderIdentities = mutableSetOf<String>()
+        val current = bookmarksState.value
+        val existingById = current.associateBy { it.id }
+        val existingByIdentity = current
+            .filter { it.identityKey.isNotBlank() }
+            .associateBy { it.identityKey }
+        imported.forEachIndexed { importIndex, bookmark ->
+            val normalized = normalizeBookmarkForStorage(
+                bookmark = bookmark,
+                existingById = existingById,
+                existingByIdentity = existingByIdentity,
+                defaultIndex = bookmark.index ?: importIndex
+            ) ?: return@forEachIndexed
+            if (!seenIds.add(normalized.id)) return@forEachIndexed
+            if (!normalized.isFolder && normalized.identityKey.isNotBlank() && !seenBookmarkIdentities.add(normalized.identityKey)) {
+                return@forEachIndexed
+            }
+            if (normalized.isFolder && normalized.identityKey.isNotBlank() && !seenFolderIdentities.add(normalized.identityKey)) {
+                return@forEachIndexed
+            }
+            accepted.add(normalized)
         }
         if (accepted.isEmpty()) return 0
-        val importedUrls = accepted.map { it.url }.toSet()
-        val next = accepted + bookmarksState.value.filterNot { it.url in importedUrls }
+        val importedIds = accepted.map { it.id }.toSet()
+        val importedBookmarkIdentities = accepted
+            .filterNot { it.isFolder }
+            .map { it.identityKey }
+            .toSet()
+        val importedFolderIdentities = accepted
+            .filter { it.isFolder }
+            .map { it.identityKey }
+            .toSet()
+        val next = dedupeBookmarkFolderIdentities(accepted + current.filterNot {
+            it.id in importedIds ||
+                (!it.isFolder && it.identityKey in importedBookmarkIdentities) ||
+                (it.isFolder && it.identityKey in importedFolderIdentities)
+        })
         bookmarksState.value = next
         saveBookmarks(next)
         return accepted.size
@@ -283,17 +359,22 @@ class BrowserProfileStore(context: Context) {
     }
 
     fun toggleBookmark(url: String, title: String, iconPath: String? = null) {
-        if (url.isBlank()) return
+        val cleanUrl = normalizeBookmarkUrl(url)
+        if (cleanUrl.isBlank()) return
+        val identityKey = bookmarkIdentityKey(cleanUrl)
         val current = bookmarksState.value
-        val next = if (current.any { it.url == url }) {
-            current.filterNot { it.url == url }
+        val existing = current.firstOrNull { !it.isFolder && it.identityKey == identityKey }
+        val next = if (existing != null) {
+            current.filterNot { it.id == existing.id }
         } else {
             listOf(
                 BrowserBookmark(
-                    url = url,
-                    title = title.ifBlank { url },
+                    url = cleanUrl,
+                    title = title.ifBlank { cleanUrl },
                     createdAt = System.currentTimeMillis(),
-                    iconPath = iconPath
+                    iconPath = iconPath,
+                    id = UUID.randomUUID().toString(),
+                    identityKey = identityKey
                 )
             ) + current
         }
@@ -301,12 +382,16 @@ class BrowserProfileStore(context: Context) {
         saveBookmarks(next)
     }
 
-    fun isBookmarked(url: String): Boolean = bookmarksState.value.any { it.url == url }
+    fun isBookmarked(url: String): Boolean {
+        val identityKey = bookmarkIdentityKey(url)
+        return identityKey.isNotBlank() && bookmarksState.value.any { !it.isFolder && it.identityKey == identityKey }
+    }
 
     fun updateBookmarkIcon(url: String, iconPath: String) {
         if (url.isBlank() || iconPath.isBlank()) return
+        val identityKey = bookmarkIdentityKey(url)
         val next = bookmarksState.value.map { bookmark ->
-            if (bookmark.url == url && bookmark.iconPath != iconPath) {
+            if (!bookmark.isFolder && bookmark.identityKey == identityKey && bookmark.iconPath != iconPath) {
                 bookmark.copy(iconPath = iconPath)
             } else {
                 bookmark
@@ -319,23 +404,103 @@ class BrowserProfileStore(context: Context) {
     }
 
     fun removeBookmark(url: String) {
-        if (url.isBlank()) return
-        val next = bookmarksState.value.filterNot { it.url == url }
+        removeBookmarkByIdOrUrl(id = null, url = url)
+    }
+
+    fun removeBookmarkByIdOrUrl(id: String?, url: String?) {
+        val cleanId = id?.trim().orEmpty()
+        val identityKey = bookmarkIdentityKey(url.orEmpty())
+        if (cleanId.isBlank() && identityKey.isBlank()) return
+        val current = bookmarksState.value
+        val rootIds = current
+            .filter { bookmark ->
+                if (cleanId.isNotBlank()) {
+                    bookmark.id == cleanId
+                } else {
+                    !bookmark.isFolder && bookmark.identityKey == identityKey
+                }
+            }
+            .map { it.id }
+            .toSet()
+        if (rootIds.isEmpty()) return
+        val removedIds = bookmarkIdsWithDescendants(current, rootIds)
+        val next = current.filterNot { it.id in removedIds }
         bookmarksState.value = next
         saveBookmarks(next)
     }
 
     fun editBookmark(oldUrl: String, title: String, url: String) {
-        if (oldUrl.isBlank() || url.isBlank()) return
-        val next = bookmarksState.value.map { bookmark ->
-            if (bookmark.url == oldUrl) {
-                bookmark.copy(url = url, title = title.ifBlank { url })
-            } else {
-                bookmark
-            }
+        saveBookmark(id = null, oldUrl = oldUrl, title = title, url = url)
+    }
+
+    fun saveBookmark(
+        id: String?,
+        oldUrl: String?,
+        title: String,
+        url: String,
+        kind: String = BOOKMARK_KIND_BOOKMARK,
+        parentId: String? = null,
+        index: Int? = null,
+        iconPath: String? = null
+    ): List<BrowserBookmark> {
+        val cleanKind = normalizedBookmarkKind(kind)
+        val cleanParentId = parentId?.trim()?.takeIf { it.isNotBlank() }
+        val cleanIndex = index?.takeIf { it >= 0 }
+        val cleanUrl = if (cleanKind == BOOKMARK_KIND_FOLDER) "" else normalizeBookmarkUrl(url)
+        if (cleanKind == BOOKMARK_KIND_BOOKMARK && cleanUrl.isBlank()) return bookmarksState.value
+        val current = bookmarksState.value
+        val oldIdentity = bookmarkIdentityKey(oldUrl.orEmpty())
+        val nextIdentity = if (cleanKind == BOOKMARK_KIND_FOLDER) {
+            folderBookmarkIdentityKey(cleanParentId, title, cleanIndex)
+        } else {
+            bookmarkIdentityKey(cleanUrl)
         }
-        bookmarksState.value = next
-        saveBookmarks(next)
+        val cleanId = id?.trim().orEmpty()
+        val existing = current.firstOrNull { it.id == cleanId } ?: current.firstOrNull {
+            cleanKind == BOOKMARK_KIND_BOOKMARK && oldIdentity.isNotBlank() && !it.isFolder && it.identityKey == oldIdentity
+        } ?: current.firstOrNull {
+            cleanKind == BOOKMARK_KIND_BOOKMARK && !it.isFolder && it.identityKey == nextIdentity
+        }
+        val resolvedTitle = title.trim().ifBlank {
+            existing?.title ?: if (cleanKind == BOOKMARK_KIND_FOLDER) "Folder" else cleanUrl
+        }
+        val resolvedId = cleanId.ifBlank {
+            existing?.id ?: UUID.randomUUID().toString()
+        }
+        val saved = BrowserBookmark(
+            url = cleanUrl,
+            title = resolvedTitle,
+            createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+            iconPath = iconPath ?: existing?.iconPath,
+            id = resolvedId,
+            kind = cleanKind,
+            parentId = cleanParentId,
+            index = cleanIndex,
+            identityKey = nextIdentity
+        )
+        val duplicateIds = current
+            .filter {
+                it.id == saved.id || (
+                    !saved.isFolder &&
+                        !it.isFolder &&
+                        saved.identityKey.isNotBlank() &&
+                        it.identityKey == saved.identityKey
+                    ) || (
+                    saved.isFolder &&
+                        it.isFolder &&
+                        saved.identityKey.isNotBlank() &&
+                        it.identityKey == saved.identityKey
+                    )
+            }
+            .map { it.id }
+            .toSet()
+        val insertAt = current.indexOfFirst { it.id in duplicateIds }.takeIf { it >= 0 } ?: 0
+        val next = current.filterNot { it.id in duplicateIds }.toMutableList()
+        next.add(insertAt.coerceIn(0, next.size), saved)
+        val deduped = dedupeBookmarkFolderIdentities(next)
+        bookmarksState.value = deduped
+        saveBookmarks(deduped)
+        return deduped
     }
 
     fun removeHistoryEntry(url: String) {
@@ -433,6 +598,66 @@ class BrowserProfileStore(context: Context) {
         return next
     }
 
+    private fun normalizeBookmarkForStorage(
+        bookmark: BrowserBookmark,
+        existingById: Map<String, BrowserBookmark>,
+        existingByIdentity: Map<String, BrowserBookmark>,
+        defaultIndex: Int
+    ): BrowserBookmark? {
+        val cleanKind = normalizedBookmarkKind(bookmark.kind)
+        val cleanParentId = bookmark.parentId?.trim()?.takeIf { it.isNotBlank() }
+        val cleanIndex = bookmark.index?.takeIf { it >= 0 } ?: defaultIndex.takeIf { it >= 0 }
+        val cleanUrl = if (cleanKind == BOOKMARK_KIND_FOLDER) "" else normalizeBookmarkUrl(bookmark.url)
+        if (cleanKind == BOOKMARK_KIND_BOOKMARK && cleanUrl.isBlank()) return null
+        val identityKey = if (cleanKind == BOOKMARK_KIND_FOLDER) {
+            folderBookmarkIdentityKey(cleanParentId, bookmark.title, cleanIndex)
+        } else {
+            bookmarkIdentityKey(bookmark.identityKey.ifBlank { cleanUrl })
+        }
+        val existing = existingById[bookmark.id] ?: existingByIdentity[identityKey]
+        val title = bookmark.title.trim().ifBlank {
+            existing?.title ?: if (cleanKind == BOOKMARK_KIND_FOLDER) "Folder" else cleanUrl
+        }
+        val resolvedId = bookmark.id.trim().ifBlank {
+            existing?.id ?: if (cleanKind == BOOKMARK_KIND_FOLDER) {
+                stableFolderBookmarkId(cleanParentId, title, cleanIndex)
+            } else {
+                stableBookmarkIdForUrl(cleanUrl)
+            }
+        }
+        return BrowserBookmark(
+            url = cleanUrl,
+            title = title,
+            createdAt = bookmark.createdAt.takeIf { it > 0 }
+                ?: existing?.createdAt
+                ?: System.currentTimeMillis(),
+            iconPath = bookmark.iconPath ?: existing?.iconPath,
+            id = resolvedId,
+            kind = cleanKind,
+            parentId = cleanParentId,
+            index = cleanIndex,
+            identityKey = identityKey
+        )
+    }
+
+    private fun bookmarkIdsWithDescendants(items: List<BrowserBookmark>, rootIds: Set<String>): Set<String> {
+        val removed = rootIds.toMutableSet()
+        var changed: Boolean
+        do {
+            changed = false
+            items.forEach { bookmark ->
+                val parentId = bookmark.parentId
+                if (parentId != null && parentId in removed && removed.add(bookmark.id)) {
+                    changed = true
+                }
+            }
+        } while (changed)
+        return removed
+    }
+
+    private fun normalizedBookmarkKind(kind: String): String =
+        if (kind == BOOKMARK_KIND_FOLDER) BOOKMARK_KIND_FOLDER else BOOKMARK_KIND_BOOKMARK
+
     private fun loadHistory(): List<BrowserHistoryEntry> {
         if (!historyFile.exists()) return emptyList()
         return runCatching {
@@ -457,20 +682,127 @@ class BrowserProfileStore(context: Context) {
         if (!bookmarksFile.exists()) return emptyList()
         return runCatching {
             val array = JSONArray(bookmarksFile.readText())
-            buildList {
+            val loaded = buildList {
                 for (index in 0 until array.length()) {
                     val item = array.getJSONObject(index)
+                    val kind = normalizedBookmarkKind(item.optString("kind", BOOKMARK_KIND_BOOKMARK))
+                    val parentId = item.optCleanString("parentId")
+                    val bookmarkIndex = if (item.has("index") && !item.isNull("index")) item.optInt("index") else index
+                    val url = if (kind == BOOKMARK_KIND_FOLDER) "" else normalizeBookmarkUrl(item.optString("url"))
+                    if (kind == BOOKMARK_KIND_BOOKMARK && url.isBlank()) continue
+                    val title = item.optString("title").trim().ifBlank {
+                        if (kind == BOOKMARK_KIND_FOLDER) "Folder" else url
+                    }
+                    val id = item.optString("id").trim().ifBlank {
+                        if (kind == BOOKMARK_KIND_FOLDER) {
+                            stableFolderBookmarkId(parentId, title, bookmarkIndex)
+                        } else {
+                            stableBookmarkIdForUrl(url)
+                        }
+                    }
+                    val identityKey = if (kind == BOOKMARK_KIND_FOLDER) {
+                        folderBookmarkIdentityKey(parentId, title, bookmarkIndex)
+                    } else {
+                        item.optCleanString("identityKey") ?: bookmarkIdentityKey(url)
+                    }
                     add(
                         BrowserBookmark(
-                            url = item.getString("url"),
-                            title = item.optString("title"),
+                            url = url,
+                            title = title,
                             createdAt = item.optLong("createdAt"),
-                            iconPath = item.optString("iconPath").ifBlank { null }
+                            iconPath = item.optCleanString("iconPath"),
+                            id = id,
+                            kind = kind,
+                            parentId = parentId,
+                            index = bookmarkIndex,
+                            identityKey = identityKey
                         )
                     )
                 }
             }
+            val deduped = dedupeBookmarkFolderIdentities(loaded)
+            if (deduped != loaded) {
+                saveBookmarks(deduped)
+            }
+            deduped
         }.getOrDefault(emptyList())
+    }
+
+    private fun dedupeBookmarkFolderIdentities(items: List<BrowserBookmark>): List<BrowserBookmark> {
+        var current = items.map { bookmark ->
+            if (!bookmark.isFolder) {
+                bookmark
+            } else {
+                bookmark.copy(identityKey = folderBookmarkIdentityKey(bookmark.parentId, bookmark.title, bookmark.index))
+            }
+        }
+        var changed: Boolean
+        do {
+            changed = false
+            val selected = mutableMapOf<String, BrowserBookmark>()
+            current.filter { it.isFolder }.forEach { folder ->
+                val identityKey = folderBookmarkIdentityKey(folder.parentId, folder.title, folder.index)
+                val normalized = if (folder.identityKey == identityKey) folder else folder.copy(identityKey = identityKey)
+                val existing = selected[identityKey]
+                if (existing == null || compareFolderDedupeCandidate(current, normalized, existing) > 0) {
+                    selected[identityKey] = normalized
+                }
+            }
+            val duplicateToKeep = current
+                .filter { it.isFolder }
+                .mapNotNull { folder ->
+                    val keep = selected[folderBookmarkIdentityKey(folder.parentId, folder.title, folder.index)]
+                    if (keep != null && keep.id != folder.id) folder.id to keep.id else null
+                }
+                .toMap()
+            if (duplicateToKeep.isEmpty()) continue
+            changed = true
+            current = current.mapNotNull { bookmark ->
+                if (bookmark.isFolder && duplicateToKeep.containsKey(bookmark.id)) {
+                    null
+                } else {
+                    val nextParentId = duplicateToKeep[bookmark.parentId] ?: bookmark.parentId
+                    if (nextParentId == bookmark.parentId) {
+                        bookmark
+                    } else if (bookmark.isFolder) {
+                        bookmark.copy(
+                            parentId = nextParentId,
+                            identityKey = folderBookmarkIdentityKey(nextParentId, bookmark.title, bookmark.index)
+                        )
+                    } else {
+                        bookmark.copy(parentId = nextParentId)
+                    }
+                }
+            }
+        } while (changed)
+        return current
+    }
+
+    private fun compareFolderDedupeCandidate(
+        items: List<BrowserBookmark>,
+        left: BrowserBookmark,
+        right: BrowserBookmark
+    ): Int {
+        val childDelta = bookmarkDescendantCount(items, left.id) - bookmarkDescendantCount(items, right.id)
+        if (childDelta != 0) return childDelta
+        val leftIndex = left.index ?: Int.MAX_VALUE
+        val rightIndex = right.index ?: Int.MAX_VALUE
+        if (leftIndex != rightIndex) return rightIndex - leftIndex
+        return left.id.compareTo(right.id)
+    }
+
+    private fun bookmarkDescendantCount(items: List<BrowserBookmark>, folderId: String): Int {
+        var count = 0
+        fun visit(parentId: String) {
+            items.filter { it.parentId == parentId }.forEach { bookmark ->
+                count += 1
+                if (bookmark.isFolder) {
+                    visit(bookmark.id)
+                }
+            }
+        }
+        visit(folderId)
+        return count
     }
 
     private fun loadSettings(): BrowserSettings {
@@ -496,10 +828,15 @@ class BrowserProfileStore(context: Context) {
         items.forEach {
             array.put(
                 JSONObject()
+                    .put("id", it.id)
+                    .put("kind", it.kind)
+                    .put("identityKey", it.identityKey)
+                    .putCleanNullable("parentId", it.parentId)
+                    .putCleanNullable("index", it.index)
                     .put("url", it.url)
                     .put("title", it.title)
                     .put("createdAt", it.createdAt)
-                    .put("iconPath", it.iconPath)
+                    .putCleanNullable("iconPath", it.iconPath)
             )
         }
         bookmarksFile.writeText(array.toString())

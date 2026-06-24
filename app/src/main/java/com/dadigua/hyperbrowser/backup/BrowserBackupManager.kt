@@ -20,10 +20,15 @@ class BrowserBackupManager(
         profileStore.observeBookmarks().value.forEach { bookmark ->
             bookmarks.put(
                 JSONObject()
+                    .put("id", bookmark.id)
+                    .put("kind", bookmark.kind)
+                    .put("identityKey", bookmark.identityKey)
+                    .putJsonNullable("parentId", bookmark.parentId)
+                    .putJsonNullable("index", bookmark.index)
                     .put("title", bookmark.title)
                     .put("url", bookmark.url)
                     .put("createdAt", bookmark.createdAt)
-                    .put("iconDataUrl", faviconStore.iconDataUrl(bookmark.iconPath, bookmark.url))
+                    .putJsonNullable("iconDataUrl", faviconStore.iconDataUrl(bookmark.iconPath, bookmark.url))
             )
         }
 
@@ -72,15 +77,25 @@ class BrowserBackupManager(
         buildList {
             for (index in 0 until array.length()) {
                 val item = array.optJSONObject(index) ?: continue
+                val kind = item.optString("kind", "bookmark").trim().ifBlank { "bookmark" }
                 val url = item.optString("url").trim()
-                if (url.isBlank()) continue
-                val iconPath = faviconStore.saveIconDataUrl(url, item.optString("iconDataUrl").ifBlank { null })
+                if (kind != "folder" && url.isBlank()) continue
+                val iconPath = if (kind == "folder") {
+                    null
+                } else {
+                    faviconStore.saveIconDataUrl(url, item.optString("iconDataUrl").ifBlank { null })
+                }
                 add(
                     BrowserBookmark(
                         url = url,
-                        title = item.optString("title").trim().ifBlank { url },
+                        title = item.optString("title").trim().ifBlank { if (kind == "folder") "Folder" else url },
                         createdAt = item.optLong("createdAt", System.currentTimeMillis()),
-                        iconPath = iconPath
+                        iconPath = iconPath,
+                        id = item.optString("id").trim().ifBlank { UUID.randomUUID().toString() },
+                        kind = if (kind == "folder") "folder" else "bookmark",
+                        parentId = item.optCleanString("parentId"),
+                        index = if (item.has("index") && !item.isNull("index")) item.optInt("index") else index,
+                        identityKey = item.optCleanString("identityKey").orEmpty()
                     )
                 )
             }
@@ -117,6 +132,15 @@ class BrowserBackupManager(
         const val BACKUP_VERSION = 1
     }
 }
+
+private fun JSONObject.optCleanString(name: String): String? {
+    if (!has(name) || isNull(name)) return null
+    val value = optString(name).trim()
+    return value.takeIf { it.isNotBlank() && it != "null" && it != "undefined" }
+}
+
+private fun JSONObject.putJsonNullable(name: String, value: Any?): JSONObject =
+    put(name, value ?: JSONObject.NULL)
 
 data class BrowserBackupImportResult(
     val bookmarks: Int,

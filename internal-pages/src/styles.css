@@ -459,6 +459,7 @@ a {
   font-size: 34px;
   line-height: 1;
   text-decoration: none;
+  cursor: pointer;
 }
 
 .chrome-title {
@@ -528,6 +529,11 @@ a {
 
 .item.bookmark {
   grid-template-columns: minmax(0, 1fr) 52px 52px;
+}
+
+.item.bookmark.folder .item-favicon {
+  background: #e8f0fe;
+  color: #185abc;
 }
 
 .item-open {

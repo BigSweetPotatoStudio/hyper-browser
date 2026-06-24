@@ -38,9 +38,10 @@ export type HyperBackgroundAdapter<TSyncResult extends SyncBackgroundSignal> = {
   getSettings?: () => Promise<unknown>;
   getCurrentPage?: () => Promise<CurrentPageInfo>;
   listBookmarks?: () => Promise<unknown>;
+  findBookmarkByUrl?: (input: { url: string }) => Promise<unknown>;
   addBookmark?: (input: BookmarkSaveInput) => Promise<unknown>;
   saveBookmark?: (input: BookmarkUpdateInput) => Promise<unknown>;
-  deleteBookmark?: (input: { url: string }) => Promise<unknown>;
+  deleteBookmark?: (input: { id?: string; url?: string }) => Promise<unknown>;
   listWebApps?: () => Promise<unknown>;
   saveWebApp?: (input: WebAppSaveInput) => Promise<unknown>;
   deleteWebApp?: (input: unknown) => Promise<unknown>;
@@ -92,6 +93,10 @@ export function createHyperBackgroundCommandHandler<TSyncResult extends SyncBack
         return handled(await adapter.sync.checkRemoteChanges({ notifyPages: false }));
       case "bookmarks.list":
         return handled(await requireCapability(adapter.listBookmarks, command.type)());
+      case "bookmarks.getByUrl":
+        return handled(await requireCapability(adapter.findBookmarkByUrl, command.type)(bookmarkUrlInput(command.payload)));
+      case "bookmarks.getFromCurrentPage":
+        return handled(await findBookmarkFromCurrentPage(command.type));
       case "bookmarks.addFromCurrentPage":
         return handled(await addBookmarkFromCurrentPage(command.type));
       case "bookmarks.save":
@@ -124,6 +129,11 @@ export function createHyperBackgroundCommandHandler<TSyncResult extends SyncBack
       url: page.url,
       ...(page.iconDataUrl ? { iconDataUrl: page.iconDataUrl } : {}),
     }));
+  }
+
+  async function findBookmarkFromCurrentPage(type: string): Promise<unknown> {
+    const page = await requireCapability(adapter.getCurrentPage, type)();
+    return requireCapability(adapter.findBookmarkByUrl, type)({ url: page.url });
   }
 
   async function addWebAppFromCurrentPage(type: string): Promise<unknown> {
@@ -175,9 +185,19 @@ function bookmarkUpdateInput(payload: unknown): BookmarkUpdateInput {
   return payload as BookmarkUpdateInput;
 }
 
-function bookmarkDeleteInput(payload: unknown): { url: string } {
+function bookmarkUrlInput(payload: unknown): { url: string } {
   if (typeof payload === "string") return { url: payload };
   if (isPlainObject(payload) && typeof payload.url === "string") return { url: payload.url };
+  throw new Error("Invalid bookmark URL payload.");
+}
+
+function bookmarkDeleteInput(payload: unknown): { id?: string; url?: string } {
+  if (typeof payload === "string") return { id: payload };
+  if (isPlainObject(payload)) {
+    const id = stringValue(payload.id);
+    const url = stringValue(payload.url);
+    if (id || url) return { ...(id ? { id } : {}), ...(url ? { url } : {}) };
+  }
   throw new Error("Invalid bookmark delete payload.");
 }
 

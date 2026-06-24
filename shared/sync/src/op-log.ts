@@ -50,7 +50,7 @@ export type SyncV2State = {
 
 export type SyncV2Operation =
   | SyncV2BaseOperation<"bookmark.upsert"> & { bookmark: BookmarkRecord }
-  | SyncV2BaseOperation<"bookmark.delete"> & { url: string }
+  | SyncV2BaseOperation<"bookmark.delete"> & BookmarkDeleteInput
   | SyncV2BaseOperation<"app.upsert"> & { app: Partial<WebAppRecord> & { id: string; name: string; startUrl: string; identityKey?: string } }
   | SyncV2BaseOperation<"app.delete"> & { appId: string }
   | SyncV2BaseOperation<"layout.place"> & { item: Omit<SyncV2LayoutItem, "rev"> }
@@ -68,7 +68,7 @@ type SyncV2BaseOperation<T extends string> = {
 
 type SyncV2OperationInput =
   | { type: "bookmark.upsert"; bookmark: BookmarkRecord }
-  | { type: "bookmark.delete"; url: string }
+  | ({ type: "bookmark.delete" } & BookmarkDeleteInput)
   | { type: "app.upsert"; app: Partial<WebAppRecord> & { id: string; name: string; startUrl: string; identityKey?: string } }
   | { type: "app.delete"; appId: string }
   | { type: "layout.place"; item: Omit<SyncV2LayoutItem, "rev"> }
@@ -94,6 +94,7 @@ export type LauncherLayoutLike = {
 
 export type SyncV2LocalSnapshot = {
   bookmarks?: BookmarkRecord[];
+  bookmarkSnapshotMode?: "flat" | "tree";
   webApps?: WebAppRecord[];
   layout?: LauncherLayoutLike | null;
 };
@@ -126,6 +127,15 @@ type WebAppInput = Partial<WebAppRecord> & {
   name: string;
   startUrl: string;
   identityKey?: string;
+};
+
+type BookmarkDeleteInput = {
+  bookmarkId: string;
+  identityKey?: string;
+  kind?: BookmarkRecord["kind"];
+  url?: string;
+  title?: string;
+  parentId?: string | null;
 };
 
 const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -200,6 +210,16 @@ export function canonicalJson(value: unknown): string {
 
 function sanitizeState(state: SyncV2State): SyncV2State {
   const clean = cloneJson(state);
+
+  const bookmarks: Record<string, SyncV2Bookmark> = {};
+  Object.entries(clean.bookmarks).forEach(([fallbackId, record]) => {
+    const normalized = normalizeStoredBookmarkRecord(record, fallbackId);
+    if (normalized) bookmarks[normalized.id] = normalized;
+  });
+  clean.bookmarks = bookmarks;
+  clean.bookmarkTombstones = normalizeBookmarkTombstones(clean.bookmarkTombstones, clean.bookmarks);
+  applyBookmarkTombstones(clean.bookmarks, clean.bookmarkTombstones);
+  dedupeBookmarkIdentityKeys(clean);
 
   Object.keys(clean.appTombstones).forEach((appId) => {
     delete clean.apps[appId];
@@ -319,27 +339,35 @@ export function appendWebAppDelete(store: SyncV2Store, appId: string): SyncV2Sto
 
 export function appendLocalSnapshotOperations(store: SyncV2Store, snapshot: SyncV2LocalSnapshot): SyncV2Store {
   let next = cloneJson(store);
-  if (snapshot.bookmarks) next = appendBookmarkSnapshotOperations(next, snapshot.bookmarks);
+  if (snapshot.bookmarks) next = appendBookmarkSnapshotOperations(next, snapshot.bookmarks, snapshot.bookmarkSnapshotMode || "flat");
   if (snapshot.webApps) next = appendWebAppSnapshotOperations(next, snapshot.webApps);
   if (snapshot.layout) next = appendLayoutSnapshotOperations(next, snapshot.layout);
   return next;
 }
 
-function appendBookmarkSnapshotOperations(store: SyncV2Store, bookmarks: BookmarkRecord[]): SyncV2Store {
+function appendBookmarkSnapshotOperations(store: SyncV2Store, bookmarks: BookmarkRecord[], mode: "flat" | "tree"): SyncV2Store {
   let next = store;
   const local = new Map<string, BookmarkRecord>();
+  const localKeys = new Set<string>();
   bookmarks.forEach((bookmark) => {
-    if (bookmark.deletedAt != null) return;
-    const key = normalizeBookmarkKey(bookmark.url);
-    if (key) local.set(key, { ...bookmark, url: key });
-  });
-  activeBookmarksFromState(store.state).forEach((bookmark) => {
-    if (!local.has(bookmark.url)) {
-      next = appendOperation(next, { type: "bookmark.delete", url: bookmark.url });
+    const record = normalizeBookmarkRecordInput(bookmark, next.state, next.deviceId);
+    if (!record) return;
+    if (record.deletedAt != null) {
+      next = appendOperation(next, { type: "bookmark.delete", ...bookmarkDeleteInput(record) });
+      return;
     }
+    local.set(record.id, record);
+    localKeys.add(bookmarkTombstoneKey(record));
   });
-  local.forEach((bookmark, url) => {
-    const current = next.state.bookmarks[url];
+  if (mode === "tree") {
+    activeBookmarksFromState(store.state).forEach((bookmark) => {
+      if (!local.has(bookmark.id) && !localKeys.has(bookmarkTombstoneKey(bookmark))) {
+        next = appendOperation(next, { type: "bookmark.delete", ...bookmarkDeleteInput(bookmark) });
+      }
+    });
+  }
+  local.forEach((bookmark, id) => {
+    const current = next.state.bookmarks[id];
     if (!current || bookmarkFieldsChanged(current, bookmark)) {
       next = appendOperation(next, { type: "bookmark.upsert", bookmark });
     }
@@ -394,8 +422,19 @@ export function appendLayoutSnapshotOperations(store: SyncV2Store, layout: Launc
 
 export function activeBookmarksFromState(state: SyncV2State): BookmarkRecord[] {
   return Object.values(ensureState(state).bookmarks)
-    .sort((left, right) => left.title.localeCompare(right.title))
+    .sort(compareBookmarkRecords)
     .map(({ rev: _rev, ...bookmark }) => bookmark as BookmarkRecord);
+}
+
+export function findBookmarkByUrlInState(state: SyncV2State, url: string): BookmarkRecord | null {
+  const identityKey = identityKeyForUrl(url);
+  if (!identityKey) return null;
+  const match = Object.values(ensureState(state).bookmarks)
+    .filter((bookmark) => bookmark.kind !== "folder" && identityKeyForUrl(bookmark.url) === identityKey)
+    .sort((left, right) => compareRevision(right.rev, left.rev))[0];
+  if (!match) return null;
+  const { rev: _rev, ...bookmark } = match;
+  return bookmark as BookmarkRecord;
 }
 
 export function activeWebAppsFromState(state: SyncV2State): WebAppRecord[] {
@@ -550,9 +589,7 @@ function mergeState(leftState: SyncV2State, rightState: SyncV2State): SyncV2Stat
   const right = ensureState(rightState);
   const bookmarkTombstones = mergeLwwMap(left.bookmarkTombstones, right.bookmarkTombstones);
   const bookmarks = mergeLwwMap(left.bookmarks, right.bookmarks);
-  Object.keys(bookmarkTombstones).forEach((url) => {
-    delete bookmarks[url];
-  });
+  applyBookmarkTombstones(bookmarks, bookmarkTombstones);
 
   const appTombstones = mergeLwwMap(left.appTombstones, right.appTombstones);
   const apps = mergeLwwMap(left.apps, right.apps);
@@ -702,8 +739,8 @@ function mergeBookmarkFileIntoState(state: SyncV2State, value: unknown): void {
   }
   if (typeof value !== "object") return;
   const root = value as Record<string, unknown>;
-  mergeLwwMapInto(state.bookmarks, readRecordMap<SyncV2Bookmark>(root.bookmarks));
-  mergeLwwMapInto(state.bookmarkTombstones, readRecordMap<SyncV2Tombstone>(root.bookmarkTombstones || root.tombstones));
+  mergeLwwMapInto(state.bookmarks, readBookmarkRecordMap(root.bookmarks));
+  mergeLwwMapInto(state.bookmarkTombstones, readBookmarkTombstoneMap(root.bookmarkTombstones || root.tombstones));
   legacyBookmarkRecords(root.items || root.bookmarks).forEach((record) => applyLegacyBookmarkRecord(state, record));
 }
 
@@ -756,6 +793,28 @@ function readRecordMap<T extends { rev?: Revision }>(value: unknown): Record<str
   return result;
 }
 
+function readBookmarkRecordMap(value: unknown): Record<string, SyncV2Bookmark> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: Record<string, SyncV2Bookmark> = {};
+  Object.entries(value as Record<string, unknown>).forEach(([key, raw]) => {
+    const record = normalizeStoredBookmarkRecord(raw, key);
+    if (record) result[record.id] = record;
+  });
+  return result;
+}
+
+function readBookmarkTombstoneMap(value: unknown): Record<string, SyncV2Tombstone> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: Record<string, SyncV2Tombstone> = {};
+  Object.entries(value as Record<string, unknown>).forEach(([key, raw]) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+    const tombstone = raw as SyncV2Tombstone;
+    if (!tombstone.rev) return;
+    result[bookmarkIdFromStorageKey(key)] = cloneJson(tombstone);
+  });
+  return result;
+}
+
 function readLayoutItemMap(value: unknown): Record<string, SyncV2LayoutItem> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const result: Record<string, SyncV2LayoutItem> = {};
@@ -770,16 +829,8 @@ function legacyBookmarkRecords(value: unknown): BookmarkRecord[] {
   if (!Array.isArray(value)) return [];
   return value
     .filter((item): item is Partial<BookmarkRecord> => !!item && typeof item === "object")
-    .map((item) => ({
-      url: String(item.url || "").trim(),
-      title: String(item.title || item.url || ""),
-      createdAt: Number(item.createdAt) || Number(item.updatedAt) || 0,
-      updatedAt: Number(item.updatedAt) || Number(item.createdAt) || 0,
-      deletedAt: item.deletedAt == null ? null : Number(item.deletedAt) || Date.parse(String(item.deletedAt)) || 0,
-      sourceDeviceId: String(item.sourceDeviceId || "legacy"),
-      iconDataUrl: typeof item.iconDataUrl === "string" ? item.iconDataUrl : null,
-    }))
-    .filter((item) => !!item.url);
+    .map((item) => normalizeLegacyBookmarkRecord(item))
+    .filter((item): item is BookmarkRecord => !!item);
 }
 
 function legacyWebAppRecords(value: unknown): WebAppRecord[] {
@@ -805,15 +856,15 @@ function legacyWebAppRecords(value: unknown): WebAppRecord[] {
 }
 
 function applyLegacyBookmarkRecord(state: SyncV2State, record: BookmarkRecord): void {
-  const url = normalizeBookmarkKey(record.url);
-  if (!url) return;
+  const bookmark = normalizeBookmarkRecordInput(record, state, record.sourceDeviceId || "legacy");
+  if (!bookmark) return;
   const rev = revisionFromLegacy(record);
-  if (record.deletedAt != null) {
-    state.bookmarkTombstones[url] = { deletedAt: new Date(record.deletedAt).toISOString(), rev };
-    delete state.bookmarks[url];
+  if (bookmark.deletedAt != null) {
+    state.bookmarkTombstones[bookmark.id] = { deletedAt: new Date(bookmark.deletedAt).toISOString(), rev };
+    delete state.bookmarks[bookmark.id];
     return;
   }
-  state.bookmarks[url] = { ...record, url, deletedAt: null, rev };
+  state.bookmarks[bookmark.id] = { ...bookmark, deletedAt: null, rev };
 }
 
 function applyLegacyWebAppRecord(state: SyncV2State, record: WebAppRecord): void {
@@ -854,32 +905,36 @@ function countRemoteRecords(state: SyncV2State): number {
 function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): void {
   const rev = operationRevision(operation);
   if (operation.type === "bookmark.upsert") {
-    const url = normalizeBookmarkKey(operation.bookmark.url);
-    if (!url) return;
-    const tombstone = state.bookmarkTombstones[url];
+    const bookmark = normalizeBookmarkRecordInput(operation.bookmark, state, operation.deviceId);
+    if (!bookmark) return;
+    const tombstoneKey = bookmarkTombstoneKey(bookmark);
+    const tombstone = pickLww(state.bookmarkTombstones[tombstoneKey], state.bookmarkTombstones[bookmark.id]);
     if (tombstone && compareRevision(tombstone.rev, rev) >= 0) return;
-    const current = state.bookmarks[url];
+    const current = state.bookmarks[bookmark.id];
     if (current && compareRevision(current.rev, rev) > 0) return;
-    state.bookmarks[url] = {
-      ...operation.bookmark,
-      url,
-      updatedAt: operation.bookmark.updatedAt || operation.createdAt,
+    state.bookmarks[bookmark.id] = {
+      ...bookmark,
+      updatedAt: bookmark.updatedAt || operation.createdAt,
       deletedAt: null,
-      sourceDeviceId: operation.bookmark.sourceDeviceId || operation.deviceId,
+      sourceDeviceId: bookmark.sourceDeviceId || operation.deviceId,
       rev,
     };
-    delete state.bookmarkTombstones[url];
+    delete state.bookmarkTombstones[tombstoneKey];
+    delete state.bookmarkTombstones[bookmark.id];
+    dedupeBookmarkIdentityKeys(state);
     return;
   }
   if (operation.type === "bookmark.delete") {
-    const url = normalizeBookmarkKey(operation.url);
-    if (!url) return;
-    const current = state.bookmarks[url];
-    const tombstone = state.bookmarkTombstones[url];
-    if (current && compareRevision(current.rev, rev) > 0) return;
+    const key = bookmarkDeleteOperationKey(state, operation);
+    if (!key) return;
+    const matches = bookmarkRecordsForTombstoneKey(state.bookmarks, key, operation.bookmarkId);
+    if (matches.some((current) => compareRevision(current.rev, rev) > 0)) return;
+    const tombstone = state.bookmarkTombstones[key];
     if (tombstone && compareRevision(tombstone.rev, rev) >= 0) return;
-    delete state.bookmarks[url];
-    state.bookmarkTombstones[url] = { deletedAt: new Date(operation.createdAt).toISOString(), rev };
+    matches.forEach((bookmark) => {
+      delete state.bookmarks[bookmark.id];
+    });
+    state.bookmarkTombstones[key] = { deletedAt: new Date(operation.createdAt).toISOString(), rev };
     return;
   }
   if (operation.type === "app.upsert") {
@@ -1108,6 +1163,312 @@ function layoutItemKind(id: string): "app" | "folder" | "system" {
   return "system";
 }
 
+function normalizeLegacyBookmarkRecord(item: Partial<BookmarkRecord>): BookmarkRecord | null {
+  const url = normalizeBookmarkKey(String(item.url || "").trim());
+  if (!url) return null;
+  const updatedAt = Number(item.updatedAt) || Number(item.createdAt) || 0;
+  const createdAt = Number(item.createdAt) || updatedAt;
+  const deletedAt = item.deletedAt == null ? null : Number(item.deletedAt) || Date.parse(String(item.deletedAt)) || 0;
+  const identityKey = identityKeyForUrl(url);
+  return {
+    id: String(item.id || "").trim() || stableUuidFromString(`bookmark:${identityKey}`),
+    kind: "bookmark",
+    identityKey,
+    parentId: typeof item.parentId === "string" && item.parentId.trim() ? item.parentId.trim() : null,
+    index: normalizeOptionalIndex(item.index),
+    url,
+    title: String(item.title || item.url || ""),
+    createdAt,
+    updatedAt,
+    deletedAt,
+    sourceDeviceId: String(item.sourceDeviceId || "legacy"),
+    iconDataUrl: typeof item.iconDataUrl === "string" ? item.iconDataUrl : null,
+  };
+}
+
+function normalizeStoredBookmarkRecord(raw: unknown, fallbackId = ""): SyncV2Bookmark | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const source = raw as Partial<SyncV2Bookmark>;
+  if (!source.rev) return null;
+  const record = normalizeBookmarkRecordInput({
+    ...source,
+    id: String(source.id || bookmarkIdFromStorageKey(fallbackId)).trim(),
+  }, undefined, source.sourceDeviceId || source.rev.deviceId);
+  return record ? { ...record, rev: source.rev } : null;
+}
+
+function normalizeBookmarkRecordInput(input: Partial<BookmarkRecord>, state?: SyncV2State, deviceId = ""): BookmarkRecord | null {
+  const kind = input.kind === "folder" ? "folder" : "bookmark";
+  const url = kind === "folder" ? "" : normalizeBookmarkKey(String(input.url || "").trim());
+  if (kind === "bookmark" && !url) return null;
+  const title = String(input.title || url || "Folder").trim() || url || "Folder";
+  const parentId = cleanOptionalString(input.parentId) || null;
+  const index = normalizeOptionalIndex(input.index);
+  const identityKey = kind === "bookmark"
+    ? normalizeBookmarkIdentityKey(input.identityKey, url)
+    : normalizeFolderIdentityKey(input.identityKey, parentId, title);
+  const existing = state ? findExistingBookmarkRecord(state, kind, identityKey, url) : null;
+  const directId = cleanOptionalString(input.id);
+  const id = directId || existing?.id || (state ? crypto.randomUUID() : stableUuidFromString(`${kind}:${identityKey || title}`));
+  return {
+    id,
+    kind,
+    identityKey,
+    parentId,
+    index,
+    url,
+    title,
+    createdAt: Number(input.createdAt) || Number(input.updatedAt) || Date.now(),
+    updatedAt: Number(input.updatedAt) || Number(input.createdAt) || Date.now(),
+    deletedAt: input.deletedAt == null ? null : Number(input.deletedAt) || Date.parse(String(input.deletedAt)) || 0,
+    sourceDeviceId: cleanOptionalString(input.sourceDeviceId) || deviceId || "",
+    iconDataUrl: cleanOptionalString(input.iconDataUrl) || null,
+  };
+}
+
+function normalizeBookmarkTombstones(
+  tombstones: Record<string, SyncV2Tombstone>,
+  bookmarks: Record<string, SyncV2Bookmark> = {},
+): Record<string, SyncV2Tombstone> {
+  const result: Record<string, SyncV2Tombstone> = {};
+  Object.entries(tombstones || {}).forEach(([key, tombstone]) => {
+    if (!tombstone?.rev) return;
+    const normalizedKey = normalizeBookmarkTombstoneKey(key, bookmarks);
+    if (!normalizedKey) return;
+    const current = result[normalizedKey];
+    if (!current || compareRevision(tombstone.rev, current.rev) > 0) {
+      result[normalizedKey] = tombstone;
+    }
+  });
+  return result;
+}
+
+function bookmarkIdFromStorageKey(key: string): string {
+  const value = String(key || "").trim();
+  if (!value) return "";
+  return looksLikeUrlKey(value) ? stableUuidFromString(`bookmark:${identityKeyForUrl(value)}`) : value;
+}
+
+function normalizeBookmarkTombstoneKey(key: string, bookmarks: Record<string, SyncV2Bookmark>): string {
+  const value = String(key || "").trim();
+  if (!value) return "";
+  const bookmark = bookmarks[value];
+  if (bookmark) return bookmarkTombstoneKey(bookmark);
+  return looksLikeUrlKey(value) ? identityKeyForUrl(value) : value;
+}
+
+function applyBookmarkTombstones(
+  bookmarks: Record<string, SyncV2Bookmark>,
+  tombstones: Record<string, SyncV2Tombstone>,
+): void {
+  Object.keys(tombstones).forEach((key) => {
+    bookmarkRecordsForTombstoneKey(bookmarks, key).forEach((bookmark) => {
+      delete bookmarks[bookmark.id];
+    });
+  });
+}
+
+function looksLikeUrlKey(value: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
+}
+
+function findExistingBookmarkRecord(state: SyncV2State, kind: BookmarkRecord["kind"], identityKey: string, url: string): SyncV2Bookmark | undefined {
+  if (kind === "bookmark" && identityKey) {
+    return Object.values(state.bookmarks).find((bookmark) => bookmark.kind !== "folder" && bookmark.identityKey === identityKey);
+  }
+  if (kind === "folder" && identityKey) {
+    return Object.values(state.bookmarks).find((bookmark) => bookmark.kind === "folder" && bookmark.identityKey === identityKey);
+  }
+  return url ? Object.values(state.bookmarks).find((bookmark) => bookmark.url === url) : undefined;
+}
+
+function dedupeBookmarkIdentityKeys(state: SyncV2State): void {
+  dedupeFolderIdentityKeys(state);
+
+  const selected = new Map<string, SyncV2Bookmark>();
+  Object.values(state.bookmarks).forEach((bookmark) => {
+    if (bookmark.kind === "folder" || !bookmark.identityKey) return;
+    const current = selected.get(bookmark.identityKey);
+    if (!current || compareRevision(bookmark.rev, current.rev) > 0 || (compareRevision(bookmark.rev, current.rev) === 0 && bookmark.id > current.id)) {
+      selected.set(bookmark.identityKey, bookmark);
+    }
+  });
+  Object.entries(state.bookmarks).forEach(([id, bookmark]) => {
+    if (bookmark.kind !== "folder" && bookmark.identityKey && selected.get(bookmark.identityKey)?.id !== id) {
+      delete state.bookmarks[id];
+    }
+  });
+}
+
+function dedupeFolderIdentityKeys(state: SyncV2State): void {
+  let changed = false;
+  do {
+    changed = false;
+    const selected = new Map<string, SyncV2Bookmark>();
+    Object.values(state.bookmarks).forEach((bookmark) => {
+      if (bookmark.kind !== "folder") return;
+      const key = folderIdentityKey(bookmark.parentId || null, bookmark.title);
+      bookmark.identityKey = key;
+      const current = selected.get(key);
+      if (!current || compareFolderDedupeCandidate(state, bookmark, current) > 0) {
+        selected.set(key, bookmark);
+      }
+    });
+
+    Object.entries(state.bookmarks).forEach(([id, bookmark]) => {
+      if (bookmark.kind !== "folder") return;
+      const keep = selected.get(folderIdentityKey(bookmark.parentId || null, bookmark.title));
+      if (!keep || keep.id === id) return;
+      reparentBookmarkChildren(state, id, keep.id);
+      delete state.bookmarks[id];
+      changed = true;
+    });
+  } while (changed);
+}
+
+function compareFolderDedupeCandidate(state: SyncV2State, left: SyncV2Bookmark, right: SyncV2Bookmark): number {
+  const childDelta = bookmarkDescendantCount(state, left.id) - bookmarkDescendantCount(state, right.id);
+  if (childDelta !== 0) return childDelta;
+  const revDelta = compareRevision(left.rev, right.rev);
+  if (revDelta !== 0) return revDelta;
+  const leftIndex = left.index ?? Number.MAX_SAFE_INTEGER;
+  const rightIndex = right.index ?? Number.MAX_SAFE_INTEGER;
+  if (leftIndex !== rightIndex) return rightIndex - leftIndex;
+  return left.id.localeCompare(right.id);
+}
+
+function bookmarkDescendantCount(state: SyncV2State, folderId: string): number {
+  let count = 0;
+  const visit = (parentId: string): void => {
+    Object.values(state.bookmarks).forEach((bookmark) => {
+      if (bookmark.parentId !== parentId) return;
+      count += 1;
+      if (bookmark.kind === "folder") visit(bookmark.id);
+    });
+  };
+  visit(folderId);
+  return count;
+}
+
+function reparentBookmarkChildren(state: SyncV2State, fromFolderId: string, toFolderId: string): void {
+  Object.values(state.bookmarks).forEach((bookmark) => {
+    if (bookmark.parentId === fromFolderId) {
+      bookmark.parentId = toFolderId;
+    }
+  });
+}
+
+function bookmarkDeleteInput(bookmark: BookmarkRecord): BookmarkDeleteInput {
+  return {
+    bookmarkId: bookmark.id,
+    identityKey: bookmarkTombstoneKey(bookmark),
+    kind: bookmark.kind,
+    url: bookmark.url,
+    title: bookmark.title,
+    parentId: bookmark.parentId ?? null,
+  };
+}
+
+function bookmarkDeleteOperationKey(state: SyncV2State, operation: SyncV2Operation): string {
+  const legacy = operation as unknown as Record<string, unknown>;
+  const identityKey = cleanOptionalString(legacy.identityKey);
+  if (identityKey) {
+    const kind = legacy.kind === "folder" ? "folder" : "bookmark";
+    return kind === "folder"
+      ? normalizeFolderIdentityKey(identityKey, cleanOptionalString(legacy.parentId) || null, String(legacy.title || "Folder"))
+      : normalizeBookmarkIdentityKey(identityKey, String(legacy.url || ""));
+  }
+  const bookmarkId = typeof legacy.bookmarkId === "string"
+    ? legacy.bookmarkId.trim()
+    : "";
+  if (bookmarkId && state.bookmarks[bookmarkId]) return bookmarkTombstoneKey(state.bookmarks[bookmarkId]);
+  if (bookmarkId) return bookmarkId;
+  const url = typeof legacy.url === "string"
+    ? legacy.url.trim()
+    : "";
+  if (!url) return "";
+  const urlKey = identityKeyForUrl(url);
+  return Object.values(state.bookmarks).find((bookmark) => bookmark.kind !== "folder" && identityKeyForUrl(bookmark.url) === urlKey)
+    ?.identityKey || urlKey;
+}
+
+function bookmarkTombstoneKey(bookmark: Pick<BookmarkRecord, "id" | "kind" | "identityKey" | "url" | "parentId" | "title">): string {
+  if (bookmark.identityKey) return bookmark.identityKey;
+  return bookmark.kind === "folder"
+    ? folderIdentityKey(bookmark.parentId || null, bookmark.title)
+    : identityKeyForUrl(bookmark.url);
+}
+
+function bookmarkRecordsForTombstoneKey(
+  bookmarks: Record<string, SyncV2Bookmark>,
+  key: string,
+  fallbackId = "",
+): SyncV2Bookmark[] {
+  const cleanKey = String(key || "").trim();
+  const cleanFallbackId = String(fallbackId || "").trim();
+  if (!cleanKey && !cleanFallbackId) return [];
+  return Object.values(bookmarks).filter((bookmark) =>
+    (cleanFallbackId && bookmark.id === cleanFallbackId) ||
+    (cleanKey && bookmarkTombstoneKey(bookmark) === cleanKey) ||
+    (cleanKey && bookmark.identityKey === cleanKey) ||
+    (looksLikeUrlKey(cleanKey) && bookmark.kind !== "folder" && identityKeyForUrl(bookmark.url) === identityKeyForUrl(cleanKey))
+  );
+}
+
+function folderIdentityKey(parentId: string | null, title: string): string {
+  return `folder:${parentId || "root"}:${title.trim().toLowerCase()}`;
+}
+
+function normalizeBookmarkIdentityKey(value: unknown, fallbackUrl: string): string {
+  const key = cleanOptionalString(value);
+  if (key.startsWith("bookmark-location:")) return key;
+  return identityKeyForUrl(key || fallbackUrl);
+}
+
+function normalizeFolderIdentityKey(value: unknown, parentId: string | null, title: string): string {
+  const key = cleanOptionalString(value);
+  if (key.startsWith("folder-path:")) return key;
+  return folderIdentityKey(parentId, title);
+}
+
+function normalizeOptionalIndex(value: unknown): number | undefined {
+  const index = Number(value);
+  return Number.isFinite(index) && index >= 0 ? Math.floor(index) : undefined;
+}
+
+function cleanOptionalString(value: unknown): string {
+  return typeof value === "string" && value.trim() && value.trim() !== "null" && value.trim() !== "undefined"
+    ? value.trim()
+    : "";
+}
+
+function compareBookmarkRecords(left: SyncV2Bookmark, right: SyncV2Bookmark): number {
+  const leftParent = left.parentId || "";
+  const rightParent = right.parentId || "";
+  return leftParent.localeCompare(rightParent) ||
+    (left.index ?? 0) - (right.index ?? 0) ||
+    (left.kind === right.kind ? 0 : left.kind === "folder" ? -1 : 1) ||
+    left.title.localeCompare(right.title) ||
+    left.id.localeCompare(right.id);
+}
+
+function stableUuidFromString(value: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x9e3779b9;
+  let c = 0x85ebca6b;
+  let d = 0xc2b2ae35;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    a = Math.imul(a ^ code, 0x01000193);
+    b = Math.imul(b ^ code, 0x85ebca6b);
+    c = Math.imul(c ^ code, 0xc2b2ae35);
+    d = Math.imul(d ^ code, 0x27d4eb2d);
+  }
+  const hex = [a, b, c, d].map((part) => (part >>> 0).toString(16).padStart(8, "0")).join("");
+  const variant = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 function compareLayoutItems(left: SyncV2LayoutItem, right: SyncV2LayoutItem): number {
   return left.index - right.index || left.id.localeCompare(right.id);
 }
@@ -1121,7 +1482,13 @@ function layoutItemChanged(left: SyncV2LayoutItem, right: Omit<SyncV2LayoutItem,
 }
 
 function bookmarkFieldsChanged(left: SyncV2Bookmark, right: BookmarkRecord): boolean {
-  return left.title !== right.title || (left.iconDataUrl || null) !== (right.iconDataUrl || null);
+  return left.kind !== right.kind ||
+    left.identityKey !== right.identityKey ||
+    left.parentId !== right.parentId ||
+    left.index !== right.index ||
+    left.url !== right.url ||
+    left.title !== right.title ||
+    (left.iconDataUrl || null) !== (right.iconDataUrl || null);
 }
 
 function appFieldsChanged(left: SyncV2App, right: WebAppRecord): boolean {

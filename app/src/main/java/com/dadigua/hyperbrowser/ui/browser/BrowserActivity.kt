@@ -270,7 +270,13 @@ private fun BrowserScreen(
     fun canClearDownload(entry: BrowserDownloadEntry): Boolean =
         entry.id != AppUpdateManager.APP_UPDATE_DOWNLOAD_ID
 
-    fun markWebDavDirty() = Unit
+    fun markWebDavDirty() {
+        HyperBridge.sendBackgroundCommand(context, "sync.soon")
+            .accept(
+                { },
+                { throwable -> Log.w(BROWSER_ACTIVITY_TAG, "Failed to schedule WebDAV sync", throwable) }
+            )
+    }
 
     fun removeBookmarkAndSync(url: String) {
         profileStore.removeBookmark(url)
@@ -474,6 +480,9 @@ private fun BrowserScreen(
 
     fun webAppsItemsResponse(): JSONObject =
         okItems(app.webApps.observeAll().value.toWebAppsJsonString(app))
+
+    fun bookmarksItemsResponse(): JSONObject =
+        okItems(profileStore.observeBookmarks().value.toBookmarksJsonString(faviconStore))
 
     var pendingWebAppIconPickResult by remember { mutableStateOf<GeckoResult<Any>?>(null) }
     var pendingWebAppIconPickKey by remember { mutableStateOf<String?>(null) }
@@ -700,16 +709,25 @@ private fun BrowserScreen(
                 ok()
             }
             "bookmarks.delete" -> {
-                pendingHyperCommand = HyperCommand.Bookmarks.Remove(payload.optString("url"))
-                ok()
-            }
-            "bookmarks.edit" -> {
-                pendingHyperCommand = HyperCommand.Bookmarks.Edit(
-                    oldUrl = payload.optString("oldUrl"),
-                    title = payload.optString("title"),
-                    url = payload.optString("url")
+                profileStore.removeBookmarkByIdOrUrl(
+                    id = payload.optString("id").ifBlank { null },
+                    url = payload.optString("url").ifBlank { null }
                 )
-                ok()
+                markWebDavDirty()
+                bookmarksItemsResponse()
+            }
+            "bookmarks.save" -> {
+                profileStore.saveBookmark(
+                    id = payload.optString("id").ifBlank { null },
+                    oldUrl = payload.optString("oldUrl").ifBlank { null },
+                    title = payload.optString("title"),
+                    url = payload.optString("url"),
+                    kind = payload.optString("kind", "bookmark"),
+                    parentId = payload.optString("parentId").ifBlank { null },
+                    index = payload.optString("index").toIntOrNull()
+                )
+                markWebDavDirty()
+                bookmarksItemsResponse()
             }
             "history.open" -> {
                 pendingHyperCommand = HyperCommand.History.Open(payload.optString("url"))
@@ -1578,12 +1596,6 @@ private fun BrowserScreen(
                 tab.input = command.url
                 controller.load(command.url)
             }
-            is HyperCommand.Bookmarks.Remove -> {
-                removeBookmarkAndSync(command.url)
-            }
-            is HyperCommand.Bookmarks.Edit -> {
-                editBookmarkAndSync(command.oldUrl, command.title, command.url)
-            }
             is HyperCommand.History.Open -> {
                 tab.input = command.url
                 controller.load(command.url)
@@ -1863,7 +1875,7 @@ private fun BrowserScreen(
                 val toolbar = @Composable {
                     val currentPageUrl = pageState.url.ifBlank { tab.input }
                     val currentPageIsInternal = GeckoSessionController.isInternalUrl(currentPageUrl)
-                    val storedPageBookmarked = !currentPageIsInternal && bookmarks.any { it.url == currentPageUrl }
+                    val storedPageBookmarked = !currentPageIsInternal && profileStore.isBookmarked(currentPageUrl)
                     val currentPageBookmarked = optimisticBookmarkState
                         ?.takeIf { it.first == currentPageUrl }
                         ?.second

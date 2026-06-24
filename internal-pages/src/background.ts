@@ -40,7 +40,7 @@ const internalPageMessageTypes = new Set([
   "update.install",
   "bookmarks.open",
   "bookmarks.delete",
-  "bookmarks.edit",
+  "bookmarks.save",
   "history.open",
   "history.remove",
   "history.clear",
@@ -76,10 +76,15 @@ const syncBackground = createSyncBackgroundController<WebDavSyncResult>({
 
 const hyperCommands = createHyperBackgroundCommandHandler<WebDavSyncResult>({
   sync: syncBackground,
+  listBookmarks,
+  findBookmarkByUrl,
+  addBookmark: saveBookmark,
+  saveBookmark,
+  deleteBookmark,
   loadLauncherLayout: requestLauncherLayout,
   saveLauncherLayout,
   notifyLauncherChanged,
-  shouldScheduleAfterMutation: (type) => type.startsWith("launcher.layout."),
+  shouldScheduleAfterMutation: (type) => type.startsWith("launcher.layout.") || type.startsWith("bookmarks."),
 });
 
 function startBackground(): void {
@@ -164,6 +169,36 @@ async function saveLauncherLayout(layout: unknown): Promise<void> {
   await requestNativeObject("launcher.layout.save", { layout: JSON.stringify(layout || {}) });
 }
 
+async function listBookmarks(): Promise<unknown[]> {
+  return requestNativeItems("data.bookmarks");
+}
+
+async function findBookmarkByUrl(input: { url: string }): Promise<unknown | null> {
+  const identityKey = normalizeBookmarkIdentityKey(input.url);
+  if (!identityKey) return null;
+  const bookmarks = await listBookmarks();
+  return bookmarks.find((bookmark) => {
+    if (!isPlainObject(bookmark) || bookmark.kind === "folder") return false;
+    const candidate = typeof bookmark.identityKey === "string" && bookmark.identityKey.trim()
+      ? normalizeBookmarkIdentityKey(bookmark.identityKey)
+      : normalizeBookmarkIdentityKey(typeof bookmark.url === "string" ? bookmark.url : "");
+    return candidate === identityKey;
+  }) || null;
+}
+
+async function saveBookmark(input: unknown): Promise<unknown[]> {
+  if (!isPlainObject(input)) throw new Error("Invalid bookmark payload.");
+  const payload = normalizeBookmarkPayload(input);
+  return requestNativeItems("bookmarks.save", payload);
+}
+
+async function deleteBookmark(input: { id?: string; url?: string }): Promise<unknown[]> {
+  return requestNativeItems("bookmarks.delete", {
+    ...(input.id ? { id: input.id } : {}),
+    ...(input.url ? { url: input.url } : {}),
+  });
+}
+
 async function requestNativeObject<T = unknown>(type: string, payload: Record<string, unknown> = {}): Promise<T> {
   const sendNativeMessage = browser?.runtime?.sendNativeMessage;
   if (!sendNativeMessage) throw new Error("Hyper native bridge unavailable.");
@@ -174,10 +209,60 @@ async function requestNativeObject<T = unknown>(type: string, payload: Record<st
   return response.data as T;
 }
 
-function parseBridgeResponse(response: unknown): { ok?: boolean; error?: unknown; data?: unknown } {
+async function requestNativeItems<T = unknown>(type: string, payload: Record<string, unknown> = {}): Promise<T[]> {
+  const sendNativeMessage = browser?.runtime?.sendNativeMessage;
+  if (!sendNativeMessage) throw new Error("Hyper native bridge unavailable.");
+  const response = parseBridgeResponse(await sendNativeMessage(NATIVE_APP, { type, payload }));
+  if (!response || response.ok !== true) {
+    throw new Error(typeof response?.error === "string" ? response.error : "Hyper native bridge request failed.");
+  }
+  if (!response.itemsJson) return [];
+  const items = JSON.parse(response.itemsJson) as unknown;
+  return Array.isArray(items) ? items as T[] : [];
+}
+
+function normalizeBookmarkPayload(input: Record<string, unknown>): Record<string, string> {
+  const payload: Record<string, string> = {};
+  const id = stringFromUnknown(input.id);
+  const oldUrl = stringFromUnknown(input.oldUrl);
+  const title = stringFromUnknown(input.title);
+  const url = stringFromUnknown(input.url);
+  const kind = stringFromUnknown(input.kind) === "folder" ? "folder" : "bookmark";
+  const parentId = stringFromUnknown(input.parentId);
+  const index = numberFromUnknown(input.index);
+  if (id) payload.id = id;
+  if (oldUrl) payload.oldUrl = oldUrl;
+  if (title) payload.title = title;
+  if (url) payload.url = url;
+  if (kind) payload.kind = kind;
+  if (parentId) payload.parentId = parentId;
+  if (index !== null) payload.index = String(index);
+  return payload;
+}
+
+function normalizeBookmarkIdentityKey(value: string): string {
+  try {
+    const url = new URL(value.trim());
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return value.trim();
+  }
+}
+
+function stringFromUnknown(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function numberFromUnknown(value: unknown): number | null {
+  const number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : null;
+}
+
+function parseBridgeResponse(response: unknown): { ok?: boolean; error?: unknown; data?: unknown; itemsJson?: string } {
   return typeof response === "string"
-    ? JSON.parse(response) as { ok?: boolean; error?: unknown; data?: unknown }
-    : response as { ok?: boolean; error?: unknown; data?: unknown };
+    ? JSON.parse(response) as { ok?: boolean; error?: unknown; data?: unknown; itemsJson?: string }
+    : response as { ok?: boolean; error?: unknown; data?: unknown; itemsJson?: string };
 }
 
 function ensureRemoteSyncAlarm(): void {

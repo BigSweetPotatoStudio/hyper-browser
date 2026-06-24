@@ -57,6 +57,7 @@ async function loadLocalSnapshot(): Promise<SyncV2LocalSnapshot> {
   const layout = await requestLauncherLayout();
   return {
     bookmarks: activeLocalBookmarks(localData),
+    bookmarkSnapshotMode: "tree",
     webApps: activeLocalWebApps(localData),
     layout,
   };
@@ -194,9 +195,9 @@ function syncResultFromState(
   settings: BrowserSettings,
   sync: SyncV2Result,
 ): WebDavSyncResult {
-  const bookmarks = activeBookmarksFromState(state);
+  const bookmarks = activeBookmarksFromState(state).filter((bookmark) => bookmark.kind !== "folder");
   const webApps = activeWebAppsFromState(state);
-  const previousBookmarks = new Set(activeBookmarksFromState(previous).map((bookmark) => bookmark.url));
+  const previousBookmarks = new Set(activeBookmarksFromState(previous).filter((bookmark) => bookmark.kind !== "folder").map((bookmark) => bookmark.id));
   const previousWebApps = new Set(activeWebAppsFromState(previous).map((app) => app.id));
   return {
     stateChanged: sync.stateChanged,
@@ -205,8 +206,8 @@ function syncResultFromState(
     webAppCount: webApps.length,
     deletedBookmarkCount: Object.keys(state.bookmarkTombstones).length,
     deletedWebAppCount: Object.keys(state.appTombstones).length,
-    importedBookmarkCount: bookmarks.filter((bookmark) => !previousBookmarks.has(bookmark.url)).length,
-    removedBookmarkCount: [...previousBookmarks].filter((url) => !state.bookmarks[url]).length,
+    importedBookmarkCount: bookmarks.filter((bookmark) => !previousBookmarks.has(bookmark.id)).length,
+    removedBookmarkCount: [...previousBookmarks].filter((id) => !state.bookmarks[id]).length,
     importedWebAppCount: webApps.filter((app) => !previousWebApps.has(app.id)).length,
     removedWebAppCount: [...previousWebApps].filter((id) => !state.apps[id]).length,
     syncedAt: sync.syncedAt,

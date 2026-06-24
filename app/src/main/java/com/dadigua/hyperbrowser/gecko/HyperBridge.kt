@@ -44,7 +44,7 @@ object HyperBridge {
         "update.install",
         "bookmarks.open",
         "bookmarks.delete",
-        "bookmarks.edit",
+        "bookmarks.save",
         "history.open",
         "history.remove",
         "history.clear",

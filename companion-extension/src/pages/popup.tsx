@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../styles.css";
-import type { SyncResult } from "../types";
+import type { BookmarkRecord, SyncResult } from "../types";
 import { sendCommand } from "./bridge";
 
 type PopupAction = "webapp" | "bookmark" | null;
@@ -9,6 +9,20 @@ type PopupAction = "webapp" | "bookmark" | null;
 function Popup() {
   const [message, setMessage] = useState("");
   const [busyAction, setBusyAction] = useState<PopupAction>(null);
+  const [bookmark, setBookmark] = useState<BookmarkRecord | null>(null);
+  const [bookmarkStatusLoaded, setBookmarkStatusLoaded] = useState(false);
+
+  useEffect(() => {
+    refreshBookmarkStatus();
+  }, []);
+
+  function refreshBookmarkStatus() {
+    setBookmarkStatusLoaded(false);
+    sendCommand<BookmarkRecord | null>("bookmarks.getFromCurrentPage")
+      .then((record) => setBookmark(record))
+      .catch(() => setBookmark(null))
+      .finally(() => setBookmarkStatusLoaded(true));
+  }
 
   function addWebApp() {
     setBusyAction("webapp");
@@ -25,8 +39,22 @@ function Popup() {
     sendCommand<SyncResult>("bookmarks.addFromCurrentPage")
       .then((result) => {
         setMessage(`Bookmark added and synced ${result.bookmarkCount} bookmarks.`);
+        refreshBookmarkStatus();
       })
       .catch((error) => setMessage(error instanceof Error ? error.message : "Unable to add bookmark."))
+      .finally(() => setBusyAction(null));
+  }
+
+  function removeBookmark() {
+    if (!bookmark) return;
+    setBusyAction("bookmark");
+    setMessage("Removing bookmark...");
+    sendCommand<SyncResult>("bookmarks.delete", { id: bookmark.id })
+      .then((result) => {
+        setBookmark(null);
+        setMessage(`Bookmark removed and synced ${result.bookmarkCount} bookmarks.`);
+      })
+      .catch((error) => setMessage(error instanceof Error ? error.message : "Unable to remove bookmark."))
       .finally(() => setBusyAction(null));
   }
 
@@ -39,8 +67,8 @@ function Popup() {
         <button className="button" type="button" disabled={!!busyAction} onClick={addWebApp}>
           {busyAction === "webapp" ? "Adding..." : "Add WebApp"}
         </button>
-        <button className="button" type="button" disabled={!!busyAction} onClick={addBookmark}>
-          {busyAction === "bookmark" ? "Adding..." : "Add bookmark"}
+        <button className="button" type="button" disabled={!!busyAction || !bookmarkStatusLoaded} onClick={bookmark ? removeBookmark : addBookmark}>
+          {busyAction === "bookmark" ? (bookmark ? "Removing..." : "Adding...") : bookmark ? "Remove bookmark" : "Add bookmark"}
         </button>
       </div>
       {message && <p className={message.toLowerCase().includes("failed") ? "error" : "message"}>{message}</p>}

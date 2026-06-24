@@ -2,10 +2,17 @@ package com.dadigua.hyperbrowser.sync
 
 import android.content.Context
 import android.graphics.Color
+import com.dadigua.hyperbrowser.browser.BOOKMARK_KIND_BOOKMARK
+import com.dadigua.hyperbrowser.browser.BOOKMARK_KIND_FOLDER
 import com.dadigua.hyperbrowser.browser.BrowserBookmark
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.browser.FaviconRepository
+import com.dadigua.hyperbrowser.browser.bookmarkIdentityKey
+import com.dadigua.hyperbrowser.browser.folderBookmarkIdentityKey
+import com.dadigua.hyperbrowser.browser.normalizeBookmarkUrl
+import com.dadigua.hyperbrowser.browser.stableBookmarkIdForUrl
+import com.dadigua.hyperbrowser.browser.stableFolderBookmarkId
 import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.webapp.WebAppRepository
 import kotlinx.coroutines.Dispatchers
@@ -51,9 +58,9 @@ class WebDavLocalSyncAdapter(
             webApps = webAppRecords
         )
         WebDavSyncResult(
-            bookmarkCount = bookmarkRecords.count { it.deletedAt == null },
+            bookmarkCount = bookmarkRecords.count { it.deletedAt == null && it.kind != BOOKMARK_KIND_FOLDER },
             webAppCount = webAppRecords.count { it.deletedAt == null },
-            deletedBookmarkCount = bookmarkRecords.count { it.deletedAt != null },
+            deletedBookmarkCount = bookmarkRecords.count { it.deletedAt != null && it.kind != BOOKMARK_KIND_FOLDER },
             deletedWebAppCount = webAppRecords.count { it.deletedAt != null },
             importedBookmarkCount = appliedBookmarks.imported,
             removedBookmarkCount = appliedBookmarks.removed,
@@ -72,35 +79,60 @@ class WebDavLocalSyncAdapter(
         deviceId: String,
         now: Long
     ): List<SyncBookmarkRecord> {
-        val localByUrl = profileStore.observeBookmarks().value.associateBy { it.url.trim() }
+        val localById = profileStore.observeBookmarks().value.associateBy { it.id.trim() }
         val records = mutableMapOf<String, SyncBookmarkRecord>()
 
         knownRecords.values
             .filter { it.deletedAt != null }
             .forEach { known ->
-                records[known.url] = known
+                records[known.id] = known
             }
 
         knownRecords.values
-            .filter { it.deletedAt == null && it.url !in localByUrl }
+            .filter { it.deletedAt == null && it.id !in localById }
             .forEach { known ->
-                records[known.url] = known.copy(
+                records[known.id] = known.copy(
                     updatedAt = now,
                     deletedAt = now,
                     sourceDeviceId = deviceId
                 )
             }
 
-        localByUrl.values.forEach { bookmark ->
-            val url = bookmark.url.trim()
-            if (url.isBlank()) return@forEach
-            val known = knownRecords[url]
-            val iconDataUrl = faviconStore.iconDataUrl(bookmark.iconPath, url)
+        localById.values.forEach { bookmark ->
+            val id = bookmark.id.trim()
+            if (id.isBlank()) return@forEach
+            val kind = if (bookmark.isFolder) BOOKMARK_KIND_FOLDER else BOOKMARK_KIND_BOOKMARK
+            val url = if (kind == BOOKMARK_KIND_FOLDER) "" else normalizeBookmarkUrl(bookmark.url)
+            if (kind == BOOKMARK_KIND_BOOKMARK && url.isBlank()) return@forEach
+            val known = knownRecords[id]
+            val iconDataUrl = if (kind == BOOKMARK_KIND_FOLDER) null else faviconStore.iconDataUrl(bookmark.iconPath, url)
             val changed = known == null ||
                 known.deletedAt != null ||
+                known.kind != kind ||
+                known.identityKey != bookmark.identityKey ||
+                known.parentId != bookmark.parentId ||
+                known.index != bookmark.index ||
+                known.url != url ||
                 known.title != bookmark.title ||
                 known.iconDataUrl != iconDataUrl
-            records[url] = SyncBookmarkRecord(
+            records[id] = SyncBookmarkRecord(
+                id = id,
+                kind = kind,
+                identityKey = bookmark.identityKey.ifBlank {
+                    if (kind == BOOKMARK_KIND_FOLDER) {
+                        folderBookmarkIdentityKey(bookmark.parentId, bookmark.title, bookmark.index)
+                    } else {
+                        bookmarkIdentityKey(url)
+                    }
+                }.let {
+                    if (kind == BOOKMARK_KIND_FOLDER) {
+                        folderBookmarkIdentityKey(bookmark.parentId, bookmark.title, bookmark.index)
+                    } else {
+                        it
+                    }
+                },
+                parentId = bookmark.parentId,
+                index = bookmark.index,
                 url = url,
                 title = bookmark.title.ifBlank { url },
                 createdAt = bookmark.createdAt.takeIf { it > 0 } ?: now,
@@ -174,26 +206,42 @@ class WebDavLocalSyncAdapter(
     }
 
     private fun applyBookmarks(records: Collection<SyncBookmarkRecord>): ApplyCounts {
-        val currentByUrl = profileStore.observeBookmarks().value.associateBy { it.url }
-        val activeRecords = records
-            .filter { it.deletedAt == null }
-            .associateBy { it.url.trim() }
+        val currentById = profileStore.observeBookmarks().value.associateBy { it.id }
+        val activeRecords = bookmarkRecordsById(records.filter { it.deletedAt == null })
         var removed = 0
         val imports = mutableListOf<BrowserBookmark>()
-        currentByUrl.values.forEach { current ->
-            if (current.url !in activeRecords) {
-                profileStore.removeBookmark(current.url)
+        currentById.values.forEach { current ->
+            if (current.id !in activeRecords) {
+                profileStore.removeBookmarkByIdOrUrl(id = current.id, url = null)
                 removed += 1
             }
         }
-        activeRecords.values.sortedByDescending { it.updatedAt }.forEach { record ->
-            val current = currentByUrl[record.url]
-            if (current == null || current.title != record.title) {
+        activeRecords.values.sortedWith(compareBy<SyncBookmarkRecord> { it.parentId ?: "" }.thenBy { it.index ?: 0 }.thenBy { it.kind })
+            .forEach { record ->
+            val current = currentById[record.id]
+            if (current == null ||
+                current.kind != record.kind ||
+                current.identityKey != record.identityKey ||
+                current.parentId != record.parentId ||
+                current.index != record.index ||
+                current.url != record.url ||
+                current.title != record.title ||
+                (!current.isFolder && faviconStore.iconDataUrl(current.iconPath, current.url) != record.iconDataUrl)
+            ) {
                 imports += BrowserBookmark(
+                    id = record.id,
+                    kind = record.kind,
+                    identityKey = record.identityKey,
+                    parentId = record.parentId,
+                    index = record.index,
                     url = record.url,
                     title = record.title.ifBlank { record.url },
                     createdAt = record.createdAt.takeIf { it > 0 } ?: record.updatedAt,
-                    iconPath = faviconStore.saveIconDataUrl(record.url, record.iconDataUrl)
+                    iconPath = if (record.kind == BOOKMARK_KIND_FOLDER) {
+                        null
+                    } else {
+                        faviconStore.saveIconDataUrl(record.url, record.iconDataUrl)
+                    }
                 )
             }
         }
@@ -301,7 +349,7 @@ private class WebDavSyncMetadataStore(context: Context) {
         return runCatching {
             val root = JSONObject(file.readText())
             SyncMetadata(
-                bookmarks = parseBookmarkRecords(root.optJSONArray("bookmarks") ?: JSONArray()).associateBy { it.url },
+                bookmarks = bookmarkRecordsById(parseBookmarkRecords(root.optJSONArray("bookmarks") ?: JSONArray())),
                 webApps = parseWebAppRecords(root.optJSONArray("webApps") ?: JSONArray()).associateBy { it.id }
             )
         }.getOrDefault(SyncMetadata(emptyMap(), emptyMap()))
@@ -330,6 +378,11 @@ private data class SyncMetadata(
 }
 
 private data class SyncBookmarkRecord(
+    val id: String,
+    val kind: String,
+    val identityKey: String,
+    val parentId: String?,
+    val index: Int?,
     val url: String,
     val title: String,
     val createdAt: Long,
@@ -367,6 +420,28 @@ private interface SyncRecord {
 }
 
 private data class ApplyCounts(val imported: Int, val removed: Int)
+
+private fun bookmarkRecordsById(records: Collection<SyncBookmarkRecord>): Map<String, SyncBookmarkRecord> {
+    val result = linkedMapOf<String, SyncBookmarkRecord>()
+    records.forEach { record ->
+        val id = record.id.trim()
+        if (id.isBlank()) return@forEach
+        val current = result[id]
+        result[id] = if (current == null) record else chooseLatestBookmark(current, record)
+    }
+    return result
+}
+
+private fun chooseLatestBookmark(
+    left: SyncBookmarkRecord,
+    right: SyncBookmarkRecord
+): SyncBookmarkRecord =
+    when {
+        right.updatedAt > left.updatedAt -> right
+        left.updatedAt > right.updatedAt -> left
+        right.deletedAt != null && left.deletedAt == null -> right
+        else -> left
+    }
 
 private fun webAppRecordsById(records: Collection<SyncWebAppRecord>): Map<String, SyncWebAppRecord> {
     val result = linkedMapOf<String, SyncWebAppRecord>()
@@ -414,20 +489,41 @@ private fun parseBookmarkRecords(array: JSONArray): List<SyncBookmarkRecord> =
     buildList {
         for (index in 0 until array.length()) {
             val item = array.optJSONObject(index) ?: continue
-            val url = item.optString("url").trim()
-            if (url.isBlank()) continue
+            val kind = if (item.optString("kind") == BOOKMARK_KIND_FOLDER) BOOKMARK_KIND_FOLDER else BOOKMARK_KIND_BOOKMARK
+            val parentId = item.optCleanString("parentId")
+            val recordIndex = if (item.has("index") && !item.isNull("index")) item.optInt("index") else index
+            val url = if (kind == BOOKMARK_KIND_FOLDER) "" else normalizeBookmarkUrl(item.optString("url"))
+            if (kind == BOOKMARK_KIND_BOOKMARK && url.isBlank()) continue
             val updatedAt = item.optLong("updatedAt").takeIf { it > 0 }
                 ?: item.optLong("createdAt").takeIf { it > 0 }
                 ?: System.currentTimeMillis()
+            val title = item.optString("title").ifBlank { if (kind == BOOKMARK_KIND_FOLDER) "Folder" else url }
+            val identityKey = if (kind == BOOKMARK_KIND_FOLDER) {
+                folderBookmarkIdentityKey(parentId, title, recordIndex)
+            } else {
+                item.optCleanString("identityKey") ?: bookmarkIdentityKey(url)
+            }
+            val id = item.optString("id").trim().ifBlank {
+                if (kind == BOOKMARK_KIND_FOLDER) {
+                    stableFolderBookmarkId(parentId, title, recordIndex)
+                } else {
+                    stableBookmarkIdForUrl(url)
+                }
+            }
             add(
                 SyncBookmarkRecord(
+                    id = id,
+                    kind = kind,
+                    identityKey = identityKey,
+                    parentId = parentId,
+                    index = recordIndex,
                     url = url,
-                    title = item.optString("title").ifBlank { url },
+                    title = title,
                     createdAt = item.optLong("createdAt", updatedAt),
                     updatedAt = updatedAt,
                     deletedAt = item.optNullableLong("deletedAt"),
                     sourceDeviceId = item.optString("sourceDeviceId"),
-                    iconDataUrl = item.optString("iconDataUrl").ifBlank { null }
+                    iconDataUrl = item.optCleanString("iconDataUrl")
                 )
             )
         }
@@ -487,13 +583,18 @@ private fun bookmarksArray(records: Collection<SyncBookmarkRecord>): JSONArray =
         records.forEach { record ->
             put(
                 JSONObject()
+                    .put("id", record.id)
+                    .put("kind", record.kind)
+                    .put("identityKey", record.identityKey)
+                    .putJsonNullable("parentId", record.parentId)
+                    .putJsonNullable("index", record.index)
                     .put("url", record.url)
                     .put("title", record.title)
                     .put("createdAt", record.createdAt)
                     .put("updatedAt", record.updatedAt)
-                    .put("deletedAt", record.deletedAt)
+                    .putJsonNullable("deletedAt", record.deletedAt)
                     .put("sourceDeviceId", record.sourceDeviceId)
-                    .put("iconDataUrl", record.iconDataUrl)
+                    .putJsonNullable("iconDataUrl", record.iconDataUrl)
             )
         }
     }
@@ -525,3 +626,12 @@ private fun JSONObject.optNullableLong(name: String): Long? {
     val value = optLong(name, 0L)
     return value.takeIf { it > 0 }
 }
+
+private fun JSONObject.optCleanString(name: String): String? {
+    if (!has(name) || isNull(name)) return null
+    val value = optString(name).trim()
+    return value.takeIf { it.isNotBlank() && it != "null" && it != "undefined" }
+}
+
+private fun JSONObject.putJsonNullable(name: String, value: Any?): JSONObject =
+    put(name, value ?: JSONObject.NULL)

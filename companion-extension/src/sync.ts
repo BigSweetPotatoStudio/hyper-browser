@@ -16,5 +16,6 @@ export const browserSyncService = createBrowserSyncService({
     create: (bookmark) => browser.bookmarks.create(bookmark as Browser.bookmarks.CreateDetails) as Promise<BrowserBookmarkNode>,
     update: (id, changes) => browser.bookmarks.update(id, changes as Browser.bookmarks.UpdateChanges) as Promise<BrowserBookmarkNode>,
     remove: (id) => browser.bookmarks.remove(id),
+    removeTree: (id) => browser.bookmarks.removeTree(id),
   },
 });

@@ -8,8 +8,14 @@ type BridgeResponse = {
 };
 
 type BookmarkItem = {
+  id?: string;
+  kind?: "bookmark" | "folder";
+  identityKey?: string;
+  parentId?: string | null;
+  index?: number;
   title?: string;
   url: string;
+  createdAt?: number;
   iconDataUrl?: string | null;
 };
 
@@ -173,7 +179,7 @@ type HyperBridgeMessageType =
   | "update.install"
   | "bookmarks.open"
   | "bookmarks.delete"
-  | "bookmarks.edit"
+  | "bookmarks.save"
   | "history.open"
   | "history.remove"
   | "history.clear"
@@ -263,8 +269,6 @@ type HyperBrowserApi = {
   requestBookmarksData(): Promise<BookmarkItem[]>;
   requestHistoryData(): Promise<HistoryItem[]>;
   openBookmark(url: string): void;
-  removeBookmark(url: string): Promise<void>;
-  editBookmark(oldUrl: string, title: string, url: string): Promise<void>;
   openHistory(url: string): void;
   removeHistory(url: string): void;
   clearHistory(): void;
@@ -449,12 +453,6 @@ window.hyperBrowser = {
   },
   openBookmark(url) {
     command("bookmarks.open", { url });
-  },
-  removeBookmark(url) {
-    return send("bookmarks.delete", { url }).then(() => undefined);
-  },
-  editBookmark(oldUrl, title, url) {
-    return send("bookmarks.edit", { oldUrl, title, url }).then(() => undefined);
   },
   openHistory(url) {
     command("history.open", { url });
