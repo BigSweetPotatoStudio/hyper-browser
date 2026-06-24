@@ -1,7 +1,7 @@
 import { browser } from "wxt/browser";
 import { DEFAULT_DEVICE_NAME } from "./identity";
 import type { SyncSettings } from "./types";
-import { createEmptyStore, ensureStore, type SyncV2Store } from "@hyper-sync/op-log";
+import { canonicalJson, createEmptyStore, ensureStore, type SyncV2Store } from "@hyper-sync/op-log";
 
 const DEFAULT_FOLDER_TITLE = "Hyper Browser";
 
@@ -36,7 +36,12 @@ export async function saveSettings(settings: SyncSettings): Promise<void> {
 export async function loadSyncV2Store(): Promise<SyncV2Store> {
   const settings = await loadSettings();
   const result = await storageGet<{ syncV2Store?: unknown }>("syncV2Store");
-  return result.syncV2Store ? ensureStore(result.syncV2Store, settings.deviceId) : createEmptyStore(settings.deviceId);
+  if (!result.syncV2Store) return createEmptyStore(settings.deviceId);
+  const store = ensureStore(result.syncV2Store, settings.deviceId);
+  if (canonicalJson(result.syncV2Store) !== canonicalJson(store)) {
+    await storageSet({ syncV2Store: store });
+  }
+  return store;
 }
 
 export async function saveSyncV2Store(store: SyncV2Store): Promise<void> {

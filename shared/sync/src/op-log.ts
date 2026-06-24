@@ -32,7 +32,7 @@ export type SyncV2LayoutItem = {
   appId?: string;
   title?: string;
   container: string | null;
-  order: number;
+  index: number;
   rev: Revision;
 };
 
@@ -188,7 +188,7 @@ export function ensureState(value: unknown): SyncV2State {
     apps: state.apps || {},
     appTombstones: state.appTombstones || {},
     layout: {
-      items: state.layout?.items || {},
+      items: readLayoutItemMap(state.layout?.items),
       itemTombstones: state.layout?.itemTombstones || {},
     },
   };
@@ -243,7 +243,7 @@ export function appendOperation(store: SyncV2Store, operation: SyncV2OperationIn
   return next;
 }
 
-export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput, placement?: { container: string | null; order: number }): { store: SyncV2Store; app: SyncV2App } {
+export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput, placement?: { container: string | null; index: number }): { store: SyncV2Store; app: SyncV2App } {
   const identityKey = input.identityKey || identityKeyForUrl(input.startUrl);
   const existing = input.id
     ? store.state.apps[input.id]
@@ -277,7 +277,7 @@ export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput, place
         kind: "app",
         appId: id,
         container: placement.container,
-        order: placement.order,
+        index: placement.index,
       },
     });
   }
@@ -395,13 +395,7 @@ export function layoutFromState(state: SyncV2State, fallbackGridColumns = 4): La
     .sort(compareLayoutItems)
     .slice(0, 4)
     .map((item) => item.id);
-  const cells = desktop.map((item, index) => ({
-    id: item.id,
-    page: 0,
-    row: Math.floor(index / fallbackGridColumns),
-    column: index % fallbackGridColumns,
-    index,
-  }));
+  const cells = desktop.map((item, index) => desktopCellFromLayoutItem(item, index, fallbackGridColumns));
   const folders = folderItems.map((folder) => ({
     id: folder.id,
     title: folder.title || "Folder",
@@ -704,7 +698,7 @@ function mergeLauncherFileIntoState(state: SyncV2State, value: unknown): void {
   const layout = root.layout;
   if (layout && typeof layout === "object" && !Array.isArray(layout)) {
     const clean = layout as Partial<SyncV2State["layout"]> & { tombstones?: unknown };
-    mergeLwwMapInto(state.layout.items, readRecordMap<SyncV2LayoutItem>(clean.items));
+    mergeLwwMapInto(state.layout.items, readLayoutItemMap(clean.items));
     mergeLwwMapInto(state.layout.itemTombstones, readRecordMap<SyncV2Tombstone>(clean.itemTombstones || clean.tombstones));
     return;
   }
@@ -730,6 +724,16 @@ function readRecordMap<T extends { rev?: Revision }>(value: unknown): Record<str
     const record = raw as T;
     if (!record.rev) return;
     result[key] = cloneJson(record);
+  });
+  return result;
+}
+
+function readLayoutItemMap(value: unknown): Record<string, SyncV2LayoutItem> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: Record<string, SyncV2LayoutItem> = {};
+  Object.entries(value as Record<string, unknown>).forEach(([key, raw]) => {
+    const item = normalizeLayoutItemRecord(raw, key);
+    if (item) result[item.id] = item;
   });
   return result;
 }
@@ -884,8 +888,8 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     return;
   }
   if (operation.type === "layout.place") {
-    const item = operation.item;
-    if (!item.id || state.layout.itemTombstones[item.id]) return;
+    const item = normalizeLayoutItemInput(operation.item);
+    if (!item || state.layout.itemTombstones[item.id]) return;
     const current = state.layout.items[item.id];
     if (current && compareRevision(current.rev, rev) > 0) return;
     state.layout.items[item.id] = { ...item, rev };
@@ -897,7 +901,7 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     const current = state.layout.items[itemId];
     if (current && compareRevision(current.rev, rev) > 0) return;
     state.layout.items[itemId] = {
-      ...(current || { id: itemId, kind: layoutItemKind(itemId), ...(itemId.startsWith("app:") ? { appId: itemId.slice(4) } : {}), order: 0 }),
+      ...(current || { id: itemId, kind: layoutItemKind(itemId), ...(itemId.startsWith("app:") ? { appId: itemId.slice(4) } : {}), index: 0 }),
       container: null,
       rev,
     };
@@ -970,7 +974,7 @@ function layoutPlacements(layout: LauncherLayoutLike): Map<string, Omit<SyncV2La
       kind: layoutItemKind(cell.id),
       ...(cell.id.startsWith("app:") ? { appId: cell.id.slice(4) } : {}),
       container: "desktop:0",
-      order: stableCellIndex(cell, columns, index) * 1000,
+      index: stableCellIndex(cell, columns, index),
     });
   });
   (layout.dock || []).forEach((id, index) => {
@@ -980,14 +984,14 @@ function layoutPlacements(layout: LauncherLayoutLike): Map<string, Omit<SyncV2La
       kind: layoutItemKind(id),
       ...(id.startsWith("app:") ? { appId: id.slice(4) } : {}),
       container: "dock",
-      order: index * 1000,
+      index,
     });
   });
   (layout.folders || []).forEach((folder) => {
     if (folder.id) {
       const current = result.get(folder.id);
       result.set(folder.id, {
-        ...(current || { id: folder.id, kind: "folder" as const, container: null, order: 0 }),
+        ...(current || { id: folder.id, kind: "folder" as const, container: null, index: 0 }),
         title: folder.title,
       });
     }
@@ -998,7 +1002,7 @@ function layoutPlacements(layout: LauncherLayoutLike): Map<string, Omit<SyncV2La
         kind: layoutItemKind(id),
         ...(id.startsWith("app:") ? { appId: id.slice(4) } : {}),
         container: folder.id,
-        order: index * 1000,
+        index,
       });
     });
   });
@@ -1013,6 +1017,55 @@ function stableCellIndex(cell: { page?: number; row?: number; column?: number; i
   return page * 10000 + row * columns + column || fallback;
 }
 
+function desktopCellFromLayoutItem(item: SyncV2LayoutItem, fallbackIndex: number, fallbackGridColumns: number): NonNullable<LauncherLayoutLike["cells"]>[number] {
+  const columns = Math.max(1, Math.floor(fallbackGridColumns || 4));
+  const index = Number.isFinite(item.index) ? Math.max(0, Math.floor(item.index)) : fallbackIndex;
+  return {
+    id: item.id,
+    page: 0,
+    row: Math.floor(index / columns),
+    column: index % columns,
+    index,
+  };
+}
+
+function normalizeLayoutItemRecord(raw: unknown, fallbackId?: string): SyncV2LayoutItem | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const rev = (raw as { rev?: Revision }).rev;
+  if (!rev) return null;
+  const item = normalizeLayoutItemInput(raw, fallbackId);
+  return item ? { ...item, rev } : null;
+}
+
+function normalizeLayoutItemInput(raw: unknown, fallbackId?: string): Omit<SyncV2LayoutItem, "rev"> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const source = raw as Record<string, unknown>;
+  const id = String(source.id || fallbackId || "").trim();
+  if (!id) return null;
+  const kind = source.kind === "app" || source.kind === "folder" || source.kind === "system"
+    ? source.kind
+    : layoutItemKind(id);
+  const appId = typeof source.appId === "string" && source.appId.trim()
+    ? source.appId.trim()
+    : (id.startsWith("app:") ? id.slice(4) : undefined);
+  return {
+    id,
+    kind,
+    ...(kind === "app" && appId ? { appId } : {}),
+    ...(typeof source.title === "string" ? { title: source.title } : {}),
+    container: source.container == null ? null : String(source.container),
+    index: normalizeLayoutIndex(source.index, source.order),
+  };
+}
+
+function normalizeLayoutIndex(indexValue: unknown, legacyOrderValue: unknown, fallback = 0): number {
+  const index = Number(indexValue);
+  if (Number.isFinite(index)) return Math.max(0, Math.floor(index));
+  const legacyOrder = Number(legacyOrderValue);
+  if (Number.isFinite(legacyOrder)) return Math.max(0, Math.floor(legacyOrder / 1000));
+  return fallback;
+}
+
 function layoutItemKind(id: string): "app" | "folder" | "system" {
   if (id.startsWith("app:")) return "app";
   if (id.startsWith("folder:")) return "folder";
@@ -1020,7 +1073,7 @@ function layoutItemKind(id: string): "app" | "folder" | "system" {
 }
 
 function compareLayoutItems(left: SyncV2LayoutItem, right: SyncV2LayoutItem): number {
-  return left.order - right.order || left.id.localeCompare(right.id);
+  return left.index - right.index || left.id.localeCompare(right.id);
 }
 
 function layoutItemChanged(left: SyncV2LayoutItem, right: Omit<SyncV2LayoutItem, "rev">): boolean {
@@ -1028,7 +1081,7 @@ function layoutItemChanged(left: SyncV2LayoutItem, right: Omit<SyncV2LayoutItem,
     left.appId !== right.appId ||
     left.title !== right.title ||
     left.container !== right.container ||
-    left.order !== right.order;
+    left.index !== right.index;
 }
 
 function bookmarkFieldsChanged(left: SyncV2Bookmark, right: BookmarkRecord): boolean {

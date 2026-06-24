@@ -116,6 +116,8 @@ export type LauncherLayoutStorage = {
   save: (layout: LauncherLayout) => Promise<void> | void;
 };
 
+export type LauncherPreviewLayoutMode = "compact" | "original";
+
 export type LauncherPlatform = {
   systemEntries: LauncherSystemEntry[];
   defaultDockEntryIds: string[];
@@ -272,6 +274,7 @@ export type LauncherPageProps = {
   labels?: Partial<LauncherLabels>;
   className?: string;
   variant?: "desktop" | "mobile";
+  previewLayoutMode?: LauncherPreviewLayoutMode;
   topActions?: React.ReactNode;
   refreshToken?: unknown;
   onLayoutChanged?: (layout: LauncherLayout) => void;
@@ -321,7 +324,17 @@ type ResolvedDropTarget = {
   slotDropId?: string;
 };
 
-export function LauncherPage({ platform, layoutStorage, labels: labelOverrides, className = "", variant = "desktop", topActions, refreshToken, onLayoutChanged }: LauncherPageProps) {
+export function LauncherPage({
+  platform,
+  layoutStorage,
+  labels: labelOverrides,
+  className = "",
+  variant = "desktop",
+  previewLayoutMode = "original",
+  topActions,
+  refreshToken,
+  onLayoutChanged,
+}: LauncherPageProps) {
   const labels = useMemo<LauncherLabels>(() => ({ ...defaultLabels, ...labelOverrides }), [labelOverrides]);
   const gridMetrics = useDesktopGridMetrics(variant);
   const [apps, setApps] = useState<LauncherApp[]>([]);
@@ -447,14 +460,24 @@ export function LauncherPage({ platform, layoutStorage, labels: labelOverrides, 
     return uniqueStrings([...explicitDesktopIds, ...autoDesktopIds]);
   }, [autoDesktopIds, explicitDesktopIds]);
 
-  const desktopCells = useMemo(
+  const originalDesktopCells = useMemo(
     () => normalizeDesktopCells(layout.cells, visibleDesktopIds, gridMetrics),
     [gridMetrics, layout.cells, visibleDesktopIds],
   );
-  const desktopIds = useMemo(
-    () => desktopCells
-      .sort((left, right) => globalCellIndex(left, gridMetrics) - globalCellIndex(right, gridMetrics))
+  const originalDesktopIds = useMemo(
+    () => sortCells(originalDesktopCells, gridMetrics)
       .map((cell) => cell.id),
+    [originalDesktopCells, gridMetrics],
+  );
+  const desktopCells = useMemo(
+    () => {
+      if (editMode || previewLayoutMode === "original") return originalDesktopCells;
+      return idsToCells(originalDesktopIds, gridMetrics, 0);
+    },
+    [editMode, gridMetrics, originalDesktopCells, originalDesktopIds, previewLayoutMode],
+  );
+  const desktopIds = useMemo(
+    () => sortCells(desktopCells, gridMetrics).map((cell) => cell.id),
     [desktopCells, gridMetrics],
   );
   const desktopSortingStrategy = useMemo(

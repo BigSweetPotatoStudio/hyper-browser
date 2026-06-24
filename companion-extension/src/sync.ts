@@ -75,7 +75,7 @@ export async function saveRemoteWebApp(input: Partial<WebAppRecord> & { name: st
     const itemId = input.id ? `app:${input.id}` : "";
     const placement = itemId && current.state.layout.items[itemId]
       ? undefined
-      : { container: "desktop:0", order: nextDesktopOrder(current.state) };
+      : { container: "desktop:0", index: nextDesktopIndex(current.state) };
     const { store } = appendWebAppUpsert(current, input, placement);
     await saveSyncV2Store(store);
   });
@@ -136,10 +136,10 @@ async function withLocalLock<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
-function nextDesktopOrder(state: SyncV2State): number {
+function nextDesktopIndex(state: SyncV2State): number {
   return Object.values(state.layout.items)
     .filter((item) => item.container === "desktop:0")
-    .reduce((max, item) => Math.max(max, item.order), -1000) + 1000;
+    .reduce((max, item) => Math.max(max, item.index), -1) + 1;
 }
 
 async function ensureBookmarkFolder(settings: SyncSettings): Promise<SyncSettings> {

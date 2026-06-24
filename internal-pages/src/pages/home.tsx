@@ -244,6 +244,7 @@ function HomePage() {
         platform={platform}
         layoutStorage={storage}
         refreshToken={layoutRevision}
+        previewLayoutMode="compact"
         onLayoutChanged={scheduleAutoSync}
         topActions={(
         <LauncherSyncActions

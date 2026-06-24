@@ -122,7 +122,12 @@ function readStoredStore(deviceId: string): SyncV2Store {
   const raw = window.localStorage.getItem(ANDROID_SYNC_V2_STORAGE_KEY);
   if (!raw) return createEmptyStore(deviceId);
   try {
-    return ensureStore(JSON.parse(raw), deviceId);
+    const parsed = JSON.parse(raw);
+    const store = ensureStore(parsed, deviceId);
+    if (canonicalJson(parsed) !== canonicalJson(store)) {
+      window.localStorage.setItem(ANDROID_SYNC_V2_STORAGE_KEY, canonicalJson(store));
+    }
+    return store;
   } catch {
     return createEmptyStore(deviceId);
   }

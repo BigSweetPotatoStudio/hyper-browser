@@ -141,6 +141,7 @@ function CompanionHomePage() {
         platform={platform}
         layoutStorage={launcherLayoutStorage}
         refreshToken={layoutRevision}
+        previewLayoutMode="original"
         onLayoutChanged={() => {
           sendCommand("launcher.syncSoon").catch(() => undefined);
         }}
