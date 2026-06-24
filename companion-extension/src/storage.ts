@@ -4,6 +4,7 @@ import type { SyncSettings } from "./types";
 import { canonicalJson, createEmptyStore, ensureStore, type SyncV2Store } from "@hyper-sync/op-log";
 
 const DEFAULT_FOLDER_TITLE = "Hyper Browser";
+const LEGACY_LAUNCHER_LAYOUT_KEY = "launcherLayout";
 
 const DEFAULT_SETTINGS: SyncSettings = {
   webDavUrl: "",
@@ -20,6 +21,7 @@ export function getDefaultSettings(): SyncSettings {
 }
 
 export async function loadSettings(): Promise<SyncSettings> {
+  await removeLegacyLauncherLayout();
   const result = await storageGet<{ settings?: Partial<SyncSettings> }>("settings");
   const settings = { ...DEFAULT_SETTINGS, ...(result.settings || {}) };
   if (!settings.deviceId) {
@@ -48,10 +50,18 @@ export async function saveSyncV2Store(store: SyncV2Store): Promise<void> {
   await storageSet({ syncV2Store: ensureStore(store, store.deviceId) });
 }
 
+async function removeLegacyLauncherLayout(): Promise<void> {
+  await storageRemove(LEGACY_LAUNCHER_LAYOUT_KEY).catch(() => undefined);
+}
+
 export function storageGet<T>(keys: string | string[] | Record<string, unknown> | null): Promise<T> {
   return browser.storage.local.get(keys as never) as Promise<T>;
 }
 
 export function storageSet(items: Record<string, unknown>): Promise<void> {
   return browser.storage.local.set(items);
+}
+
+export function storageRemove(keys: string | string[]): Promise<void> {
+  return browser.storage.local.remove(keys);
 }

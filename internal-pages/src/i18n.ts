@@ -3,6 +3,7 @@ import { readHashParam } from "./bootstrap";
 const en = {
   "common.back": "Back",
   "common.cancel": "Cancel",
+  "common.close": "Close",
   "common.clear": "Clear",
   "common.delete": "Delete",
   "common.edit": "Edit",
@@ -239,6 +240,7 @@ const en = {
 const zh: Record<keyof typeof en, string> = {
   "common.back": "返回",
   "common.cancel": "取消",
+  "common.close": "关闭",
   "common.clear": "清除",
   "common.delete": "删除",
   "common.edit": "修改",

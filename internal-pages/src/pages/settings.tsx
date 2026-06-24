@@ -3,8 +3,7 @@ import { createRoot } from "react-dom/client";
 import "../hyper-browser";
 import "../styles.css";
 import { getLocalePreference, matchesI18nText, setLocalePreference, t, type LocalePreference } from "../i18n";
-import type { BatteryOptimizationState, BrowserSettings, UpdateCheckResult, UpdateDownloadState, WebDavSyncResult, WebDavSyncSettings } from "../hyper-browser";
-import { sendBackgroundCommand } from "../background-command";
+import type { BatteryOptimizationState, BrowserSettings, UpdateCheckResult, UpdateDownloadState } from "../hyper-browser";
 
 function SettingsPage() {
   const [query, setQuery] = useState("");
@@ -14,15 +13,6 @@ function SettingsPage() {
   const [customDirty, setCustomDirty] = useState(false);
   const [dohDraft, setDohDraft] = useState("");
   const [dohDirty, setDohDirty] = useState(false);
-  const [webDavDraft, setWebDavDraft] = useState<WebDavSyncSettings>({
-    webDavSyncEnabled: false,
-    webDavSyncUrl: "",
-    webDavSyncUsername: "",
-    webDavSyncPassword: "",
-    webDavSyncDeviceName: "",
-  });
-  const [webDavDirty, setWebDavDirty] = useState(false);
-  const [webDavSyncing, setWebDavSyncing] = useState(false);
   const [customError, setCustomError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
@@ -32,8 +22,6 @@ function SettingsPage() {
   const [batteryMessage, setBatteryMessage] = useState("");
   const [privacyMessage, setPrivacyMessage] = useState("");
   const [privacyError, setPrivacyError] = useState("");
-  const [webDavMessage, setWebDavMessage] = useState("");
-  const [webDavError, setWebDavError] = useState("");
   const [updateMessage, setUpdateMessage] = useState("");
   const [backupMessage, setBackupMessage] = useState("");
   const [searchEngineExpanded, setSearchEngineExpanded] = useState(false);
@@ -42,7 +30,6 @@ function SettingsPage() {
   const [tabBehaviorExpanded, setTabBehaviorExpanded] = useState(false);
   const [httpDnsExpanded, setHttpDnsExpanded] = useState(false);
   const [privacyExpanded, setPrivacyExpanded] = useState(false);
-  const [webDavExpanded, setWebDavExpanded] = useState(false);
   const [backupExpanded, setBackupExpanded] = useState(false);
   const [backgroundRuntimeExpanded, setBackgroundRuntimeExpanded] = useState(false);
   const [updateSettingsExpanded, setUpdateSettingsExpanded] = useState(false);
@@ -69,9 +56,6 @@ function SettingsPage() {
   const showPrivacySettings = useMemo(() => {
     return matchesI18nText("settings.privacyTerms", query);
   }, [query]);
-  const showWebDavSyncSettings = useMemo(() => {
-    return matchesI18nText("settings.webDavSyncTerms", query);
-  }, [query]);
   const showBackupSettings = useMemo(() => {
     return matchesI18nText("settings.backupTerms", query);
   }, [query]);
@@ -85,7 +69,6 @@ function SettingsPage() {
   const tabBehaviorVisibleExpanded = tabBehaviorExpanded || hasSettingsQuery;
   const httpDnsVisibleExpanded = httpDnsExpanded || hasSettingsQuery;
   const privacyVisibleExpanded = privacyExpanded || hasSettingsQuery;
-  const webDavVisibleExpanded = webDavExpanded || hasSettingsQuery;
   const backupVisibleExpanded = backupExpanded || hasSettingsQuery;
   const backgroundRuntimeVisibleExpanded = backgroundRuntimeExpanded || hasSettingsQuery;
   const updateSettingsVisibleExpanded = updateSettingsExpanded || hasSettingsQuery;
@@ -117,14 +100,6 @@ function SettingsPage() {
           setCustomDirty(false);
           setDohDraft(next.dohProviderUrl);
           setDohDirty(false);
-          setWebDavDraft({
-            webDavSyncEnabled: next.webDavSyncEnabled,
-            webDavSyncUrl: next.webDavSyncUrl,
-            webDavSyncUsername: next.webDavSyncUsername,
-            webDavSyncPassword: next.webDavSyncPassword,
-            webDavSyncDeviceName: next.webDavSyncDeviceName,
-          });
-          setWebDavDirty(false);
         };
         if (resolvedPreference !== value.localePreference) {
           window.hyperBrowser.updateLocalePreference(resolvedPreference)
@@ -262,102 +237,6 @@ function SettingsPage() {
         setDohDraft(value.dohProviderUrl);
         setDohDirty(false);
       });
-  }
-
-  function updateWebDavDraft<K extends keyof WebDavSyncSettings>(key: K, value: WebDavSyncSettings[K]) {
-    setWebDavDraft((draft) => ({ ...draft, [key]: value }));
-    setWebDavDirty(true);
-    setWebDavError("");
-    setWebDavMessage("");
-  }
-
-  function isHttpUrl(value: string) {
-    try {
-      const protocol = new URL(value).protocol;
-      return protocol === "https:" || protocol === "http:";
-    } catch {
-      return false;
-    }
-  }
-
-  function commitWebDavSettings(): Promise<BrowserSettings | null> {
-    const cleanUrl = webDavDraft.webDavSyncUrl.trim();
-    if (webDavDraft.webDavSyncEnabled && !isHttpUrl(cleanUrl)) {
-      setWebDavError(t("settings.webDavUrlRequired"));
-      return Promise.resolve(null);
-    }
-    setWebDavError("");
-    return window.hyperBrowser.updateWebDavSyncSettings({
-      ...webDavDraft,
-      webDavSyncUrl: cleanUrl,
-      webDavSyncUsername: webDavDraft.webDavSyncUsername.trim(),
-      webDavSyncDeviceName: webDavDraft.webDavSyncDeviceName.trim(),
-    })
-      .then((value) => {
-        setSettings(value);
-        setWebDavDraft({
-          webDavSyncEnabled: value.webDavSyncEnabled,
-          webDavSyncUrl: value.webDavSyncUrl,
-          webDavSyncUsername: value.webDavSyncUsername,
-          webDavSyncPassword: value.webDavSyncPassword,
-          webDavSyncDeviceName: value.webDavSyncDeviceName,
-        });
-        setWebDavDirty(false);
-        setWebDavMessage(t("settings.webDavSaved"));
-        return value;
-      })
-      .catch((error) => {
-        setWebDavError(error instanceof Error ? error.message : t("settings.webDavSaveFailed"));
-        return null;
-      });
-  }
-
-  function runWebDavSync() {
-    setWebDavSyncing(true);
-    setWebDavError("");
-    setWebDavMessage(t("settings.webDavSyncing"));
-    const commit = webDavDirty ? commitWebDavSettings() : Promise.resolve(settings);
-    commit
-      .then((value) => {
-        if (!value) return null;
-        return sendBackgroundCommand<WebDavSyncResult>("sync.run");
-      })
-      .then(async (result) => {
-        if (!result) return;
-        if (result.settings) {
-          setSettings(result.settings);
-          setWebDavDraft({
-            webDavSyncEnabled: result.settings.webDavSyncEnabled,
-            webDavSyncUrl: result.settings.webDavSyncUrl,
-            webDavSyncUsername: result.settings.webDavSyncUsername,
-            webDavSyncPassword: result.settings.webDavSyncPassword,
-            webDavSyncDeviceName: result.settings.webDavSyncDeviceName,
-          });
-        }
-        setWebDavDirty(false);
-        setWebDavMessage(webDavSyncSummary(result));
-      })
-      .catch((error) => {
-        setWebDavError(error instanceof Error ? error.message : t("settings.webDavSyncFailed"));
-        setWebDavMessage("");
-      })
-      .finally(() => setWebDavSyncing(false));
-  }
-
-  function webDavSyncSummary(result: WebDavSyncResult) {
-    const summary = t("settings.webDavSyncComplete", {
-      bookmarks: result.bookmarkCount,
-      webApps: result.webAppCount,
-      deleted: result.deletedBookmarkCount + result.deletedWebAppCount,
-    });
-    return result.pendingOperationCount > 0
-      ? `${summary}${t("settings.webDavSyncPending", { pending: result.pendingOperationCount })}`
-      : summary;
-  }
-
-  function webDavStatusLabel() {
-    if (!settings?.webDavSyncEnabled) return t("settings.webDavOff");
-    return settings.webDavSyncUrl ? t("settings.webDavConfigured") : t("settings.webDavNeedsSetup");
   }
 
   function openBatteryOptimizationSettings() {
@@ -660,7 +539,7 @@ function SettingsPage() {
               </div>
             )}
           </div>
-        ) : !showToolbarPosition && !showLanguageSettings && !showTabBehavior && !showHttpDnsSettings && !showPrivacySettings && !showWebDavSyncSettings && !showBackupSettings && !showBackgroundRuntime && !showUpdateSettings ? (
+        ) : !showToolbarPosition && !showLanguageSettings && !showTabBehavior && !showHttpDnsSettings && !showPrivacySettings && !showBackupSettings && !showBackgroundRuntime && !showUpdateSettings ? (
           <div className="settings-empty">{t("settings.noMatches")}</div>
         ) : null}
         {showToolbarPosition && (
@@ -900,113 +779,6 @@ function SettingsPage() {
                 </div>
                 <p className="settings-message">{t("settings.privacyHelp")}</p>
                 {privacyMessage && <p className="settings-message">{privacyMessage}</p>}
-              </>
-            )}
-          </div>
-        )}
-        {showWebDavSyncSettings && (
-          <div className="settings-card settings-card-spaced">
-            <button
-              className="settings-row settings-row-button"
-              type="button"
-              aria-expanded={webDavVisibleExpanded}
-              onClick={() => setWebDavExpanded((expanded) => !expanded)}
-            >
-              <span className="settings-row-title">{t("settings.webDavSync")}</span>
-              <span className="settings-row-value">{webDavStatusLabel()}</span>
-            </button>
-            {webDavVisibleExpanded && (
-              <>
-                <label className="settings-toggle-row">
-                  <span className="settings-toggle-copy">
-                    <span className="settings-row-title">{t("settings.webDavEnable")}</span>
-                    <span className="settings-toggle-description">{t("settings.webDavEnableHelp")}</span>
-                  </span>
-                  <input
-                    className="settings-toggle"
-                    type="checkbox"
-                    checked={webDavDraft.webDavSyncEnabled}
-                    disabled={!settings}
-                    onChange={(event) => updateWebDavDraft("webDavSyncEnabled", event.currentTarget.checked)}
-                  />
-                </label>
-                <div className="settings-field-row">
-                  <span className="settings-field-title">
-                    <span className="settings-row-title">{t("settings.webDavUrl")}</span>
-                    {webDavDirty && <span>{t("settings.unsaved")}</span>}
-                  </span>
-                  <span className="settings-input-action-row">
-                    <input
-                      type="text"
-                      inputMode="url"
-                      placeholder="https://example.com/dav"
-                      value={webDavDraft.webDavSyncUrl}
-                      disabled={!settings}
-                      onChange={(event) => updateWebDavDraft("webDavSyncUrl", event.currentTarget.value)}
-                    />
-                  </span>
-                </div>
-                <div className="settings-field-row">
-                  <span className="settings-field-title">
-                    <span className="settings-row-title">{t("settings.webDavUsername")}</span>
-                  </span>
-                  <span className="settings-input-action-row">
-                    <input
-                      type="text"
-                      autoComplete="username"
-                      value={webDavDraft.webDavSyncUsername}
-                      disabled={!settings}
-                      onChange={(event) => updateWebDavDraft("webDavSyncUsername", event.currentTarget.value)}
-                    />
-                  </span>
-                </div>
-                <div className="settings-field-row">
-                  <span className="settings-field-title">
-                    <span className="settings-row-title">{t("settings.webDavPassword")}</span>
-                  </span>
-                  <span className="settings-input-action-row">
-                    <input
-                      type="password"
-                      autoComplete="current-password"
-                      value={webDavDraft.webDavSyncPassword}
-                      disabled={!settings}
-                      onChange={(event) => updateWebDavDraft("webDavSyncPassword", event.currentTarget.value)}
-                    />
-                  </span>
-                </div>
-                <div className="settings-field-row">
-                  <span className="settings-field-title">
-                    <span className="settings-row-title">{t("settings.webDavDeviceName")}</span>
-                  </span>
-                  <span className="settings-input-action-row">
-                    <input
-                      type="text"
-                      placeholder="Android phone"
-                      value={webDavDraft.webDavSyncDeviceName}
-                      disabled={!settings}
-                      onChange={(event) => updateWebDavDraft("webDavSyncDeviceName", event.currentTarget.value)}
-                    />
-                  </span>
-                </div>
-                {settings?.webDavSyncDeviceId && (
-                  <p className="settings-message">{t("settings.webDavDeviceId", { deviceId: settings.webDavSyncDeviceId })}</p>
-                )}
-                <div className="settings-actions">
-                  <button className="settings-action" type="button" disabled={!settings || !webDavDirty} onClick={commitWebDavSettings}>
-                    {t("common.save")}
-                  </button>
-                  <button
-                    className="settings-action primary"
-                    type="button"
-                    disabled={!settings || webDavSyncing || !webDavDraft.webDavSyncUrl.trim()}
-                    onClick={runWebDavSync}
-                  >
-                    {webDavSyncing ? t("settings.webDavSyncingShort") : t("settings.webDavSyncNow")}
-                  </button>
-                </div>
-                <p className="settings-message">{t("settings.webDavHelp")}</p>
-                {webDavError && <p className="settings-inline-error">{webDavError}</p>}
-                {webDavMessage && <p className="settings-message">{webDavMessage}</p>}
               </>
             )}
           </div>

@@ -1,24 +1,25 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
-import { shouldRefreshLauncherAfterSync, shouldUpdateSyncStatusAfterRemoteCheck } from "@hyper-sync";
+import { shouldRefreshLauncherAfterSync } from "@hyper-sync";
+import { SyncSettingsDialog, type SyncSettingsDialogResult, type SyncSettingsDialogValues } from "@hyper-sync/settings-dialog";
 import "../hyper-browser";
 import type { BrowserSettings, WebDavSyncResult } from "../hyper-browser";
 import "../styles.css";
 import { t } from "../i18n";
 import { createLauncherLayoutStorage, waitForLauncherLayoutSaves } from "../launcher-layout-storage";
-import { isPlainObject, sendBackgroundCommand, type RemoteCheckResult } from "../background-command";
+import { isPlainObject, sendBackgroundCommand } from "../background-command";
 
 const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"];
 const AUTO_SYNC_DEBOUNCE_MS = 1800;
 
 function HomePage() {
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsConfigured, setSettingsConfigured] = useState(false);
   const [syncState, setSyncState] = useState<LauncherSyncState>("idle");
   const [syncMessage, setSyncMessage] = useState("");
   const [layoutRevision, setLayoutRevision] = useState(0);
   const autoSyncTimer = useRef<number | null>(null);
-  const remoteCheckRunning = useRef(false);
 
   useEffect(() => {
     window.hyperBrowser.requestSettingsData()
@@ -28,23 +29,37 @@ function HomePage() {
 
   const storage = useMemo(() => createLauncherLayoutStorage(), []);
 
-  const checkRemoteChanges = useCallback(async () => {
-    if (remoteCheckRunning.current || document.visibilityState !== "visible") return;
-    remoteCheckRunning.current = true;
-    try {
-      const remoteCheck = await sendBackgroundCommand<RemoteCheckResult>("remote.check");
-      const syncResult = remoteCheck.syncResult || null;
-      if (syncResult && shouldUpdateSyncStatusAfterRemoteCheck(remoteCheck)) {
-        setSyncState("success");
-        setSyncMessage(webDavSyncSummary(syncResult));
-      }
-      if (shouldRefreshLauncherAfterSync(remoteCheck)) setLayoutRevision((current) => current + 1);
-    } catch (error) {
-      console.warn("Remote sync check failed.", error);
-    } finally {
-      remoteCheckRunning.current = false;
+  const loadSyncSettings = useCallback(async () => {
+    return settingsToDialogValues(await window.hyperBrowser.requestSettingsData());
+  }, []);
+
+  const syncSettings = useCallback(async (values: SyncSettingsDialogValues): Promise<SyncSettingsDialogResult> => {
+    if (!isHttpUrl(values.webDavUrl.trim())) {
+      throw new Error(t("settings.webDavUrlRequired"));
     }
-  }, [storage]);
+    try {
+      const savedSettings = await window.hyperBrowser.updateWebDavSyncSettings({
+        webDavSyncEnabled: values.webDavUrl.trim().length > 0,
+        webDavSyncUrl: values.webDavUrl.trim(),
+        webDavSyncUsername: values.username.trim(),
+        webDavSyncPassword: values.password,
+        webDavSyncDeviceName: values.deviceName.trim(),
+      });
+      setSettingsConfigured(isWebDavConfigured(savedSettings));
+      const result = await waitForLauncherLayoutSaves().then(() => sendBackgroundCommand<WebDavSyncResult>("sync.run"));
+      if (result.settings) setSettingsConfigured(isWebDavConfigured(result.settings));
+      setSyncState("success");
+      setSyncMessage(webDavSyncSummary(result));
+      return {
+        values: settingsToDialogValues(result.settings || savedSettings),
+        message: webDavSyncSummary(result),
+      };
+    } catch (syncError) {
+      setSyncState("error");
+      setSyncMessage(syncError instanceof Error ? syncError.message : t("settings.webDavSyncFailed"));
+      throw syncError;
+    }
+  }, []);
 
   const scheduleAutoSync = useCallback(() => {
     if (autoSyncTimer.current !== null) {
@@ -66,17 +81,6 @@ function HomePage() {
   }, []);
 
   useEffect(() => {
-    checkRemoteChanges();
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") checkRemoteChanges();
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [checkRemoteChanges]);
-
-  useEffect(() => {
     const onMessage = (message: unknown) => {
       if (!isPlainObject(message)) return;
       if (message.type !== "remote.synced" && message.type !== "launcher.changed") return;
@@ -84,8 +88,10 @@ function HomePage() {
       if (syncResult) {
         setSyncState("success");
         setSyncMessage(webDavSyncSummary(syncResult));
+        if (shouldRefreshLauncherAfterSync(syncResult)) setLayoutRevision((current) => current + 1);
+        return;
       }
-      setLayoutRevision((current) => current + 1);
+      if (message.type === "launcher.changed") setLayoutRevision((current) => current + 1);
     };
     browser?.runtime?.onMessage?.addListener(onMessage);
     return () => browser?.runtime?.onMessage?.removeListener(onMessage);
@@ -195,7 +201,7 @@ function HomePage() {
         if (!configured) {
           setSyncState("needs-settings");
           setSyncMessage(t("settings.webDavNeedsSetup"));
-          window.hyperBrowser.showSettings();
+          setSettingsOpen(true);
           return null;
         }
         return waitForLauncherLayoutSaves().then(() => sendBackgroundCommand<WebDavSyncResult>("sync.run"));
@@ -206,7 +212,6 @@ function HomePage() {
         if (settings) {
           setSettingsConfigured(isWebDavConfigured(settings));
         }
-        if (shouldRefreshLauncherAfterSync(result)) setLayoutRevision((current) => current + 1);
         setSyncState("success");
         setSyncMessage(webDavSyncSummary(result));
       })
@@ -217,6 +222,7 @@ function HomePage() {
   }
 
   return (
+    <>
       <LauncherPage
         labels={labels}
         platform={platform}
@@ -236,18 +242,73 @@ function HomePage() {
           message={syncMessage}
           settingsConfigured={settingsConfigured}
           state={syncState}
-          onOpenSettings={() => window.hyperBrowser.showSettings()}
+          onOpenSettings={() => setSettingsOpen(true)}
           onSync={runSync}
         />
       )}
       variant="mobile"
     />
+      {settingsOpen && (
+        <SyncSettingsDialog
+          labels={androidSyncSettingsLabels}
+          loadValues={loadSyncSettings}
+          normalizeValues={normalizeDialogValues}
+          syncValues={syncSettings}
+          showFolderTitle={false}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+    </>
   );
 }
 
 function isWebDavConfigured(settings: BrowserSettings): boolean {
   return settings.webDavSyncUrl.trim().length > 0;
 }
+
+function settingsToDialogValues(settings: BrowserSettings): SyncSettingsDialogValues {
+  return {
+    webDavUrl: settings.webDavSyncUrl,
+    username: settings.webDavSyncUsername,
+    password: settings.webDavSyncPassword,
+    deviceName: settings.webDavSyncDeviceName,
+    deviceId: settings.webDavSyncDeviceId,
+  };
+}
+
+function normalizeDialogValues(values: SyncSettingsDialogValues): SyncSettingsDialogValues {
+  return {
+    ...values,
+    webDavUrl: values.webDavUrl.trim(),
+    username: values.username.trim(),
+    deviceName: values.deviceName.trim() || "Android",
+  };
+}
+
+function isHttpUrl(value: string) {
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+const androidSyncSettingsLabels = {
+  title: t("settings.title"),
+  close: t("common.close"),
+  webDavAddress: t("settings.webDavUrl"),
+  username: t("settings.webDavUsername"),
+  password: t("settings.webDavPassword"),
+  folderTitle: "Sync folder title",
+  deviceName: t("settings.webDavDeviceName"),
+  help: t("settings.webDavHelp"),
+  sync: t("settings.webDavSyncNow"),
+  syncing: t("settings.webDavSyncingShort"),
+  loadFailed: t("settings.unavailable"),
+  syncFailed: t("settings.webDavSyncFailed"),
+  deviceId: (deviceId: string) => t("settings.webDavDeviceId", { deviceId }),
+};
 
 function webDavSyncSummary(result: WebDavSyncResult): string {
   const summary = t("settings.webDavSyncComplete", {

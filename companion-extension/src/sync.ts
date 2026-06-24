@@ -63,8 +63,6 @@ export async function syncNow(): Promise<SyncResult> {
 }
 
 export async function loadRemoteWebApps(): Promise<WebAppRecord[]> {
-  const settings = await loadSettings();
-  if (settings.webDavUrl.trim()) await syncNow();
   return activeWebAppsFromState((await loadSyncV2Store()).state);
 }
 

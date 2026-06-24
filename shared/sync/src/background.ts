@@ -63,7 +63,7 @@ export function createSyncBackgroundController<TSyncResult extends SyncBackgroun
     }
     syncPending = false;
     const result = await options.syncNow();
-    if (result.launcherChanged) options.notifyLauncherChanged?.(result);
+    options.notifyRemoteSynced?.(Date.now(), result);
     return result;
   }
 

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
 import { shouldRefreshLauncherAfterSync } from "@hyper-sync";
+import { SyncSettingsDialog, type SyncSettingsDialogResult, type SyncSettingsDialogValues } from "@hyper-sync/settings-dialog";
 import { DEFAULT_DEVICE_NAME } from "../identity";
 import { getDefaultSettings, loadSettings, saveSettings } from "../storage";
 import { DEFAULT_DOCK_ENTRY_IDS, DEPRECATED_ENTRY_IDS, launcherLayoutStorage } from "../launcher-layout";
@@ -15,7 +16,6 @@ const systemEntries: LauncherSystemEntry[] = [
   { id: "system:history", kind: "system", title: "History", mark: "H", color: "#fbbc04", action: "history" },
   { id: "system:extensions", kind: "system", title: "Extensions", mark: "Ex", color: "#ea4335", action: "extensions" },
 ];
-const REMOTE_POLL_MS = 30000;
 const chromiumSystemUrls: Record<string, string> = {
   bookmarks: "chrome://bookmarks/",
   history: "chrome://history/",
@@ -34,7 +34,6 @@ function CompanionHomePage() {
   const [syncState, setSyncState] = useState<LauncherSyncState>("idle");
   const [syncMessage, setSyncMessage] = useState("");
   const [layoutRevision, setLayoutRevision] = useState(0);
-  const remoteCheckRunning = useRef(false);
   const syncRunning = useRef(false);
 
   useEffect(() => {
@@ -81,11 +80,9 @@ function CompanionHomePage() {
         return;
       }
       const result = await sendCommand<SyncResult>("sync.run");
-      if (result.importedWebAppCount + result.removedWebAppCount > 0 || options.refreshLauncher) {
-        setLayoutRevision((current) => current + 1);
-      }
       setSyncState("success");
       setSyncMessage(syncResultMessage(result));
+      if (options.refreshLauncher) setLayoutRevision((current) => current + 1);
     } catch (syncError) {
       const text = syncError instanceof Error ? syncError.message : "Sync failed.";
       setSyncState(isWebDavConfigError(syncError) ? "needs-settings" : "error");
@@ -96,38 +93,41 @@ function CompanionHomePage() {
     }
   }, []);
 
-  const checkRemoteChanges = useCallback(async () => {
-    if (remoteCheckRunning.current || document.visibilityState !== "visible") return;
-    remoteCheckRunning.current = true;
+  const loadSyncSettings = useCallback(async () => settingsToDialogValues(await loadSettings()), []);
+
+  const syncSettings = useCallback(async (values: SyncSettingsDialogValues): Promise<SyncSettingsDialogResult> => {
     try {
-      if (syncRunning.current) return;
-      const result = await sendCommand<{ changed: boolean; launcherChanged?: boolean; synced: boolean; updatedAt: number }>("remote.check");
-      if (shouldRefreshLauncherAfterSync(result)) setLayoutRevision((current) => current + 1);
-    } catch (error) {
-      console.warn("Remote sync check failed.", error);
-    } finally {
-      remoteCheckRunning.current = false;
+      const currentSettings = await loadSettings().catch(() => getDefaultSettings());
+      const nextSettings = dialogValuesToSettings(values, currentSettings);
+      await saveSettings(nextSettings);
+      setSettingsConfigured(!!nextSettings.webDavUrl.trim());
+      const result = await sendCommand<SyncResult>("sync.run");
+      setSyncState("success");
+      setSyncMessage(syncResultMessage(result));
+      return {
+        values: settingsToDialogValues(await loadSettings()),
+        message: syncResultMessage(result),
+      };
+    } catch (syncError) {
+      const text = syncError instanceof Error ? syncError.message : "Sync failed.";
+      setSyncState(isWebDavConfigError(text) ? "needs-settings" : "error");
+      setSyncMessage(text);
+      throw syncError;
     }
   }, []);
 
   useEffect(() => {
-    checkRemoteChanges();
-    const interval = window.setInterval(() => {
-      checkRemoteChanges();
-    }, REMOTE_POLL_MS);
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") checkRemoteChanges();
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [checkRemoteChanges]);
-
-  useEffect(() => {
-    const onMessage = (message: { type?: string }) => {
-      if (message?.type === "remote.synced" || message?.type === "launcher.changed") {
+    const onMessage = (message: { type?: string; syncResult?: unknown }) => {
+      if (message?.type !== "remote.synced" && message?.type !== "launcher.changed") return;
+      if (isSyncResult(message.syncResult)) {
+        setSyncState("success");
+        setSyncMessage(syncResultMessage(message.syncResult));
+        if (shouldRefreshLauncherAfterSync(message.syncResult)) {
+          setLayoutRevision((current) => current + 1);
+        }
+        return;
+      }
+      if (message.type === "launcher.changed") {
         setLayoutRevision((current) => current + 1);
       }
     };
@@ -164,19 +164,11 @@ function CompanionHomePage() {
         variant={launcherVariant}
       />
       {settingsOpen && (
-        <SettingsDialog
-          onSettingsSaved={(settings) => setSettingsConfigured(!!settings.webDavUrl.trim())}
-          onSyncError={(message) => {
-            setSyncState(isWebDavConfigError(message) ? "needs-settings" : "error");
-            setSyncMessage(message);
-          }}
-          onSyncResult={(result) => {
-            setSyncState("success");
-            setSyncMessage(syncResultMessage(result));
-            if (result.importedWebAppCount + result.removedWebAppCount > 0) {
-              setLayoutRevision((current) => current + 1);
-            }
-          }}
+        <SyncSettingsDialog
+          labels={companionSyncSettingsLabels}
+          loadValues={loadSyncSettings}
+          normalizeValues={normalizeDialogValues}
+          syncValues={syncSettings}
           onClose={() => setSettingsOpen(false)}
         />
       )}
@@ -184,104 +176,21 @@ function CompanionHomePage() {
   );
 }
 
-function SettingsDialog(props: {
-  onClose: () => void;
-  onSettingsSaved: (settings: SyncSettings) => void;
-  onSyncError: (message: string) => void;
-  onSyncResult: (result: SyncResult) => void;
-}) {
-  const [settings, setSettings] = useState<SyncSettings>(getDefaultSettings());
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    loadSettings()
-      .then((loaded) => {
-        if (!cancelled) setSettings(loaded);
-      })
-      .catch((loadError) => {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load settings.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  function update<K extends keyof SyncSettings>(key: K, value: SyncSettings[K]) {
-    setSettings((current) => ({ ...current, [key]: value }));
-    setMessage("");
-    setError("");
-  }
-
-  function sync() {
-    const next = normalizeSettings(settings);
-    setBusy(true);
-    setMessage("Syncing...");
-    setError("");
-    saveSettings(next)
-      .then(() => sendCommand<SyncResult>("sync.run"))
-      .then((result) => {
-        setMessage(syncResultMessage(result));
-        props.onSyncResult(result);
-        return loadSettings();
-      })
-      .then((loaded) => {
-        setSettings(loaded);
-        props.onSettingsSaved(loaded);
-      })
-      .catch((syncError) => {
-        const text = syncError instanceof Error ? syncError.message : "Sync failed.";
-        setMessage("");
-        setError(text);
-        props.onSyncError(text);
-      })
-      .finally(() => setBusy(false));
-  }
-
-  return (
-    <div className="settings-scrim" onClick={props.onClose}>
-      <section className="settings-dialog" role="dialog" aria-modal="true" aria-label="Settings" onClick={(event) => event.stopPropagation()}>
-        <header className="settings-dialog-header">
-          <h2>Settings</h2>
-          <button type="button" onClick={props.onClose}>Close</button>
-        </header>
-        <div className="grid">
-          <label className="field full">
-            <span className="label">WebDAV address</span>
-            <input className="input" type="url" placeholder="https://example.com/dav" value={settings.webDavUrl} onChange={(event) => update("webDavUrl", event.currentTarget.value)} />
-          </label>
-          <label className="field">
-            <span className="label">Username</span>
-            <input className="input" type="text" autoComplete="username" value={settings.username} onChange={(event) => update("username", event.currentTarget.value)} />
-          </label>
-          <label className="field">
-            <span className="label">Password or app token</span>
-            <input className="input" type="password" autoComplete="current-password" value={settings.password} onChange={(event) => update("password", event.currentTarget.value)} />
-          </label>
-          <label className="field">
-            <span className="label">Sync folder title</span>
-            <input className="input" type="text" value={settings.folderTitle} onChange={(event) => update("folderTitle", event.currentTarget.value)} />
-          </label>
-          <label className="field">
-            <span className="label">Device name</span>
-            <input className="input" type="text" value={settings.deviceName} onChange={(event) => update("deviceName", event.currentTarget.value)} />
-          </label>
-        </div>
-        <p className="message">Remote data is stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, and manifest.json.</p>
-        <div className="actions">
-          <button className="button primary" type="button" disabled={busy || !settings.webDavUrl.trim()} onClick={sync}>
-            {busy ? "Syncing..." : "Sync"}
-          </button>
-        </div>
-        {settings.deviceId && <p className="message">Device ID: {settings.deviceId}</p>}
-        {message && <p className="message">{message}</p>}
-        {error && <p className="error">{error}</p>}
-      </section>
-    </div>
-  );
-}
+const companionSyncSettingsLabels = {
+  title: "Settings",
+  close: "Close",
+  webDavAddress: "WebDAV address",
+  username: "Username",
+  password: "Password or app token",
+  folderTitle: "Sync folder title",
+  deviceName: "Device name",
+  help: "Remote data is stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, and manifest.json.",
+  sync: "Sync",
+  syncing: "Syncing...",
+  loadFailed: "Unable to load settings.",
+  syncFailed: "Sync failed.",
+  deviceId: (deviceId: string) => `Device ID: ${deviceId}`,
+};
 
 function isWebDavConfigError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error || "");
@@ -293,6 +202,47 @@ function syncResultMessage(result: SyncResult): string {
   const tombstones = deleted > 0 ? `, ${deleted} tombstones` : "";
   const pending = result.pendingOperationCount > 0 ? `, ${result.pendingOperationCount} pending changes` : "";
   return `Synced ${result.bookmarkCount} bookmarks and ${result.webAppCount} WebApps${tombstones}${pending}`;
+}
+
+function isSyncResult(value: unknown): value is SyncResult {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<SyncResult>;
+  return typeof candidate.bookmarkCount === "number" &&
+    typeof candidate.webAppCount === "number" &&
+    typeof candidate.deletedBookmarkCount === "number" &&
+    typeof candidate.deletedWebAppCount === "number";
+}
+
+function settingsToDialogValues(settings: SyncSettings): SyncSettingsDialogValues {
+  return {
+    webDavUrl: settings.webDavUrl,
+    username: settings.username,
+    password: settings.password,
+    folderTitle: settings.folderTitle,
+    deviceName: settings.deviceName,
+    deviceId: settings.deviceId,
+  };
+}
+
+function dialogValuesToSettings(values: SyncSettingsDialogValues, current: SyncSettings): SyncSettings {
+  return normalizeSettings({
+    ...current,
+    webDavUrl: values.webDavUrl,
+    username: values.username,
+    password: values.password,
+    folderTitle: values.folderTitle || current.folderTitle,
+    deviceName: values.deviceName,
+  });
+}
+
+function normalizeDialogValues(values: SyncSettingsDialogValues): SyncSettingsDialogValues {
+  return {
+    ...values,
+    webDavUrl: values.webDavUrl.trim(),
+    username: values.username.trim(),
+    folderTitle: values.folderTitle?.trim() || "Hyper Browser",
+    deviceName: values.deviceName.trim() || DEFAULT_DEVICE_NAME,
+  };
 }
 
 function normalizeSettings(settings: SyncSettings): SyncSettings {
