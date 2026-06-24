@@ -172,7 +172,7 @@ type HyperBridgeMessageType =
   | "update.downloadState"
   | "update.install"
   | "bookmarks.open"
-  | "bookmarks.remove"
+  | "bookmarks.delete"
   | "bookmarks.edit"
   | "history.open"
   | "history.remove"
@@ -194,6 +194,15 @@ declare global {
     runtime?: {
       sendMessage?: (message: unknown) => Promise<unknown>;
       sendNativeMessage?: (application: string, message: unknown) => Promise<unknown>;
+      connectNative?: (application: string) => {
+        postMessage: (message: unknown) => void;
+        onMessage?: {
+          addListener: (listener: (message: unknown) => void) => void;
+        };
+        onDisconnect?: {
+          addListener: (listener: () => void) => void;
+        };
+      };
       getURL?: (path: string) => string;
       onMessage?: {
         addListener: (listener: (message: unknown, sender?: unknown) => unknown) => void;
@@ -442,7 +451,7 @@ window.hyperBrowser = {
     command("bookmarks.open", { url });
   },
   removeBookmark(url) {
-    return send("bookmarks.remove", { url }).then(() => undefined);
+    return send("bookmarks.delete", { url }).then(() => undefined);
   },
   editBookmark(oldUrl, title, url) {
     return send("bookmarks.edit", { oldUrl, title, url }).then(() => undefined);

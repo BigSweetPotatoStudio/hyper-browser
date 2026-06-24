@@ -1,4 +1,5 @@
 import { createSyncBackgroundController } from "@hyper-sync/background";
+import { createHyperBackgroundCommandHandler } from "@hyper-sync/hyper-background";
 import { runAndroidWebDavSync, runAndroidWebDavSyncIfEnabled } from "./webdav-sync";
 import type { WebDavSyncResult } from "./hyper-browser";
 
@@ -7,6 +8,7 @@ const BACKGROUND_TARGET = "hyper.internal.background";
 const AUTO_SYNC_DEBOUNCE_MS = 1800;
 const REMOTE_SYNC_ALARM = "hyper-browser-android-remote-sync";
 const REMOTE_SYNC_ALARM_MINUTES = 1;
+const NATIVE_COMMAND_PORT_TARGET = "hyper.internal.nativeCommandPort";
 
 const internalPageMessageTypes = new Set([
   "data.home",
@@ -37,7 +39,7 @@ const internalPageMessageTypes = new Set([
   "update.downloadState",
   "update.install",
   "bookmarks.open",
-  "bookmarks.remove",
+  "bookmarks.delete",
   "bookmarks.edit",
   "history.open",
   "history.remove",
@@ -72,6 +74,14 @@ const syncBackground = createSyncBackgroundController<WebDavSyncResult>({
   onError: (_scope, error) => console.warn("Launcher sync failed.", error),
 });
 
+const hyperCommands = createHyperBackgroundCommandHandler<WebDavSyncResult>({
+  sync: syncBackground,
+  loadLauncherLayout: requestLauncherLayout,
+  saveLauncherLayout,
+  notifyLauncherChanged,
+  shouldScheduleAfterMutation: (type) => type.startsWith("launcher.layout."),
+});
+
 function startBackground(): void {
   const runtime = browser?.runtime;
   if (!runtime?.onMessage) return;
@@ -91,22 +101,14 @@ function startBackground(): void {
   });
 
   ensureRemoteSyncAlarm();
+  ensureNativeCommandPort();
   syncBackground.checkRemoteChanges({ notifyPages: true }).catch((error) => console.warn("Remote sync check failed.", error));
 }
 
 async function handleBackgroundCommand(message: { type: string; payload?: unknown }): Promise<unknown> {
-  switch (message.type) {
-    case "sync.run":
-      return syncBackground.runFullSyncNow();
-    case "sync.soon":
-    case "launcher.syncSoon":
-      syncBackground.scheduleSync();
-      return null;
-    case "remote.check":
-      return syncBackground.checkRemoteChanges({ notifyPages: false });
-    default:
-      throw new Error("Unknown background command.");
-  }
+  const shared = await hyperCommands.handle(message);
+  if (shared.handled) return shared.data;
+  throw new Error("Unknown background command.");
 }
 
 function handleNativeBridgeMessage(message: Record<string, unknown>, sender: unknown): Promise<unknown> {
@@ -128,6 +130,54 @@ function handleNativeBridgeMessage(message: Record<string, unknown>, sender: unk
     type: message.type,
     payload,
   });
+}
+
+function ensureNativeCommandPort(): void {
+  const connectNative = browser?.runtime?.connectNative;
+  if (!connectNative) return;
+  const port = connectNative(NATIVE_APP);
+  port.onMessage?.addListener((message: unknown) => {
+    if (!isPlainObject(message) || message.target !== NATIVE_COMMAND_PORT_TARGET) return;
+    const requestId = typeof message.requestId === "string" ? message.requestId : "";
+    const type = typeof message.type === "string" ? message.type : "";
+    if (!requestId || !type) return;
+    handleBackgroundCommand({ type, payload: message.payload })
+      .then((data) => port.postMessage({ target: NATIVE_COMMAND_PORT_TARGET, requestId, ok: true, data }))
+      .catch((error) => port.postMessage({
+        target: NATIVE_COMMAND_PORT_TARGET,
+        requestId,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+  });
+  port.onDisconnect?.addListener(() => {
+    setTimeout(() => ensureNativeCommandPort(), 1000);
+  });
+}
+
+async function requestLauncherLayout(): Promise<object | null> {
+  const response = await requestNativeObject<{ layout?: object | null }>("data.launcherLayout");
+  return response.layout && typeof response.layout === "object" ? response.layout : null;
+}
+
+async function saveLauncherLayout(layout: unknown): Promise<void> {
+  await requestNativeObject("launcher.layout.save", { layout: JSON.stringify(layout || {}) });
+}
+
+async function requestNativeObject<T = unknown>(type: string, payload: Record<string, unknown> = {}): Promise<T> {
+  const sendNativeMessage = browser?.runtime?.sendNativeMessage;
+  if (!sendNativeMessage) throw new Error("Hyper native bridge unavailable.");
+  const response = parseBridgeResponse(await sendNativeMessage(NATIVE_APP, { type, payload }));
+  if (!response || response.ok !== true) {
+    throw new Error(typeof response?.error === "string" ? response.error : "Hyper native bridge request failed.");
+  }
+  return response.data as T;
+}
+
+function parseBridgeResponse(response: unknown): { ok?: boolean; error?: unknown; data?: unknown } {
+  return typeof response === "string"
+    ? JSON.parse(response) as { ok?: boolean; error?: unknown; data?: unknown }
+    : response as { ok?: boolean; error?: unknown; data?: unknown };
 }
 
 function ensureRemoteSyncAlarm(): void {
@@ -155,7 +205,7 @@ function notifyRemoteSynced(updatedAt: number, syncResult: WebDavSyncResult): vo
   browser?.runtime?.sendMessage?.({ type: "remote.synced", updatedAt, syncResult }).catch(() => undefined);
 }
 
-function notifyLauncherChanged(syncResult: WebDavSyncResult): void {
+function notifyLauncherChanged(syncResult?: WebDavSyncResult): void {
   browser?.runtime?.sendMessage?.({ type: "launcher.changed", updatedAt: Date.now(), syncResult }).catch(() => undefined);
 }
 

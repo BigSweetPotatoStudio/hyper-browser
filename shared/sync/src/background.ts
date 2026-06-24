@@ -27,33 +27,27 @@ export function createSyncBackgroundController<TSyncResult extends SyncBackgroun
   onError?: (scope: string, error: unknown) => void;
 }): SyncBackgroundController<TSyncResult> {
   let syncTimer: ReturnType<typeof setTimeout> | null = null;
-  let syncRunning = false;
   let syncPending = false;
+  let runningSync: Promise<unknown> | null = null;
   let remoteCheckRunning = false;
 
   function scheduleSync(): void {
     if (syncTimer) clearTimeout(syncTimer);
     syncTimer = setTimeout(() => {
       syncTimer = null;
+      if (runningSync) syncPending = true;
       runQueuedSync().catch((error) => reportError("sync", error));
     }, options.debounceMs);
   }
 
   async function runQueuedSync(): Promise<void> {
-    if (syncRunning) {
-      syncPending = true;
-      return;
-    }
-    syncRunning = true;
-    try {
+    await runExclusive(async () => {
       do {
         syncPending = false;
         const result = await options.syncIfEnabled();
         if (result?.launcherChanged) options.notifyLauncherChanged?.(result);
       } while (syncPending);
-    } finally {
-      syncRunning = false;
-    }
+    });
   }
 
   async function runFullSyncNow(): Promise<TSyncResult> {
@@ -62,7 +56,7 @@ export function createSyncBackgroundController<TSyncResult extends SyncBackgroun
       syncTimer = null;
     }
     syncPending = false;
-    const result = await options.syncNow();
+    const result = await runExclusive(() => options.syncNow());
     options.notifyRemoteSynced?.(Date.now(), result);
     return result;
   }
@@ -71,24 +65,36 @@ export function createSyncBackgroundController<TSyncResult extends SyncBackgroun
     if (remoteCheckRunning) return emptyRemoteCheck();
     remoteCheckRunning = true;
     try {
-      const result = await options.syncIfEnabled();
+      const result = await runExclusive(() => options.syncIfEnabled());
       const updatedAt = Date.now();
       if (!result) return emptyRemoteCheck();
       const response = {
-        changed: !!result.launcherChanged,
+        changed: !!result.stateChanged || !!result.launcherChanged,
         stateChanged: !!result.stateChanged,
         launcherChanged: !!result.launcherChanged,
         synced: true,
         updatedAt,
         syncResult: result,
       };
-      if (response.launcherChanged && checkOptions.notifyPages) {
+      if (response.changed && checkOptions.notifyPages) {
         options.notifyRemoteSynced?.(updatedAt, result);
       }
       return response;
     } finally {
       remoteCheckRunning = false;
     }
+  }
+
+  async function runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = runningSync;
+    const current = (previous || Promise.resolve())
+      .catch(() => undefined)
+      .then(operation);
+    const tracked = current.finally(() => {
+      if (runningSync === tracked) runningSync = null;
+    });
+    runningSync = tracked;
+    return current;
   }
 
   function reportError(scope: string, error: unknown): void {

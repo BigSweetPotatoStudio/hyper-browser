@@ -68,7 +68,7 @@ function HomePage() {
     autoSyncTimer.current = window.setTimeout(() => {
       autoSyncTimer.current = null;
       waitForLauncherLayoutSaves()
-        .then(() => sendBackgroundCommand("launcher.syncSoon"))
+        .then(() => sendBackgroundCommand("sync.soon"))
         .catch((error) => console.warn("Unable to schedule launcher sync.", error));
     }, AUTO_SYNC_DEBOUNCE_MS);
   }, []);

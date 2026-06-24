@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.security.KeyChain
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
@@ -72,6 +73,7 @@ import com.dadigua.hyperbrowser.gecko.GeckoPromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoSharePromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoRuntimeProvider
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
+import com.dadigua.hyperbrowser.gecko.HyperBridge
 import com.dadigua.hyperbrowser.gecko.HyperCommand
 import com.dadigua.hyperbrowser.gecko.HyperRoute
 import com.dadigua.hyperbrowser.sync.WebDavLocalSyncAdapter
@@ -95,11 +97,12 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import java.util.UUID
+
+private const val BROWSER_ACTIVITY_TAG = "BrowserActivity"
 
 class BrowserActivity : ComponentActivity() {
     private val externalIntents = MutableSharedFlow<ExternalBrowserIntent>(extraBufferCapacity = 1)
@@ -696,7 +699,7 @@ private fun BrowserScreen(
                 pendingHyperCommand = HyperCommand.Bookmarks.Open(payload.optString("url"))
                 ok()
             }
-            "bookmarks.remove" -> {
+            "bookmarks.delete" -> {
                 pendingHyperCommand = HyperCommand.Bookmarks.Remove(payload.optString("url"))
                 ok()
             }
@@ -799,7 +802,7 @@ private fun BrowserScreen(
                 if (id.isBlank()) return bridgeError(context.getString(R.string.webapp_not_found))
                 val deleted = runBlocking { app.webApps.delete(id) }
                 if (!deleted) return bridgeError(context.getString(R.string.webapp_not_found))
-                removeWebAppFromLauncherLayout(profileStore, id)
+                removeWebAppFromLauncherLayout(context, id)
                 markWebDavDirty()
                 message = context.getString(R.string.webapp_deleted)
                 okItems(app.webApps.observeAll().value.toWebAppsJsonString(app))
@@ -1175,7 +1178,7 @@ private fun BrowserScreen(
                             url = cleanUrl,
                             iconPath = iconPath
                         ).also { installResult ->
-                            addWebAppToLauncherLayout(profileStore, installResult.webApp)
+                            addWebAppToLauncherLayout(context, installResult.webApp)
                         }
                     }
                         .onSuccess {
@@ -1625,7 +1628,7 @@ private fun BrowserScreen(
                     runCatching { app.webApps.delete(command.id) }
                         .onSuccess {
                             message = if (it) {
-                                removeWebAppFromLauncherLayout(profileStore, command.id)
+                                removeWebAppFromLauncherLayout(context, command.id)
                                 markWebDavDirty()
                                 context.getString(R.string.webapp_deleted)
                             } else {
@@ -1945,7 +1948,7 @@ private fun BrowserScreen(
                                     runCatching { app.webApps.delete(webApp.id) }
                                         .onSuccess {
                                             message = if (it) {
-                                                removeWebAppFromLauncherLayout(profileStore, webApp.id)
+                                                removeWebAppFromLauncherLayout(context, webApp.id)
                                                 markWebDavDirty()
                                                 context.getString(R.string.webapp_uninstalled, webApp.name)
                                             } else {
@@ -2089,143 +2092,27 @@ private fun shortcutRequestMessage(context: Context, result: PinnedShortcutReque
         PinnedShortcutRequestResult.WebAppNotFound -> context.getString(R.string.webapp_not_found)
     }
 
-private fun addWebAppToLauncherLayout(profileStore: BrowserProfileStore, webApp: WebAppDefinition) {
-    val itemId = "app:${webApp.id}"
-    val current = profileStore.loadLauncherLayout() ?: JSONObject()
-    if (launcherLayoutContainsItem(current, itemId)) return
-
-    val cells = current.optJSONArray("cells") ?: JSONArray().also { current.put("cells", it) }
-    val columns = current.optInt("gridColumns").takeIf { it > 0 } ?: inferLauncherGridColumns(cells)
-    val nextIndex = nextLauncherCellIndex(cells, columns)
-    val now = System.currentTimeMillis()
-
-    cells.put(
-        JSONObject()
-            .put("page", 0)
-            .put("row", nextIndex / columns)
-            .put("column", nextIndex % columns)
-            .put("id", itemId)
-            .put("index", nextIndex)
-    )
-    current.put("version", current.optInt("version").takeIf { it > 0 } ?: 4)
-    current.put("cells", cells)
-    current.put("gridColumns", columns)
-    current.put("updatedAt", now)
-    profileStore.saveLauncherLayout(current)
+private fun addWebAppToLauncherLayout(context: Context, webApp: WebAppDefinition) {
+    val payload = JSONObject()
+        .put("webApp", JSONObject()
+            .put("id", webApp.id)
+            .put("name", webApp.name)
+            .put("startUrl", webApp.startUrl))
+    HyperBridge.sendBackgroundCommand(context, "launcher.layout.addWebApp", payload)
+        .accept(
+            { },
+            { throwable -> Log.w(BROWSER_ACTIVITY_TAG, "Failed to add WebApp to launcher layout", throwable) }
+        )
 }
 
-private fun removeWebAppFromLauncherLayout(profileStore: BrowserProfileStore, webAppId: String) {
+private fun removeWebAppFromLauncherLayout(context: Context, webAppId: String) {
     val cleanId = webAppId.trim()
     if (cleanId.isBlank()) return
-    val itemId = "app:$cleanId"
-    val current = profileStore.loadLauncherLayout() ?: return
-    var changed = false
-
-    current.optJSONArray("cells")?.let { cells ->
-        val nextCells = JSONArray()
-        for (index in 0 until cells.length()) {
-            val item = cells.opt(index)
-            val cellId = (item as? JSONObject)?.optString("id").orEmpty()
-            if (cellId == itemId) {
-                changed = true
-            } else {
-                nextCells.put(item)
-            }
-        }
-        current.put("cells", nextCells)
-    }
-
-    current.optJSONArray("dock")?.let { dock ->
-        val nextDock = JSONArray()
-        for (index in 0 until dock.length()) {
-            val id = dock.optString(index)
-            if (id == itemId) {
-                changed = true
-            } else {
-                nextDock.put(dock.opt(index))
-            }
-        }
-        current.put("dock", nextDock)
-    }
-
-    current.optJSONArray("folders")?.let { folders ->
-        val nextFolders = JSONArray()
-        for (folderIndex in 0 until folders.length()) {
-            val folder = folders.optJSONObject(folderIndex)
-            if (folder == null) {
-                nextFolders.put(folders.opt(folderIndex))
-                continue
-            }
-            val childIds = folder.optJSONArray("childIds")
-            if (childIds == null) {
-                nextFolders.put(folder)
-                continue
-            }
-            val nextChildIds = JSONArray()
-            var folderChanged = false
-            for (childIndex in 0 until childIds.length()) {
-                val childId = childIds.optString(childIndex)
-                if (childId == itemId) {
-                    changed = true
-                    folderChanged = true
-                } else {
-                    nextChildIds.put(childIds.opt(childIndex))
-                }
-            }
-            if (folderChanged) folder.put("childIds", nextChildIds)
-            nextFolders.put(folder)
-        }
-        current.put("folders", nextFolders)
-    }
-
-    if (!changed) return
-    current.put("updatedAt", System.currentTimeMillis())
-    profileStore.saveLauncherLayout(current)
-}
-
-private fun launcherLayoutContainsItem(layout: JSONObject, itemId: String): Boolean {
-    val cells = layout.optJSONArray("cells") ?: JSONArray()
-    for (index in 0 until cells.length()) {
-        if (cells.optJSONObject(index)?.optString("id") == itemId) return true
-    }
-    val dock = layout.optJSONArray("dock") ?: JSONArray()
-    for (index in 0 until dock.length()) {
-        if (dock.optString(index) == itemId) return true
-    }
-    val folders = layout.optJSONArray("folders") ?: JSONArray()
-    for (folderIndex in 0 until folders.length()) {
-        val childIds = folders.optJSONObject(folderIndex)?.optJSONArray("childIds") ?: continue
-        for (childIndex in 0 until childIds.length()) {
-            if (childIds.optString(childIndex) == itemId) return true
-        }
-    }
-    return false
-}
-
-private fun inferLauncherGridColumns(cells: JSONArray): Int {
-    var maxColumn = 3
-    for (index in 0 until cells.length()) {
-        val column = cells.optJSONObject(index)?.optInt("column", -1) ?: -1
-        if (column > maxColumn) maxColumn = column
-    }
-    return maxColumn + 1
-}
-
-private fun nextLauncherCellIndex(cells: JSONArray, columns: Int): Int {
-    var maxIndex = -1
-    for (index in 0 until cells.length()) {
-        val cell = cells.optJSONObject(index) ?: continue
-        val cellIndex = if (cell.has("index")) {
-            cell.optInt("index", -1)
-        } else {
-            val page = cell.optInt("page", 0).coerceAtLeast(0)
-            val row = cell.optInt("row", 0).coerceAtLeast(0)
-            val column = cell.optInt("column", 0).coerceAtLeast(0)
-            page * columns + row * columns + column
-        }
-        if (cellIndex > maxIndex) maxIndex = cellIndex
-    }
-    return maxIndex + 1
+    HyperBridge.sendBackgroundCommand(context, "launcher.layout.removeWebApp", JSONObject().put("id", cleanId))
+        .accept(
+            { },
+            { throwable -> Log.w(BROWSER_ACTIVITY_TAG, "Failed to remove WebApp from launcher layout", throwable) }
+        )
 }
 
 private fun normalizeWebAppUrl(input: String): String? {

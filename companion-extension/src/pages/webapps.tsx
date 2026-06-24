@@ -1,8 +1,8 @@
 import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { deleteRemoteWebApp, loadRemoteWebApps, saveRemoteWebApp } from "../sync";
 import "../styles.css";
 import type { WebAppRecord } from "../types";
+import { sendCommand } from "./bridge";
 
 type Draft = {
   id?: string;
@@ -37,7 +37,7 @@ function WebAppsPage() {
   function refresh() {
     setBusy(true);
     setError("");
-    loadRemoteWebApps()
+    sendCommand<WebAppRecord[]>("webapps.list")
       .then(setItems)
       .catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load WebApps."))
       .finally(() => setBusy(false));
@@ -47,7 +47,7 @@ function WebAppsPage() {
     event.preventDefault();
     setBusy(true);
     setError("");
-    saveRemoteWebApp({
+    sendCommand<WebAppRecord[]>("webapps.save", {
       id: draft.id,
       name: draft.name,
       startUrl: draft.startUrl,
@@ -83,7 +83,7 @@ function WebAppsPage() {
   function remove(item: WebAppRecord) {
     setBusy(true);
     setError("");
-    deleteRemoteWebApp(item.id)
+    sendCommand<WebAppRecord[]>("webapps.delete", { id: item.id })
       .then((next) => {
         setItems(next);
         setMessage("WebApp deleted. A tombstone was kept for offline devices.");

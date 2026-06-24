@@ -1,7 +1,8 @@
 import { browser, type Browser } from "wxt/browser";
 import { createSyncBackgroundController } from "@hyper-sync/background";
+import { createHyperBackgroundCommandHandler } from "@hyper-sync/hyper-background";
 import { loadSettings } from "./storage";
-import { addBookmarkToSyncFolder, deleteRemoteWebApp, loadRemoteWebApps, saveRemoteWebApp, syncNow } from "./sync";
+import { browserSyncService } from "./sync";
 import type { SyncResult, WebAppRecord } from "./types";
 
 const MAX_CAPTURED_ICON_BYTES = 1024 * 1024;
@@ -22,6 +23,18 @@ const syncBackground = createSyncBackgroundController<SyncResult>({
   notifyLauncherChanged,
   notifyRemoteSynced,
   onError: (_scope, error) => console.error(error),
+});
+
+const hyperCommands = createHyperBackgroundCommandHandler<SyncResult>({
+  sync: syncBackground,
+  getSettings: loadSettings,
+  getCurrentPage: getCurrentPageInfo,
+  addBookmark: (page) => withBookmarkEventsMuted(() => browserSyncService.addBookmarkToSyncFolder(page)),
+  listWebApps: browserSyncService.loadRemoteWebApps,
+  saveWebApp: browserSyncService.saveRemoteWebApp,
+  deleteWebApp: (input) => browserSyncService.deleteRemoteWebApp(input as string | Partial<WebAppRecord>),
+  notifyLauncherChanged,
+  shouldScheduleAfterMutation: (type) => type === "webapps.addFromCurrentPage" || type.startsWith("webapps."),
 });
 
 export function startBackground(): void {
@@ -56,47 +69,10 @@ export function startBackground(): void {
 }
 
 async function handleMessage(message: { type: string; payload?: unknown }): Promise<unknown> {
+  const shared = await hyperCommands.handle(message);
+  if (shared.handled) return shared.data;
+
   switch (message.type) {
-    case "settings.get":
-      return loadSettings();
-    case "sync.run":
-      return syncBackground.runFullSyncNow();
-    case "sync.soon":
-    case "launcher.syncSoon":
-      syncBackground.scheduleSync();
-      return null;
-    case "remote.check":
-      return syncBackground.checkRemoteChanges({ notifyPages: false });
-    case "current.addWebApp": {
-      const page = await getCurrentHttpPage();
-      const iconDataUrl = await capturePageIcon(await getPageIconCandidates(page)).catch(() => null);
-      const webApps = await saveRemoteWebApp({
-        name: page.title,
-        startUrl: page.url,
-        ...(iconDataUrl ? { iconDataUrl, iconSource: "site" as const } : {}),
-      });
-      notifyLauncherChanged();
-      syncBackground.scheduleSync();
-      return webApps;
-    }
-    case "current.addBookmark": {
-      const page = await getCurrentHttpPage();
-      return withBookmarkEventsMuted(() => addBookmarkToSyncFolder(page));
-    }
-    case "webapps.list":
-      return loadRemoteWebApps();
-    case "webapps.save":
-      return saveRemoteWebApp(message.payload as never).then((webApps) => {
-        notifyLauncherChanged();
-        syncBackground.scheduleSync();
-        return webApps;
-      });
-    case "webapps.delete": {
-      const webApps = await deleteRemoteWebApp(message.payload as string | Partial<WebAppRecord>);
-      notifyLauncherChanged();
-      syncBackground.scheduleSync();
-      return webApps;
-    }
     case "open.options":
       await browser.runtime.openOptionsPage();
       return null;
@@ -109,6 +85,16 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     default:
       throw new Error("Unknown command.");
   }
+}
+
+async function getCurrentPageInfo() {
+  const page = await getCurrentHttpPage();
+  const iconDataUrl = await capturePageIcon(await getPageIconCandidates(page)).catch(() => null);
+  return {
+    title: page.title,
+    url: page.url,
+    iconDataUrl,
+  };
 }
 
 function ensureRemoteSyncAlarm() {
@@ -138,7 +124,7 @@ async function runBookmarkAutoSync(): Promise<void> {
       bookmarkSyncPending = false;
       const settings = await loadSettings();
       if (!settings.webDavUrl.trim()) return;
-      await withBookmarkEventsMuted(() => syncNow());
+      await withBookmarkEventsMuted(() => browserSyncService.syncNow());
     } while (bookmarkSyncPending);
   } finally {
     bookmarkSyncRunning = false;
@@ -150,7 +136,7 @@ async function runBookmarkSyncNow() {
     clearTimeout(bookmarkSyncTimer);
     bookmarkSyncTimer = null;
   }
-  return withBookmarkEventsMuted(() => syncNow());
+  return withBookmarkEventsMuted(() => browserSyncService.syncNow());
 }
 
 async function withBookmarkEventsMuted<T>(operation: () => Promise<T>): Promise<T> {

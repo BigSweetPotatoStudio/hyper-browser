@@ -6,12 +6,14 @@ import org.json.JSONObject
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.WebExtension
+import java.util.UUID
 
 object HyperBridge {
     private const val TAG = "HyperBridge"
     private const val EXTENSION_LOCATION = "resource://android/assets/"
     private const val EXTENSION_ID = "hyper-browser-internal@dadigua.com"
     private const val NATIVE_APP = "hyperBrowser"
+    private const val NATIVE_COMMAND_PORT_TARGET = "hyper.internal.nativeCommandPort"
     private val INTERNAL_PAGE_MESSAGE_TYPES = setOf(
         "data.home",
         "data.search",
@@ -41,7 +43,7 @@ object HyperBridge {
         "update.downloadState",
         "update.install",
         "bookmarks.open",
-        "bookmarks.remove",
+        "bookmarks.delete",
         "bookmarks.edit",
         "history.open",
         "history.remove",
@@ -72,12 +74,33 @@ object HyperBridge {
     private val fallbackEligibleHandlers = linkedMapOf<GeckoSession, (JSONObject) -> GeckoResult<Any>>()
     private var fallbackHandler: ((JSONObject) -> GeckoResult<Any>)? = null
     private var fallbackSession: GeckoSession? = null
+    private var backgroundPort: WebExtension.Port? = null
+    private val pendingBackgroundCommands = mutableMapOf<String, GeckoResult<JSONObject>>()
+    private val pendingBackgroundPortActions = mutableListOf<() -> Unit>()
+    private val backgroundPortDelegate = object : WebExtension.PortDelegate {
+        override fun onPortMessage(message: Any, port: WebExtension.Port) {
+            handleBackgroundPortMessage(message)
+        }
+
+        override fun onDisconnect(port: WebExtension.Port) {
+            synchronized(this@HyperBridge) {
+                if (backgroundPort == port) backgroundPort = null
+                val pending = pendingBackgroundCommands.values.toList()
+                pendingBackgroundCommands.clear()
+                pending.forEach { it.completeExceptionally(IllegalStateException("Hyper background port disconnected.")) }
+            }
+        }
+    }
     private val messageDelegate = object : WebExtension.MessageDelegate {
         override fun onMessage(
             nativeApp: String,
             message: Any,
             sender: WebExtension.MessageSender
         ): GeckoResult<Any> = handleNativeMessage(nativeApp, message, sender)
+
+        override fun onConnect(port: WebExtension.Port) {
+            handleBackgroundPortConnect(port)
+        }
     }
 
     fun ensureInstalled(context: Context, onReady: (WebExtension) -> Unit = {}) {
@@ -159,6 +182,26 @@ object HyperBridge {
     fun isInternalPageUrl(url: String): Boolean =
         extension?.metaData?.baseUrl?.let { url.startsWith(it) } == true
 
+    fun sendBackgroundCommand(context: Context, type: String, payload: JSONObject = JSONObject()): GeckoResult<JSONObject> {
+        val result = GeckoResult<JSONObject>()
+        val action = {
+            postBackgroundCommand(type, payload, result)
+        }
+        var shouldEnsureInstalled = false
+        synchronized(this) {
+            if (backgroundPort != null) {
+                action()
+            } else {
+                pendingBackgroundPortActions += action
+                shouldEnsureInstalled = true
+            }
+        }
+        if (shouldEnsureInstalled) {
+            ensureInstalled(context.applicationContext)
+        }
+        return result
+    }
+
     private fun handleNativeMessage(
         nativeApp: String,
         message: Any,
@@ -195,6 +238,60 @@ object HyperBridge {
             return GeckoResult.fromValue(error("No bridge handler for session.").toString())
         }
         return handler(normalizedRequest)
+    }
+
+    private fun handleBackgroundPortConnect(port: WebExtension.Port) {
+        if ((port.name.isNotBlank() && port.name != NATIVE_APP) || !isInternalPageUrl(port.sender.url)) {
+            Log.w(TAG, "Rejected background port name=${port.name} sender=${port.sender.url}")
+            port.disconnect()
+            return
+        }
+        val actions = synchronized(this) {
+            backgroundPort = port
+            pendingBackgroundPortActions.toList().also { pendingBackgroundPortActions.clear() }
+        }
+        port.setDelegate(backgroundPortDelegate)
+        actions.forEach { it.invoke() }
+    }
+
+    private fun postBackgroundCommand(type: String, payload: JSONObject, result: GeckoResult<JSONObject>) {
+        val port = synchronized(this) { backgroundPort }
+        if (port == null) {
+            result.completeExceptionally(IllegalStateException("Hyper background port unavailable."))
+            return
+        }
+        val requestId = UUID.randomUUID().toString()
+        synchronized(this) {
+            pendingBackgroundCommands[requestId] = result
+        }
+        runCatching {
+            port.postMessage(
+                JSONObject()
+                    .put("target", NATIVE_COMMAND_PORT_TARGET)
+                    .put("requestId", requestId)
+                    .put("type", type)
+                    .put("payload", payload)
+            )
+        }.onFailure { throwable ->
+            synchronized(this) {
+                pendingBackgroundCommands.remove(requestId)
+            }
+            result.completeExceptionally(throwable)
+        }
+    }
+
+    private fun handleBackgroundPortMessage(message: Any) {
+        val response = message as? JSONObject ?: return
+        if (response.optString("target") != NATIVE_COMMAND_PORT_TARGET) return
+        val requestId = response.optString("requestId")
+        val pending = synchronized(this) {
+            pendingBackgroundCommands.remove(requestId)
+        } ?: return
+        if (response.optBoolean("ok", false)) {
+            pending.complete(response)
+        } else {
+            pending.completeExceptionally(IllegalStateException(response.optString("error", "Hyper background command failed.")))
+        }
     }
 
     private fun attachSessionDelegate(session: GeckoSession, installed: WebExtension? = extension) {

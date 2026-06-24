@@ -143,7 +143,7 @@ function CompanionHomePage() {
         refreshToken={layoutRevision}
         previewLayoutMode="original"
         onLayoutChanged={() => {
-          sendCommand("launcher.syncSoon").catch(() => undefined);
+          sendCommand("sync.soon").catch(() => undefined);
         }}
         topActions={(
           <LauncherSyncActions

@@ -13,7 +13,7 @@ function Popup() {
   function addWebApp() {
     setBusyAction("webapp");
     setMessage("Adding WebApp...");
-    sendCommand("current.addWebApp")
+    sendCommand("webapps.addFromCurrentPage")
       .then(() => setMessage("WebApp added and synced."))
       .catch((error) => setMessage(error instanceof Error ? error.message : "Unable to add WebApp."))
       .finally(() => setBusyAction(null));
@@ -22,7 +22,7 @@ function Popup() {
   function addBookmark() {
     setBusyAction("bookmark");
     setMessage("Adding bookmark...");
-    sendCommand<SyncResult>("current.addBookmark")
+    sendCommand<SyncResult>("bookmarks.addFromCurrentPage")
       .then((result) => {
         setMessage(`Bookmark added and synced ${result.bookmarkCount} bookmarks.`);
       })
