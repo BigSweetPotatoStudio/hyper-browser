@@ -455,13 +455,33 @@ export function LauncherPage({
     .map((item) => item.id)
     .filter((id) => !containedIds.has(id) && !dockIds.includes(id) && availableEntries.has(id)), [availableEntries, containedIds, dockIds, systemEntries]);
 
+  const placedAppIds = useMemo(() => {
+    const ids = new Set<string>();
+    layout.cells.forEach((cell) => {
+      if (cell.id.startsWith("app:")) ids.add(cell.id);
+    });
+    layout.dock.forEach((id) => {
+      if (id.startsWith("app:")) ids.add(id);
+    });
+    layout.folders.forEach((folder) => {
+      folder.childIds.forEach((id) => {
+        if (id.startsWith("app:")) ids.add(id);
+      });
+    });
+    return ids;
+  }, [layout.cells, layout.dock, layout.folders]);
+
+  const autoWebAppIds = useMemo(() => appEntries
+    .map((item) => item.id)
+    .filter((id) => !placedAppIds.has(id) && availableEntries.has(id)), [appEntries, availableEntries, placedAppIds]);
+
   const explicitDesktopIds = useMemo(() => layout.cells
     .map((cell) => cell.id)
     .filter((id) => !containedIds.has(id) && !dockIds.includes(id) && (availableEntries.has(id) || folderEntries.has(id))), [availableEntries, containedIds, dockIds, folderEntries, layout.cells]);
 
   const visibleDesktopIds = useMemo(() => {
-    return uniqueStrings([...explicitDesktopIds, ...autoDesktopIds]);
-  }, [autoDesktopIds, explicitDesktopIds]);
+    return uniqueStrings([...explicitDesktopIds, ...autoDesktopIds, ...autoWebAppIds]);
+  }, [autoDesktopIds, autoWebAppIds, explicitDesktopIds]);
 
   const originalDesktopCells = useMemo(
     () => normalizeDesktopCells(layout.cells, visibleDesktopIds, gridMetrics),
@@ -522,7 +542,7 @@ export function LauncherPage({
       const preservedCellIds = pruned.cells
         .map((cell) => cell.id)
         .filter((id) => visibleDesktopIdSet.has(id));
-      const nextCellIds = uniqueStrings([...preservedCellIds, ...autoDesktopIds]);
+      const nextCellIds = uniqueStrings([...preservedCellIds, ...autoDesktopIds, ...autoWebAppIds]);
       const nextCells = normalizeDesktopCells(pruned.cells, nextCellIds, gridMetrics);
       const next = sameCells(pruned.cells, nextCells, gridMetrics) && pruned.gridColumns === gridMetrics.columns
         ? pruned
@@ -535,7 +555,7 @@ export function LauncherPage({
           };
       return next === current ? current : next;
     });
-  }, [autoDesktopIds, availableEntries, deprecatedEntryIds, gridMetrics, loading, visibleDesktopIds]);
+  }, [autoDesktopIds, autoWebAppIds, availableEntries, deprecatedEntryIds, gridMetrics, loading, visibleDesktopIds]);
 
   useEffect(() => {
     if (openFolderId && !folderEntries.has(openFolderId)) {

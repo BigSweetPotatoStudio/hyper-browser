@@ -181,7 +181,7 @@ export function ensureState(value: unknown): SyncV2State {
     return createEmptyState();
   }
   const state = value as Partial<SyncV2State>;
-  return {
+  return sanitizeState({
     schemaVersion: SYNC_V2_SCHEMA_VERSION,
     bookmarks: state.bookmarks || {},
     bookmarkTombstones: state.bookmarkTombstones || {},
@@ -191,11 +191,38 @@ export function ensureState(value: unknown): SyncV2State {
       items: readLayoutItemMap(state.layout?.items),
       itemTombstones: state.layout?.itemTombstones || {},
     },
-  };
+  });
 }
 
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(canonicalize(value));
+}
+
+function sanitizeState(state: SyncV2State): SyncV2State {
+  const clean = cloneJson(state);
+
+  Object.keys(clean.appTombstones).forEach((appId) => {
+    delete clean.apps[appId];
+    delete clean.layout.items[`app:${appId}`];
+  });
+
+  Object.keys(clean.layout.itemTombstones).forEach((itemId) => {
+    if (itemId.startsWith("app:")) delete clean.layout.itemTombstones[itemId];
+  });
+
+  Object.entries(clean.layout.items).forEach(([itemId, item]) => {
+    if (item.container === null) {
+      delete clean.layout.items[itemId];
+      return;
+    }
+    if (item.kind !== "app") return;
+    const appId = item.appId || (item.id.startsWith("app:") ? item.id.slice(4) : "");
+    if (!appId || clean.appTombstones[appId] || !clean.apps[appId]) {
+      delete clean.layout.items[itemId];
+    }
+  });
+
+  return clean;
 }
 
 function canonicalize(value: unknown): unknown {
@@ -269,7 +296,7 @@ export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput, place
   };
   let next = appendOperation(store, { type: "app.upsert", app });
   const itemId = `app:${id}`;
-  if (placement && !next.state.layout.items[itemId] && !next.state.layout.itemTombstones[itemId]) {
+  if (placement && !next.state.layout.items[itemId]) {
     next = appendOperation(next, {
       type: "layout.place",
       item: {
@@ -287,9 +314,7 @@ export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput, place
 export function appendWebAppDelete(store: SyncV2Store, appId: string): SyncV2Store {
   const id = appId.trim();
   if (!id) return store;
-  let next = appendOperation(store, { type: "app.delete", appId: id });
-  next = appendOperation(next, { type: "layout.deleteItem", itemId: `app:${id}` });
-  return next;
+  return appendOperation(store, { type: "app.delete", appId: id });
 }
 
 export function appendLocalSnapshotOperations(store: SyncV2Store, snapshot: SyncV2LocalSnapshot): SyncV2Store {
@@ -360,8 +385,8 @@ export function appendLayoutSnapshotOperations(store: SyncV2Store, layout: Launc
     }
   });
   Object.values(next.state.layout.items).forEach((item) => {
-    if (item.container !== null && !placements.has(item.id) && !next.state.layout.itemTombstones[item.id]) {
-      next = appendOperation(next, { type: "layout.hide", itemId: item.id });
+    if (!placements.has(item.id) && item.kind !== "app" && !next.state.layout.itemTombstones[item.id]) {
+      next = appendOperation(next, { type: "layout.deleteItem", itemId: item.id });
     }
   });
   return next;
@@ -536,12 +561,15 @@ function mergeState(leftState: SyncV2State, rightState: SyncV2State): SyncV2Stat
   });
 
   const itemTombstones = mergeLwwMap(left.layout.itemTombstones, right.layout.itemTombstones);
+  Object.keys(itemTombstones).forEach((itemId) => {
+    if (itemId.startsWith("app:")) delete itemTombstones[itemId];
+  });
   const items = mergeLwwMap(left.layout.items, right.layout.items);
   Object.keys(itemTombstones).forEach((itemId) => {
     delete items[itemId];
   });
 
-  return {
+  return sanitizeState({
     schemaVersion: SYNC_V2_SCHEMA_VERSION,
     bookmarks,
     bookmarkTombstones,
@@ -551,7 +579,7 @@ function mergeState(leftState: SyncV2State, rightState: SyncV2State): SyncV2Stat
       items,
       itemTombstones,
     },
-  };
+  });
 }
 
 function mergeLwwMap<T extends { rev?: Revision }>(left: Record<string, T> = {}, right: Record<string, T> = {}): Record<string, T> {
@@ -885,11 +913,15 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
       state.appTombstones[id] = { deletedAt: new Date(operation.createdAt).toISOString(), rev };
     }
     delete state.apps[id];
+    delete state.layout.items[`app:${id}`];
+    delete state.layout.itemTombstones[`app:${id}`];
     return;
   }
   if (operation.type === "layout.place") {
     const item = normalizeLayoutItemInput(operation.item);
-    if (!item || state.layout.itemTombstones[item.id]) return;
+    if (!item) return;
+    if (!item.id.startsWith("app:") && state.layout.itemTombstones[item.id]) return;
+    if (item.kind === "app" && (!item.appId || !state.apps[item.appId] || state.appTombstones[item.appId])) return;
     const current = state.layout.items[item.id];
     if (current && compareRevision(current.rev, rev) > 0) return;
     state.layout.items[item.id] = { ...item, rev };
@@ -900,20 +932,23 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     if (!itemId || state.layout.itemTombstones[itemId]) return;
     const current = state.layout.items[itemId];
     if (current && compareRevision(current.rev, rev) > 0) return;
-    state.layout.items[itemId] = {
-      ...(current || { id: itemId, kind: layoutItemKind(itemId), ...(itemId.startsWith("app:") ? { appId: itemId.slice(4) } : {}), index: 0 }),
-      container: null,
-      rev,
-    };
+    delete state.layout.items[itemId];
+    if (!itemId.startsWith("app:")) {
+      state.layout.itemTombstones[itemId] = { deletedAt: new Date(operation.createdAt).toISOString(), rev };
+    }
     return;
   }
   if (operation.type === "layout.deleteItem") {
     const itemId = operation.itemId.trim();
     if (!itemId) return;
+    delete state.layout.items[itemId];
+    if (itemId.startsWith("app:")) {
+      delete state.layout.itemTombstones[itemId];
+      return;
+    }
     if (!state.layout.itemTombstones[itemId] || compareRevision(state.layout.itemTombstones[itemId].rev, rev) < 0) {
       state.layout.itemTombstones[itemId] = { deletedAt: new Date(operation.createdAt).toISOString(), rev };
     }
-    delete state.layout.items[itemId];
   }
 }
 
@@ -988,13 +1023,12 @@ function layoutPlacements(layout: LauncherLayoutLike): Map<string, Omit<SyncV2La
     });
   });
   (layout.folders || []).forEach((folder) => {
-    if (folder.id) {
-      const current = result.get(folder.id);
-      result.set(folder.id, {
-        ...(current || { id: folder.id, kind: "folder" as const, container: null, index: 0 }),
-        title: folder.title,
-      });
-    }
+    if (!folder.id || !result.has(folder.id)) return;
+    const current = result.get(folder.id);
+    result.set(folder.id, {
+      ...current!,
+      title: folder.title,
+    });
     (folder.childIds || []).forEach((id, index) => {
       if (!id) return;
       result.set(id, {
@@ -1042,6 +1076,8 @@ function normalizeLayoutItemInput(raw: unknown, fallbackId?: string): Omit<SyncV
   const source = raw as Record<string, unknown>;
   const id = String(source.id || fallbackId || "").trim();
   if (!id) return null;
+  const container = source.container == null ? "" : String(source.container).trim();
+  if (!container) return null;
   const kind = source.kind === "app" || source.kind === "folder" || source.kind === "system"
     ? source.kind
     : layoutItemKind(id);
@@ -1053,7 +1089,7 @@ function normalizeLayoutItemInput(raw: unknown, fallbackId?: string): Omit<SyncV
     kind,
     ...(kind === "app" && appId ? { appId } : {}),
     ...(typeof source.title === "string" ? { title: source.title } : {}),
-    container: source.container == null ? null : String(source.container),
+    container,
     index: normalizeLayoutIndex(source.index, source.order),
   };
 }
