@@ -1822,8 +1822,9 @@ function DesktopLauncherIcon({ entry }: { entry: LauncherEntry }) {
               </span>
             );
           }
+          const fallbackBackground = child.kind === "folder" ? "#dfe5eb" : child.color;
           return (
-            <span className={iconDataUrl ? "desktop-folder-dot image" : "desktop-folder-dot"} key={child.id} style={{ background: iconDataUrl ? "#fff" : child.kind === "folder" ? "#dfe5eb" : child.color }}>
+            <span className={iconDataUrl ? "desktop-folder-dot image" : "desktop-folder-dot"} key={child.id} style={{ background: iconDataUrl ? "transparent" : fallbackBackground }}>
               {iconDataUrl ? <img src={iconDataUrl} alt="" /> : child.kind === "folder" ? "" : child.mark.slice(0, 1)}
             </span>
           );
@@ -1839,9 +1840,10 @@ function DesktopLauncherIcon({ entry }: { entry: LauncherEntry }) {
       </span>
     );
   }
+  const hasAppIcon = !!entry.app.iconDataUrl;
   return (
-    <span className={entry.kind === "app" && entry.app.iconDataUrl ? "desktop-icon image" : "desktop-icon"} style={{ background: entry.color }} aria-hidden="true">
-      {entry.kind === "app" && entry.app.iconDataUrl ? <img src={entry.app.iconDataUrl} alt="" /> : entry.mark}
+    <span className={hasAppIcon ? "desktop-icon image" : "desktop-icon"} style={{ background: hasAppIcon ? "transparent" : entry.color }} aria-hidden="true">
+      {hasAppIcon ? <img src={entry.app.iconDataUrl!} alt="" /> : entry.mark}
     </span>
   );
 }

@@ -151,7 +151,8 @@
 }
 
 .desktop-folder-grid {
-  grid-template-columns: repeat(auto-fill, minmax(88px, 98px));
+  gap: 10px 6px;
+  grid-template-columns: repeat(auto-fill, var(--desktop-cell-width));
   align-content: start;
   justify-content: start;
 }
@@ -441,7 +442,8 @@
 }
 
 .desktop-icon.image {
-  background: #fff;
+  background: transparent;
+  box-shadow: none;
 }
 
 .desktop-system-icon {
@@ -530,7 +532,7 @@
 
 .desktop-folder-dot.image {
   overflow: hidden;
-  background: #fff;
+  background: transparent;
 }
 
 .desktop-folder-dot.system {
