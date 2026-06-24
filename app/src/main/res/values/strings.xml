@@ -204,6 +204,7 @@
     <string name="webapp_edit_dialog_title">Edit WebApp</string>
     <string name="webapp_field_title">Title</string>
     <string name="webapp_field_address">Address</string>
+    <string name="webapp_installed">Installed %1$s.</string>
     <string name="webapp_installed_with_shortcut">Installed %1$s. %2$s</string>
     <string name="webapp_install_failed">Install failed.</string>
     <string name="webapp_icon_dialog_title">Choose WebApp icon</string>

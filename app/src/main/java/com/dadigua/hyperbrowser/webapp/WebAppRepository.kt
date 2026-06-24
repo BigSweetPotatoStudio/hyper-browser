@@ -127,10 +127,7 @@ class WebAppRepository(
             lastOpenedAt = now
         )
         upsert(webApp)
-        return WebAppInstallResult(
-            webApp = webApp,
-            shortcutRequest = requestPinnedShortcut(webApp)
-        )
+        return WebAppInstallResult(webApp = webApp)
     }
 
     suspend fun pinToHome(id: String): PinnedShortcutRequestResult {
@@ -417,8 +414,7 @@ class WebAppRepository(
 }
 
 data class WebAppInstallResult(
-    val webApp: WebAppDefinition,
-    val shortcutRequest: PinnedShortcutRequestResult
+    val webApp: WebAppDefinition
 )
 
 enum class PinnedShortcutRequestResult {
