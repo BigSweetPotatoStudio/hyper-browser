@@ -3,6 +3,7 @@
 .kotlin/
 .playwright-cli/
 build/
+node_modules/
 local.properties
 captures/
 screenshots/

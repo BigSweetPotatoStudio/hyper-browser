@@ -55,8 +55,11 @@ export type LauncherSystemEntry = {
   title: string;
   mark: string;
   color: string;
+  systemIcon?: LauncherSystemIconName;
   action: string;
 };
+
+type LauncherSystemIconName = "bookmarks" | "history" | "extensions";
 
 type AppEntry = {
   id: string;
@@ -1791,6 +1794,14 @@ function DesktopLauncherIcon({ entry }: { entry: LauncherEntry }) {
             return <span className="desktop-folder-dot placeholder" key={`empty-${index}`} />;
           }
           const iconDataUrl = child.kind === "app" ? child.app.iconDataUrl : null;
+          if (child.kind === "system") {
+            const systemIcon = systemIconName(child);
+            return (
+              <span className={`desktop-folder-dot system ${systemIconClass(systemIcon)}`} key={child.id}>
+                <SystemIconGlyph name={systemIcon} compact />
+              </span>
+            );
+          }
           return (
             <span className={iconDataUrl ? "desktop-folder-dot image" : "desktop-folder-dot"} key={child.id} style={{ background: iconDataUrl ? "#fff" : child.kind === "folder" ? "#dfe5eb" : child.color }}>
               {iconDataUrl ? <img src={iconDataUrl} alt="" /> : child.kind === "folder" ? "" : child.mark.slice(0, 1)}
@@ -1800,10 +1811,62 @@ function DesktopLauncherIcon({ entry }: { entry: LauncherEntry }) {
       </span>
     );
   }
+  if (entry.kind === "system") {
+    const systemIcon = systemIconName(entry);
+    return (
+      <span className={`desktop-icon desktop-system-icon ${systemIconClass(systemIcon)}`} aria-hidden="true">
+        <SystemIconGlyph name={systemIcon} />
+      </span>
+    );
+  }
   return (
     <span className={entry.kind === "app" && entry.app.iconDataUrl ? "desktop-icon image" : "desktop-icon"} style={{ background: entry.color }} aria-hidden="true">
       {entry.kind === "app" && entry.app.iconDataUrl ? <img src={entry.app.iconDataUrl} alt="" /> : entry.mark}
     </span>
+  );
+}
+
+function systemIconName(entry: LauncherSystemEntry): LauncherSystemIconName {
+  if (entry.systemIcon) return entry.systemIcon;
+  if (entry.action === "bookmarks") return "bookmarks";
+  if (entry.action === "history") return "history";
+  return "extensions";
+}
+
+function systemIconClass(name: LauncherSystemIconName): string {
+  return `system-${name}`;
+}
+
+function SystemIconGlyph({ name, compact = false }: { name: LauncherSystemIconName; compact?: boolean }) {
+  const common = {
+    className: compact ? "desktop-system-glyph compact" : "desktop-system-glyph",
+    viewBox: "0 0 64 64",
+    focusable: "false",
+    "aria-hidden": "true",
+  } as const;
+  if (name === "bookmarks") {
+    return (
+      <svg {...common}>
+        <path className="system-glyph-line" d="M20 13.5C20 11.57 21.57 10 23.5 10h17C42.43 10 44 11.57 44 13.5V52L32 42.5 20 52V13.5z" />
+        <path className="system-glyph-line fine" d="M26 20h12M26 28h8" />
+      </svg>
+    );
+  }
+  if (name === "history") {
+    return (
+      <svg {...common}>
+        <path className="system-glyph-line" d="M18.5 22.5A18 18 0 1 1 14 34" />
+        <path className="system-glyph-line" d="M18 13v11.5H6.5" />
+        <path className="system-glyph-line fine" d="M32 22v12l9 5.5" />
+        <circle className="system-glyph-dot" cx="32" cy="34" r="2.8" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <path className="system-glyph-line" d="M26 12h12c2.21 0 4 1.79 4 4v8h5.2C51 24 54 26.9 54 30.5S51 37 47.2 37H42v11c0 2.21-1.79 4-4 4H26c-2.21 0-4-1.79-4-4V37h-5.2C13 37 10 34.1 10 30.5S13 24 16.8 24H22v-8c0-2.21 1.79-4 4-4z" />
+      <path className="system-glyph-line fine" d="M32 12v12M22 30.5h20M32 37v15" />
+    </svg>
   );
 }
 

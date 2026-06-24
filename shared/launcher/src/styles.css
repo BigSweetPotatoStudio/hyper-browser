@@ -444,6 +444,60 @@
   background: #fff;
 }
 
+.desktop-system-icon {
+  position: relative;
+  color: #fff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    inset 0 -12px 18px rgba(0, 0, 0, 0.12),
+    0 8px 22px rgba(0, 0, 0, 0.26);
+}
+
+.desktop-system-icon.system-bookmarks {
+  background:
+    radial-gradient(circle at 30% 18%, rgba(255, 255, 255, 0.34), transparent 36%),
+    linear-gradient(145deg, #23bf75, #087764);
+}
+
+.desktop-system-icon.system-history {
+  background:
+    radial-gradient(circle at 30% 18%, rgba(255, 255, 255, 0.36), transparent 36%),
+    linear-gradient(145deg, #ffbd2f, #d97800);
+}
+
+.desktop-system-icon.system-extensions {
+  background:
+    radial-gradient(circle at 30% 18%, rgba(255, 255, 255, 0.32), transparent 36%),
+    linear-gradient(145deg, #ff6158, #c92743);
+}
+
+.desktop-system-glyph {
+  width: 72%;
+  height: 72%;
+  overflow: visible;
+}
+
+.desktop-system-glyph.compact {
+  width: 72%;
+  height: 72%;
+}
+
+.system-glyph-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 5.4;
+}
+
+.system-glyph-line.fine {
+  stroke-width: 4.6;
+}
+
+.system-glyph-dot {
+  fill: currentColor;
+}
+
 .desktop-icon img {
   width: 100%;
   height: 100%;
@@ -477,6 +531,25 @@
 .desktop-folder-dot.image {
   overflow: hidden;
   background: #fff;
+}
+
+.desktop-folder-dot.system {
+  color: #fff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -6px 10px rgba(0, 0, 0, 0.12);
+}
+
+.desktop-folder-dot.system-bookmarks {
+  background: linear-gradient(145deg, #23bf75, #087764);
+}
+
+.desktop-folder-dot.system-history {
+  background: linear-gradient(145deg, #ffbd2f, #d97800);
+}
+
+.desktop-folder-dot.system-extensions {
+  background: linear-gradient(145deg, #ff6158, #c92743);
 }
 
 .desktop-folder-dot img {

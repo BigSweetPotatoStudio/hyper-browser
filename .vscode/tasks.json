@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Hyper Browser: install all ADB devices + package extension",
+      "type": "shell",
+      "command": "pnpm",
+      "args": [
+        "exec",
+        "zx",
+        "${workspaceFolder}\\scripts\\install-all-adb-and-package-extension.ts"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

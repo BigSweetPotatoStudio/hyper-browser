@@ -1,0 +1,11 @@
+{
+  "name": "hyper-browser-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "install-all-adb-and-package-extension": "zx scripts/install-all-adb-and-package-extension.ts"
+  },
+  "devDependencies": {
+    "zx": "^8.8.4"
+  }
+}

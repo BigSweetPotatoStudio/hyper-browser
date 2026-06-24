@@ -98,9 +98,9 @@ function HomePage() {
   }, []);
 
   const systemEntries = useMemo<LauncherSystemEntry[]>(() => ([
-    { id: "system:bookmarks", kind: "system", title: t("home.bookmarks"), mark: "B", color: "#34a853", action: "bookmarks" },
-    { id: "system:history", kind: "system", title: t("home.history"), mark: "H", color: "#fbbc04", action: "history" },
-    { id: "system:extensions", kind: "system", title: t("home.extensions"), mark: "Ex", color: "#ea4335", action: "extensions" },
+    { id: "system:bookmarks", kind: "system", title: t("home.bookmarks"), mark: "B", color: "#0d7f66", systemIcon: "bookmarks", action: "bookmarks" },
+    { id: "system:history", kind: "system", title: t("home.history"), mark: "H", color: "#f4a900", systemIcon: "history", action: "history" },
+    { id: "system:extensions", kind: "system", title: t("home.extensions"), mark: "Ex", color: "#d73547", systemIcon: "extensions", action: "extensions" },
   ]), []);
 
   const platform = useMemo<LauncherPlatform>(() => ({
