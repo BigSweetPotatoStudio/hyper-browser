@@ -1438,6 +1438,7 @@ private fun BrowserScreen(
             if (iconPath != null) {
                 tab.iconPath = iconPath
                 profileStore.recordVisit(pageState.url, controller.state.value.title, iconPath)
+                profileStore.updateBookmarkIcon(pageState.url, iconPath)
             }
         }
     }

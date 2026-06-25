@@ -315,6 +315,25 @@ class BrowserProfileStore(context: Context) {
         return cleanUrl.isNotBlank() && bookmarksState.value.any { normalizeBookmarkUrl(it.url) == cleanUrl }
     }
 
+    fun updateBookmarkIcon(url: String, iconPath: String) {
+        if (url.isBlank() || iconPath.isBlank()) return
+        val cleanUrl = normalizeBookmarkUrl(url)
+        if (cleanUrl.isBlank()) return
+        val validIconPath = faviconStore.existingIconPath(iconPath) ?: return
+        val current = bookmarksState.value
+        val next = current.map { bookmark ->
+            if (normalizeBookmarkUrl(bookmark.url) == cleanUrl && bookmark.iconPath != validIconPath) {
+                bookmark.copy(iconPath = validIconPath)
+            } else {
+                bookmark
+            }
+        }
+        if (next != current) {
+            // Icon paths are local display cache only; bookmarks.json owns synced bookmark data.
+            bookmarksState.value = next
+        }
+    }
+
     fun removeHistoryEntry(url: String) {
         if (url.isBlank()) return
         val next = historyState.value.filterNot { it.url == url }
