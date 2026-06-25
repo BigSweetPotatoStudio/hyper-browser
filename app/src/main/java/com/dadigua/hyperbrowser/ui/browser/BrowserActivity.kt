@@ -331,10 +331,17 @@ private fun BrowserScreen(
             )
     }
 
-    fun installWebAppThroughBackground(name: String, startUrl: String, iconPath: String?, iconSource: String?) {
+    fun installWebAppThroughBackground(
+        name: String,
+        startUrl: String,
+        iconPath: String?,
+        iconSource: String?,
+        requestShortcut: Boolean
+    ) {
         val cleanUrl = startUrl.trim()
         val cleanName = name.trim().ifBlank { cleanUrl }
         val id = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
         val payload = JSONObject()
             .put("id", id)
             .put("name", cleanName)
@@ -347,7 +354,27 @@ private fun BrowserScreen(
             .accept(
                 {
                     addWebAppToLauncherLayout(context, id, cleanName, cleanUrl)
-                    message = context.getString(R.string.webapp_installed, cleanName)
+                    if (requestShortcut) {
+                        val shortcutResult = app.webApps.pinToHome(
+                            WebAppDefinition(
+                                id = id,
+                                name = cleanName,
+                                startUrl = cleanUrl,
+                                iconPath = iconPath,
+                                themeColor = 0xFF126D6A.toInt(),
+                                displayMode = "standalone",
+                                createdAt = now,
+                                lastOpenedAt = now
+                            )
+                        )
+                        message = context.getString(
+                            R.string.webapp_installed_with_shortcut,
+                            cleanName,
+                            shortcutRequestMessage(context, shortcutResult)
+                        )
+                    } else {
+                        message = context.getString(R.string.webapp_installed, cleanName)
+                    }
                 },
                 { throwable ->
                     Log.w(BROWSER_ACTIVITY_TAG, "Failed to install WebApp through background", throwable)
@@ -1137,7 +1164,7 @@ private fun BrowserScreen(
                 }
         }
 
-    fun confirmWebAppDetailsDialog(dialog: WebAppDetailsDialogState) {
+    fun confirmWebAppDetailsDialog(dialog: WebAppDetailsDialogState, action: WebAppInstallAction) {
         webAppDetailsDialog = null
         scope.launch {
             runCatching {
@@ -1152,7 +1179,13 @@ private fun BrowserScreen(
                     WebAppIconSelection.Site -> "site"
                     else -> "custom"
                 }
-                installWebAppThroughBackground(cleanName, cleanUrl, iconPath, iconSource)
+                installWebAppThroughBackground(
+                    cleanName,
+                    cleanUrl,
+                    iconPath,
+                    iconSource,
+                    requestShortcut = action == WebAppInstallAction.InstallAndPin
+                )
             }
                 .onFailure { message = it.message ?: context.getString(R.string.webapp_install_failed) }
         }
@@ -1963,7 +1996,7 @@ private fun BrowserScreen(
                 onStartUrlChange = { url -> webAppDetailsDialog = dialog.copy(startUrl = url) },
                 onSelect = { selection -> webAppDetailsDialog = dialog.copy(selectedIcon = selection) },
                 onChooseImage = { webAppIconImageLauncher.launch("image/*") },
-                onConfirm = { confirmWebAppDetailsDialog(dialog) },
+                onConfirm = { action -> confirmWebAppDetailsDialog(dialog, action) },
                 onDismiss = { dismissWebAppDetailsDialog() }
             )
         }

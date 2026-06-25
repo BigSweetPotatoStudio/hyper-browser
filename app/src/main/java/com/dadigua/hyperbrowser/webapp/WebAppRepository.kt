@@ -81,6 +81,9 @@ class WebAppRepository(
         return requestPinnedShortcut(webApp)
     }
 
+    fun pinToHome(webApp: WebAppDefinition): PinnedShortcutRequestResult =
+        requestPinnedShortcut(webApp)
+
     fun applyTaskDescription(activity: Activity, webApp: WebAppDefinition) {
         @Suppress("DEPRECATION")
         val icon = badgedWebAppIconBitmap(webApp, 96)

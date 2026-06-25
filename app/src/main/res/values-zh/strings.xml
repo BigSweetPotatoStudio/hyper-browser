@@ -208,9 +208,10 @@
     <string name="webapp_edit_dialog_title">修改 WebApp</string>
     <string name="webapp_field_title">标题</string>
     <string name="webapp_field_address">地址</string>
-    <string name="webapp_installed">已安装 %1$s。</string>
-    <string name="webapp_installed_with_shortcut">已安装 %1$s。%2$s</string>
+    <string name="webapp_installed">已添加 %1$s。</string>
+    <string name="webapp_installed_with_shortcut">已添加 %1$s。%2$s</string>
     <string name="webapp_install_failed">安装失败。</string>
+    <string name="webapp_action_install_shortcut">安装并发送快捷方式</string>
     <string name="webapp_icon_dialog_title">选择 WebApp 图标</string>
     <string name="webapp_icon_source_title">图标来源</string>
     <string name="webapp_icon_site">网站图标</string>

@@ -60,6 +60,11 @@ internal sealed class WebAppIconSelection {
     data class Image(val iconPath: String) : WebAppIconSelection()
 }
 
+internal enum class WebAppInstallAction {
+    Add,
+    InstallAndPin
+}
+
 @Composable
 internal fun WebAppDetailsDialog(
     state: WebAppDetailsDialogState,
@@ -67,7 +72,7 @@ internal fun WebAppDetailsDialog(
     onStartUrlChange: (String) -> Unit,
     onSelect: (WebAppIconSelection) -> Unit,
     onChooseImage: () -> Unit,
-    onConfirm: () -> Unit,
+    onConfirm: (WebAppInstallAction) -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
@@ -190,8 +195,17 @@ internal fun WebAppDetailsDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text(stringResource(R.string.common_action_install))
+            Row(horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { onConfirm(WebAppInstallAction.Add) }) {
+                    Text(stringResource(R.string.common_action_add))
+                }
+                TextButton(onClick = { onConfirm(WebAppInstallAction.InstallAndPin) }) {
+                    Text(
+                        stringResource(R.string.webapp_action_install_shortcut),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         },
         dismissButton = {
