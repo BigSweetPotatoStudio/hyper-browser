@@ -1,4 +1,5 @@
 import type { LauncherLayout, LauncherLayoutStorage } from "@hyper-launcher";
+import { recordAndroidLauncherLayoutEdit } from "./webdav-sync";
 
 const LAYOUT_STORAGE_KEY = "hyper-home-launcher-layout-v3";
 const LEGACY_LAYOUT_STORAGE_KEY = "hyper-home-launcher-layout-v1";
@@ -22,8 +23,13 @@ export function createLauncherLayoutStorage(): LauncherLayoutStorage {
       }
       return legacyLayout as Partial<LauncherLayout> | null;
     },
-    save(layout: LauncherLayout) {
-      const run = launcherLayoutSaveQueue.then(() => window.hyperBrowser.saveLauncherLayout(layout));
+    save(layout: LauncherLayout, options) {
+      const run = launcherLayoutSaveQueue.then(async () => {
+        await window.hyperBrowser.saveLauncherLayout(layout);
+        if ((options?.reason || "user") === "user") {
+          await recordAndroidLauncherLayoutEdit(layout);
+        }
+      });
       launcherLayoutSaveQueue = run.catch(() => undefined);
       return run;
     },

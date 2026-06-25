@@ -1,6 +1,7 @@
 import {
   activeBookmarksFromState,
   activeWebAppsFromState,
+  appendLocalSnapshotOperations,
   appendOperation,
   canonicalJson,
   createEmptyStore,
@@ -14,7 +15,6 @@ import {
 } from "@hyper-sync/op-log";
 import type { BookmarkRecord, WebAppRecord } from "@hyper-sync";
 import type { BrowserSettings, WebDavLocalSyncData, WebDavSyncResult, WebDavSyncSettings } from "./hyper-browser";
-import { waitForLauncherLayoutSaves } from "./launcher-layout-storage";
 
 const ANDROID_SYNC_V2_STORAGE_KEY = "hyper-browser-sync-v2-store";
 const NATIVE_APP = "hyperBrowser";
@@ -55,12 +55,24 @@ export async function runAndroidWebDavSyncIfEnabled(): Promise<WebDavSyncResult 
 
 async function loadLocalSnapshot(): Promise<SyncV2LocalSnapshot> {
   const localData = await requestWebDavLocalData();
-  await waitForLauncherLayoutSaves();
   const layout = await requestLauncherLayout();
   return {
     webApps: activeLocalWebApps(localData),
     layout,
   };
+}
+
+export async function recordAndroidLauncherLayoutEdit(layout: object): Promise<void> {
+  const initialSettings = await requestSettingsData();
+  if (!initialSettings.webDavSyncEnabled || !initialSettings.webDavSyncUrl.trim()) return;
+  const settings = await ensureAndroidDeviceId(initialSettings);
+  await withLocalLock(async () => {
+    const current = await readStoredStore(settings.webDavSyncDeviceId);
+    const next = appendLocalSnapshotOperations(current, { layout });
+    if (canonicalJson(current) !== canonicalJson(next)) {
+      await writeStoredStore(next, settings.webDavSyncDeviceId);
+    }
+  });
 }
 
 export async function recordAndroidBookmarkUpserts(bookmarks: BookmarkRecord[]): Promise<void> {

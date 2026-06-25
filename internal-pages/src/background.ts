@@ -1,6 +1,6 @@
 import { createSyncBackgroundController } from "@hyper-sync/background";
 import { createHyperBackgroundCommandHandler } from "@hyper-sync/hyper-background";
-import { recordAndroidBookmarkDeletes, recordAndroidBookmarkUpserts, runAndroidWebDavSync, runAndroidWebDavSyncIfEnabled } from "./webdav-sync";
+import { recordAndroidBookmarkDeletes, recordAndroidBookmarkUpserts, recordAndroidLauncherLayoutEdit, runAndroidWebDavSync, runAndroidWebDavSyncIfEnabled } from "./webdav-sync";
 import type { BookmarkRecord } from "@hyper-sync";
 import type { WebDavSyncResult } from "./hyper-browser";
 
@@ -177,6 +177,9 @@ async function requestLauncherLayout(): Promise<object | null> {
 
 async function saveLauncherLayout(layout: unknown): Promise<void> {
   await requestNativeObject("launcher.layout.save", { layout: JSON.stringify(layout || {}) });
+  if (layout && typeof layout === "object") {
+    await recordAndroidLauncherLayoutEdit(layout as object);
+  }
 }
 
 async function listBookmarks(): Promise<BookmarkRecord[]> {

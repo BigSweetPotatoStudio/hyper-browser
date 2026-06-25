@@ -227,9 +227,9 @@ class BrowserProfileStore(context: Context) {
 
     fun saveLauncherLayout(layout: JSONObject) {
         val current = loadLauncherLayout()
-        val currentUpdatedAt = current?.optPositiveLong("updatedAt") ?: 0L
-        val nextUpdatedAt = layout.optPositiveLong("updatedAt") ?: 0L
-        if (currentUpdatedAt > 0L && currentUpdatedAt > nextUpdatedAt) return
+        val currentEditedAt = current?.optPositiveLong("editedAt") ?: 0L
+        val nextEditedAt = layout.optPositiveLong("editedAt") ?: 0L
+        if (currentEditedAt > 0L && nextEditedAt > 0L && currentEditedAt > nextEditedAt) return
         launcherLayoutFile.writeText(layout.toString())
     }
 

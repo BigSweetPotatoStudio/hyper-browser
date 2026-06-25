@@ -11,14 +11,15 @@ export const launcherLayoutStorage: LauncherLayoutStorage = {
   async load() {
     return layoutFromState((await loadSyncV2Store()).state) as LauncherLayout;
   },
-  save(layout: LauncherLayout) {
-    const run = launcherLayoutSaveQueue.then(() => saveLauncherLayoutIfCurrent(layout));
+  save(layout: LauncherLayout, options) {
+    const run = launcherLayoutSaveQueue.then(() => saveLauncherLayoutIfCurrent(layout, options?.reason || "user"));
     launcherLayoutSaveQueue = run.catch(() => undefined);
     return run;
   },
 };
 
-async function saveLauncherLayoutIfCurrent(layout: LauncherLayout): Promise<void> {
+async function saveLauncherLayoutIfCurrent(layout: LauncherLayout, reason: "user" | "system"): Promise<void> {
+  if (reason !== "user") return;
   const current = await loadSyncV2Store();
   const next = appendLayoutSnapshotOperations(current, layout);
   if (canonicalJson(current) !== canonicalJson(next)) {

@@ -100,6 +100,7 @@ export type LauncherLayout = {
   dock: string[];
   folders: LauncherFolderLayout[];
   gridColumns?: number;
+  editedAt?: number;
   updatedAt?: number;
 };
 
@@ -116,7 +117,7 @@ type LauncherContainer = "desktop" | "dock" | "folder";
 
 export type LauncherLayoutStorage = {
   load: () => Promise<StoredLauncherLayout | null | undefined>;
-  save: (layout: LauncherLayout) => Promise<void> | void;
+  save: (layout: LauncherLayout, options?: { reason?: "user" | "system" }) => Promise<void> | void;
 };
 
 export type LauncherPreviewLayoutMode = "compact" | "original";
@@ -355,6 +356,7 @@ export function LauncherPage({
   const pointerX = useRef<number | null>(null);
   const pointerY = useRef<number | null>(null);
   const suppressClickForId = useRef<string | null>(null);
+  const layoutSaveReason = useRef<"user" | "system">("system");
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const deprecatedEntryIds = useMemo(() => new Set(platform.deprecatedEntryIds || []), [platform.deprecatedEntryIds]);
 
@@ -394,7 +396,9 @@ export function LauncherPage({
 
   useEffect(() => {
     if (loading) return;
-    Promise.resolve(layoutStorage.save({ ...layout, version: LAYOUT_VERSION, gridColumns: gridMetrics.columns })).catch(console.error);
+    const reason = layoutSaveReason.current;
+    layoutSaveReason.current = "system";
+    Promise.resolve(layoutStorage.save({ ...layout, version: LAYOUT_VERSION, gridColumns: gridMetrics.columns }, { reason })).catch(console.error);
   }, [gridMetrics.columns, layout, loading, layoutStorage]);
 
   useEffect(() => {
@@ -518,12 +522,15 @@ export function LauncherPage({
 
   function commitLayout(updater: (current: LauncherLayout) => LauncherLayout) {
     setLayout((current) => {
+      const now = Date.now();
       const next = {
         ...limitDockItems(pruneEmptyFolders(removeDeprecatedEntryIds(updater(current), deprecatedEntryIds))),
         version: LAYOUT_VERSION,
         gridColumns: gridMetrics.columns,
-        updatedAt: Date.now(),
+        editedAt: now,
+        updatedAt: now,
       };
+      layoutSaveReason.current = "user";
       onLayoutChanged?.(next);
       return next;
     });
@@ -551,8 +558,10 @@ export function LauncherPage({
             cells: nextCells,
             version: LAYOUT_VERSION,
             gridColumns: gridMetrics.columns,
+            editedAt: pruned.editedAt,
             updatedAt: pruned.updatedAt,
           };
+      if (next !== current) layoutSaveReason.current = "system";
       return next === current ? current : next;
     });
   }, [autoDesktopIds, autoWebAppIds, availableEntries, deprecatedEntryIds, gridMetrics, loading, visibleDesktopIds]);
@@ -2038,6 +2047,7 @@ function normalizeStoredLayout(
         }))
       : [],
     gridColumns: metrics.columns,
+    editedAt: Number.isFinite(value?.editedAt) ? Number(value?.editedAt) : undefined,
     updatedAt: Number.isFinite(value?.updatedAt) ? Number(value?.updatedAt) : undefined,
   };
 }

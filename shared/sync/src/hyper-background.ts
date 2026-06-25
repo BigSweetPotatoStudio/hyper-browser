@@ -64,6 +64,7 @@ type LauncherLayout = Record<string, unknown> & {
   folders?: LauncherFolder[];
   gridColumns?: number;
   updatedAt?: number;
+  editedAt?: number;
 };
 
 type LauncherLayoutMutation = {
@@ -250,7 +251,9 @@ function addWebAppToLauncherLayout(layout: unknown, itemId: string): LauncherLay
   ];
   current.version = positiveInteger(current.version) || 4;
   current.gridColumns = columns;
-  current.updatedAt = Date.now();
+  const now = Date.now();
+  current.editedAt = now;
+  current.updatedAt = now;
   return { changed: true, layout: current };
 }
 
@@ -288,7 +291,11 @@ function removeWebAppFromLauncherLayout(layout: unknown, itemId: string): Launch
     });
   }
 
-  if (changed) current.updatedAt = Date.now();
+  if (changed) {
+    const now = Date.now();
+    current.editedAt = now;
+    current.updatedAt = now;
+  }
   return { changed, layout: current };
 }
 

@@ -39,16 +39,21 @@ export type SyncV2LayoutItem = {
   rev: Revision;
 };
 
+export type SyncV2LayoutState = {
+  items: Record<string, SyncV2LayoutItem>;
+  itemTombstones: Record<string, SyncV2Tombstone>;
+  editedAt: number;
+  editedDeviceId: string;
+  rev: Revision;
+};
+
 export type SyncV2State = {
   schemaVersion: 2;
   bookmarks: Record<string, SyncV2Bookmark>;
   bookmarkTombstones: Record<string, SyncV2Tombstone>;
   apps: Record<string, SyncV2App>;
   appTombstones: Record<string, SyncV2Tombstone>;
-  layout: {
-    items: Record<string, SyncV2LayoutItem>;
-    itemTombstones: Record<string, SyncV2Tombstone>;
-  };
+  layout: SyncV2LayoutState;
 };
 
 export type SyncV2Operation =
@@ -56,6 +61,7 @@ export type SyncV2Operation =
   | SyncV2BaseOperation<"bookmark.delete"> & BookmarkDeleteInput
   | SyncV2BaseOperation<"app.upsert"> & { app: Partial<WebAppRecord> & { id: string; name: string; startUrl: string; identityKey?: string } }
   | SyncV2BaseOperation<"app.delete"> & { appId: string }
+  | SyncV2BaseOperation<"layout.replace"> & { layout: LauncherLayoutLike; editedAt?: number }
   | SyncV2BaseOperation<"layout.place"> & { item: Omit<SyncV2LayoutItem, "rev"> }
   | SyncV2BaseOperation<"layout.hide"> & { itemId: string }
   | SyncV2BaseOperation<"layout.deleteItem"> & { itemId: string };
@@ -74,6 +80,7 @@ type SyncV2OperationInput =
   | ({ type: "bookmark.delete" } & BookmarkDeleteInput)
   | { type: "app.upsert"; app: Partial<WebAppRecord> & { id: string; name: string; startUrl: string; identityKey?: string } }
   | { type: "app.delete"; appId: string }
+  | { type: "layout.replace"; layout: LauncherLayoutLike; editedAt?: number }
   | { type: "layout.place"; item: Omit<SyncV2LayoutItem, "rev"> }
   | { type: "layout.hide"; itemId: string }
   | { type: "layout.deleteItem"; itemId: string };
@@ -93,6 +100,7 @@ export type LauncherLayoutLike = {
   folders?: Array<{ id: string; title?: string; childIds?: string[] }>;
   gridColumns?: number;
   updatedAt?: number;
+  editedAt?: number;
 };
 
 export type SyncV2LocalSnapshot = {
@@ -148,6 +156,9 @@ export function createEmptyState(): SyncV2State {
     layout: {
       items: {},
       itemTombstones: {},
+      editedAt: 0,
+      editedDeviceId: "",
+      rev: { counter: 0, deviceId: "" },
     },
   };
 }
@@ -198,6 +209,7 @@ export function ensureState(value: unknown): SyncV2State {
     layout: {
       items: readLayoutItemMap(state.layout?.items),
       itemTombstones: state.layout?.itemTombstones || {},
+      ...readLayoutMetadata(state.layout, readLayoutItemMap(state.layout?.items), state.layout?.itemTombstones || {}),
     },
   });
 }
@@ -225,8 +237,9 @@ function sanitizeState(state: SyncV2State): SyncV2State {
   });
 
   Object.keys(clean.layout.itemTombstones).forEach((itemId) => {
-    if (itemId.startsWith("app:")) delete clean.layout.itemTombstones[itemId];
+    delete clean.layout.items[itemId];
   });
+  clean.layout.itemTombstones = {};
 
   Object.entries(clean.layout.items).forEach(([itemId, item]) => {
     if (item.container === null) {
@@ -241,6 +254,9 @@ function sanitizeState(state: SyncV2State): SyncV2State {
   });
 
   compactStateTombstones(clean);
+  clean.layout.editedAt = normalizeTimestamp(clean.layout.editedAt);
+  clean.layout.editedDeviceId = clean.layout.editedDeviceId || clean.layout.rev.deviceId || "";
+  clean.layout.rev = normalizeRevision(clean.layout.rev);
 
   return clean;
 }
@@ -401,20 +417,10 @@ function appendWebAppSnapshotOperations(store: SyncV2Store, webApps: WebAppRecor
 }
 
 export function appendLayoutSnapshotOperations(store: SyncV2Store, layout: LauncherLayoutLike): SyncV2Store {
-  let next = store;
-  const placements = layoutPlacements(layout);
-  placements.forEach((item) => {
-    const current = next.state.layout.items[item.id];
-    if (!current || layoutItemChanged(current, item)) {
-      next = appendOperation(next, { type: "layout.place", item });
-    }
-  });
-  Object.values(next.state.layout.items).forEach((item) => {
-    if (!placements.has(item.id) && item.kind !== "app" && !next.state.layout.itemTombstones[item.id]) {
-      next = appendOperation(next, { type: "layout.deleteItem", itemId: item.id });
-    }
-  });
-  return next;
+  const editedAt = layoutEditedAt(layout);
+  if (!editedAt || editedAt <= layoutEditedAt(store.state.layout)) return store;
+  if (!layoutDocumentChanged(layoutFromState(store.state), layout)) return store;
+  return appendOperation(store, { type: "layout.replace", layout: { ...layout, editedAt, updatedAt: editedAt }, editedAt });
 }
 
 export function activeBookmarksFromState(state: SyncV2State): BookmarkRecord[] {
@@ -472,7 +478,8 @@ export function layoutFromState(state: SyncV2State, fallbackGridColumns = 4): La
     dock,
     folders,
     gridColumns: fallbackGridColumns,
-    updatedAt: Date.now(),
+    editedAt: clean.layout.editedAt || undefined,
+    updatedAt: clean.layout.editedAt || undefined,
   };
 }
 
@@ -623,14 +630,7 @@ function mergeState(leftState: SyncV2State, rightState: SyncV2State): SyncV2Stat
     delete apps[appId];
   });
 
-  const itemTombstones = mergeLwwMap(left.layout.itemTombstones, right.layout.itemTombstones);
-  Object.keys(itemTombstones).forEach((itemId) => {
-    if (itemId.startsWith("app:")) delete itemTombstones[itemId];
-  });
-  const items = mergeLwwMap(left.layout.items, right.layout.items);
-  Object.keys(itemTombstones).forEach((itemId) => {
-    delete items[itemId];
-  });
+  const layout = pickLayoutState(left.layout, right.layout);
 
   return sanitizeState({
     schemaVersion: SYNC_V2_SCHEMA_VERSION,
@@ -638,10 +638,7 @@ function mergeState(leftState: SyncV2State, rightState: SyncV2State): SyncV2Stat
     bookmarkTombstones,
     apps,
     appTombstones,
-    layout: {
-      items,
-      itemTombstones,
-    },
+    layout,
   });
 }
 
@@ -661,6 +658,119 @@ function pickLww<T extends { rev?: Revision }>(left?: T, right?: T): T | undefin
   if (order > 0) return cloneJson(left);
   if (order < 0) return cloneJson(right);
   return canonicalJson(left) >= canonicalJson(right) ? cloneJson(left) : cloneJson(right);
+}
+
+function pickLayoutState(left: SyncV2LayoutState, right: SyncV2LayoutState): SyncV2LayoutState {
+  const order = compareLayoutStates(left, right);
+  if (order > 0) return cloneJson(left);
+  if (order < 0) return cloneJson(right);
+  return canonicalJson(left) >= canonicalJson(right) ? cloneJson(left) : cloneJson(right);
+}
+
+function compareLayoutStates(left: SyncV2LayoutState, right: SyncV2LayoutState): number {
+  const leftEditedAt = layoutEditedAt(left);
+  const rightEditedAt = layoutEditedAt(right);
+  if (leftEditedAt !== rightEditedAt) return leftEditedAt < rightEditedAt ? -1 : 1;
+  return compareRevision(left.rev, right.rev);
+}
+
+function layoutEditedAt(layout: { editedAt?: number; updatedAt?: number } | null | undefined): number {
+  return normalizeTimestamp(layout?.editedAt);
+}
+
+function layoutDocumentChanged(left: LauncherLayoutLike, right: LauncherLayoutLike): boolean {
+  return canonicalJson(layoutDocumentSignature(left)) !== canonicalJson(layoutDocumentSignature(right));
+}
+
+function layoutDocumentSignature(layout: LauncherLayoutLike): unknown {
+  return {
+    cells: layout.cells || [],
+    dock: layout.dock || [],
+    folders: layout.folders || [],
+    gridColumns: layout.gridColumns || 4,
+  };
+}
+
+function readLayoutMetadata(
+  rawLayout: unknown,
+  items: Record<string, SyncV2LayoutItem>,
+  itemTombstones: unknown,
+): Pick<SyncV2LayoutState, "editedAt" | "editedDeviceId" | "rev"> {
+  const source = rawLayout && typeof rawLayout === "object" && !Array.isArray(rawLayout)
+    ? rawLayout as Record<string, unknown>
+    : {};
+  const rawRev = normalizeRevision(source.rev);
+  const rev = rawRev.counter > 0 || rawRev.deviceId
+    ? rawRev
+    : maxLayoutRevision(items, readRecordMap<SyncV2Tombstone>(itemTombstones));
+  const editedAt = normalizeTimestamp(source.editedAt) ||
+    (revisionLooksLikeEpochMs(rev.counter) ? rev.counter : 0);
+  const editedDeviceId = stringValue(source.editedDeviceId) || stringValue(source.deviceId) || rev.deviceId || "";
+  return { editedAt, editedDeviceId, rev };
+}
+
+function layoutStateFromLauncherLayout(
+  layout: LauncherLayoutLike,
+  rev: Revision,
+  deviceId: string,
+  editedAt: number,
+): SyncV2LayoutState | null {
+  const normalizedEditedAt = normalizeTimestamp(editedAt);
+  if (!normalizedEditedAt) return null;
+  const items: Record<string, SyncV2LayoutItem> = {};
+  layoutPlacements(layout).forEach((item) => {
+    items[item.id] = { ...item, rev };
+  });
+  return {
+    items,
+    itemTombstones: {},
+    editedAt: normalizedEditedAt,
+    editedDeviceId: deviceId || rev.deviceId,
+    rev,
+  };
+}
+
+function markLayoutEdited(layout: SyncV2LayoutState, rev: Revision, deviceId: string, editedAt: number): void {
+  layout.itemTombstones = {};
+  layout.editedAt = normalizeTimestamp(editedAt);
+  layout.editedDeviceId = deviceId || rev.deviceId;
+  layout.rev = rev;
+}
+
+function maxLayoutRevision(
+  items: Record<string, SyncV2LayoutItem>,
+  tombstones: Record<string, SyncV2Tombstone>,
+): Revision {
+  let result: Revision = { counter: 0, deviceId: "" };
+  const visit = (record?: { rev?: Revision }) => {
+    const rev = normalizeRevision(record?.rev);
+    if (compareRevision(rev, result) > 0) result = rev;
+  };
+  Object.values(items || {}).forEach(visit);
+  Object.values(tombstones || {}).forEach(visit);
+  return result;
+}
+
+function normalizeRevision(value: unknown): Revision {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { counter: 0, deviceId: "" };
+  const source = value as Partial<Revision>;
+  return {
+    counter: Number.isSafeInteger(source.counter) ? Math.max(0, Number(source.counter)) : 0,
+    deviceId: typeof source.deviceId === "string" ? source.deviceId : "",
+  };
+}
+
+function normalizeTimestamp(value: unknown): number {
+  const timestamp = Number(value);
+  return Number.isFinite(timestamp) && timestamp > 0 ? Math.floor(timestamp) : 0;
+}
+
+function revisionLooksLikeEpochMs(value: number): boolean {
+  return Number.isFinite(value) && value >= 1_000_000_000_000;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function compactStateTombstones(state: SyncV2State): void {
@@ -760,7 +870,10 @@ function stateToRemoteFiles(state: SyncV2State): Record<string, unknown> {
     },
     [LAUNCHER_FILE]: {
       schemaVersion: SYNC_V2_SCHEMA_VERSION,
-      layout: clean.layout,
+      editedAt: clean.layout.editedAt,
+      deviceId: clean.layout.editedDeviceId || clean.layout.rev.deviceId,
+      rev: clean.layout.rev,
+      layout: layoutFromState(clean),
     },
     [MANIFEST_FILE]: {
       schemaVersion: SYNC_V2_SCHEMA_VERSION,
@@ -778,7 +891,8 @@ function stateToRemoteFiles(state: SyncV2State): Record<string, unknown> {
         webApps: Object.keys(clean.apps).length,
         appTombstones: Object.keys(clean.appTombstones).length,
         layoutItems: Object.keys(clean.layout.items).length,
-        layoutItemTombstones: Object.keys(clean.layout.itemTombstones).length,
+        layoutItemTombstones: 0,
+        layoutEditedAt: clean.layout.editedAt,
       },
     },
   };
@@ -831,18 +945,40 @@ function mergeWebAppFileIntoState(state: SyncV2State, value: unknown): void {
 
 function mergeLauncherFileIntoState(state: SyncV2State, value: unknown): void {
   if (!value || typeof value !== "object") return;
+  const layout = readLauncherLayoutState(value);
+  if (layout) state.layout = pickLayoutState(state.layout, layout);
+}
+
+function readLauncherLayoutState(value: unknown): SyncV2LayoutState | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const root = value as Record<string, unknown>;
   const layout = root.layout;
   if (layout && typeof layout === "object" && !Array.isArray(layout)) {
-    const clean = layout as Partial<SyncV2State["layout"]> & { tombstones?: unknown };
-    mergeLwwMapInto(state.layout.items, readLayoutItemMap(clean.items));
-    mergeLwwMapInto(state.layout.itemTombstones, readRecordMap<SyncV2Tombstone>(clean.itemTombstones || clean.tombstones));
-    return;
+    const source = layout as Record<string, unknown>;
+    if (source.items || source.itemTombstones || source.tombstones) {
+      const items = readLayoutItemMap(source.items);
+      const itemTombstones = readRecordMap<SyncV2Tombstone>(source.itemTombstones || source.tombstones);
+      return {
+        items,
+        itemTombstones,
+        ...readLayoutMetadata({ ...source, editedAt: source.editedAt || root.editedAt, deviceId: source.editedDeviceId || source.deviceId || root.deviceId, rev: source.rev || root.rev }, items, itemTombstones),
+      };
+    }
+    const rootRev = normalizeRevision(root.rev);
+    const editedAt = normalizeTimestamp(root.editedAt) || normalizeTimestamp(source.editedAt) || normalizeTimestamp(source.updatedAt);
+    const rev = rootRev.counter > 0 || rootRev.deviceId
+      ? rootRev
+      : {
+          counter: revisionLooksLikeEpochMs(editedAt) ? editedAt : 0,
+          deviceId: stringValue(root.deviceId) || stringValue(source.editedDeviceId) || stringValue(source.deviceId) || "legacy",
+        };
+    return layoutStateFromLauncherLayout(source as LauncherLayoutLike, rev, rev.deviceId, editedAt);
   }
   const rev = revisionFromLegacy(root);
-  layoutPlacements(root as LauncherLayoutLike).forEach((item) => {
-    state.layout.items[item.id] = { ...item, rev };
-  });
+  const editedAt = normalizeTimestamp((root as LauncherLayoutLike).editedAt) ||
+    normalizeTimestamp((root as LauncherLayoutLike).updatedAt) ||
+    (revisionLooksLikeEpochMs(rev.counter) ? rev.counter : 0);
+  return layoutStateFromLauncherLayout(root as LauncherLayoutLike, rev, rev.deviceId, editedAt);
 }
 
 function mergeLwwMapInto<T extends { rev?: Revision }>(target: Record<string, T>, source: Record<string, T>): void {
@@ -972,8 +1108,7 @@ function countRemoteRecords(state: SyncV2State): number {
     Object.keys(clean.bookmarkTombstones).length +
     Object.keys(clean.apps).length +
     Object.keys(clean.appTombstones).length +
-    Object.keys(clean.layout.items).length +
-    Object.keys(clean.layout.itemTombstones).length;
+    Object.keys(clean.layout.items).length;
 }
 
 function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): void {
@@ -1051,38 +1186,46 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     delete state.layout.itemTombstones[`app:${id}`];
     return;
   }
+  if (operation.type === "layout.replace") {
+    const nextLayout = layoutStateFromLauncherLayout(
+      operation.layout,
+      rev,
+      operation.deviceId,
+      normalizeTimestamp(operation.editedAt) || operation.createdAt,
+    );
+    if (!nextLayout) return;
+    if (compareLayoutStates(state.layout, nextLayout) > 0) return;
+    state.layout = nextLayout;
+    return;
+  }
   if (operation.type === "layout.place") {
+    if (layoutEditedAt(state.layout) > operation.createdAt) return;
     const item = normalizeLayoutItemInput(operation.item);
     if (!item) return;
-    if (!item.id.startsWith("app:") && state.layout.itemTombstones[item.id]) return;
     if (item.kind === "app" && (!item.appId || !state.apps[item.appId] || state.appTombstones[item.appId])) return;
     const current = state.layout.items[item.id];
     if (current && compareRevision(current.rev, rev) > 0) return;
     state.layout.items[item.id] = { ...item, rev };
+    markLayoutEdited(state.layout, rev, operation.deviceId, operation.createdAt);
     return;
   }
   if (operation.type === "layout.hide") {
+    if (layoutEditedAt(state.layout) > operation.createdAt) return;
     const itemId = operation.itemId.trim();
-    if (!itemId || state.layout.itemTombstones[itemId]) return;
+    if (!itemId) return;
     const current = state.layout.items[itemId];
     if (current && compareRevision(current.rev, rev) > 0) return;
     delete state.layout.items[itemId];
-    if (!itemId.startsWith("app:")) {
-      state.layout.itemTombstones[itemId] = { deletedAt: new Date(operation.createdAt).toISOString(), rev };
-    }
+    markLayoutEdited(state.layout, rev, operation.deviceId, operation.createdAt);
     return;
   }
   if (operation.type === "layout.deleteItem") {
+    if (layoutEditedAt(state.layout) > operation.createdAt) return;
     const itemId = operation.itemId.trim();
     if (!itemId) return;
     delete state.layout.items[itemId];
-    if (itemId.startsWith("app:")) {
-      delete state.layout.itemTombstones[itemId];
-      return;
-    }
-    if (!state.layout.itemTombstones[itemId] || compareRevision(state.layout.itemTombstones[itemId].rev, rev) < 0) {
-      state.layout.itemTombstones[itemId] = { deletedAt: new Date(operation.createdAt).toISOString(), rev };
-    }
+    delete state.layout.itemTombstones[itemId];
+    markLayoutEdited(state.layout, rev, operation.deviceId, operation.createdAt);
   }
 }
 
@@ -1130,6 +1273,7 @@ function maxStateCounter(state: SyncV2State): number {
   Object.values(state.appTombstones).forEach(visit);
   Object.values(state.layout.items).forEach(visit);
   Object.values(state.layout.itemTombstones).forEach(visit);
+  visit(state.layout);
   return max;
 }
 
