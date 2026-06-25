@@ -52,9 +52,9 @@ import com.dadigua.hyperbrowser.extensions.ExtensionMenuActionState
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
 import kotlin.math.roundToInt
 
-private val ToolbarActionBarHeight = 48.dp
-private val ToolbarActionButtonSize = 40.dp
-private val ToolbarAddressBarHeight = 44.dp
+private val ToolbarActionBarHeight = 44.dp
+private val ToolbarActionButtonSize = 36.dp
+private val ToolbarAddressBarHeight = 40.dp
 private val ToolbarActionIconSize = 24.sp
 
 internal fun browserAddressText(url: String, input: String, placeholder: String = ""): String {
@@ -101,6 +101,8 @@ internal fun BrowserToolbar(
     var extensionsExpanded by remember { mutableStateOf(false) }
     val placeholder = stringResource(R.string.browser_placeholder_search_or_url)
     val currentAddress = browserAddressText(pageState.url, input, placeholder)
+    val hasCurrentAddress = currentAddress.isNotBlank() && currentAddress != placeholder
+    val currentTitle = pageState.title.trim().ifBlank { currentAddress.ifBlank { placeholder } }
     val normalizedCollapseFraction = collapseFraction.coerceIn(0f, 1f)
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density)
@@ -116,7 +118,7 @@ internal fun BrowserToolbar(
         Row(
             modifier = Modifier.height(ToolbarActionBarHeight),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             IconButton(onClick = onHome, modifier = Modifier.size(ToolbarActionButtonSize)) {
                 Text("⌂", fontSize = ToolbarActionIconSize, color = Color(0xFF202124))
@@ -128,21 +130,41 @@ internal fun BrowserToolbar(
                     .clip(RoundedCornerShape(28.dp))
                     .background(Color(0xFFE9EAF1))
                     .clickable(onClick = onOpenSearchPage)
-                    .padding(horizontal = 14.dp),
+                    .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AddressSecurityIndicator(
                     level = addressSecurityLevel,
-                    modifier = Modifier.width(26.dp)
+                    modifier = Modifier.width(22.dp)
                 )
-                Text(
-                    text = currentAddress.ifBlank { placeholder },
+                Column(
                     modifier = Modifier.weight(1f),
-                    color = if (currentAddress.isBlank()) Color(0xFF6F737B) else Color(0xFF202124),
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = currentTitle,
+                        color = if (hasCurrentAddress) Color(0xFF202124) else Color(0xFF6F737B),
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontSize = 13.sp,
+                            lineHeight = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (hasCurrentAddress) {
+                        Text(
+                            text = currentAddress,
+                            color = Color(0xFF5F6368),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 11.sp,
+                                lineHeight = 13.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
             IconButton(onClick = onNewTab, modifier = Modifier.size(ToolbarActionButtonSize)) {
                 Text("+", fontSize = ToolbarActionIconSize, color = Color(0xFF202124))
@@ -201,8 +223,8 @@ internal fun BrowserToolbar(
             .collapsibleToolbarLayout(normalizedCollapseFraction, toolbarPosition)
             .then(toolbarPadding)
             .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         toolbarRow()
     }
