@@ -169,11 +169,9 @@ data class SavedBrowserTabs(
 class BrowserProfileStore(context: Context) {
     private val historyFile = File(context.filesDir, "browser_history.json")
     private val bookmarksFile = File(context.filesDir, "bookmarks.json")
-    private val legacyBookmarksFile = File(context.filesDir, "browser_bookmarks.json")
     private val settingsFile = File(context.filesDir, SETTINGS_FILE_NAME)
     private val tabsFile = File(context.filesDir, "browser_tabs.json")
     private val launcherLayoutFile = File(context.filesDir, "launcher.json")
-    private val legacyLauncherLayoutFile = File(context.filesDir, "launcher_layout.json")
     private val tabSessionStateDir = File(context.filesDir, "browser_tab_states")
     private val tabThumbnailDir = File(context.filesDir, "browser_tab_thumbnails")
     private val faviconStore = FaviconRepository(context)
@@ -230,7 +228,7 @@ class BrowserProfileStore(context: Context) {
     fun loadLauncherLayout(): JSONObject? {
         val layout = readJSONObject(launcherLayoutFile)
         if (layout != null) return launcherJsonToUiLayout(layout)
-        return readJSONObject(legacyLauncherLayoutFile)
+        return null
     }
 
     fun saveLauncherLayout(layout: JSONObject) {
@@ -547,7 +545,6 @@ class BrowserProfileStore(context: Context) {
     private fun loadBookmarks(): List<BrowserBookmark> {
         val loaded = when {
             bookmarksFile.exists() -> loadBookmarksFromSyncFile(bookmarksFile)
-            legacyBookmarksFile.exists() -> loadBookmarksFromLegacyFile(legacyBookmarksFile)
             else -> emptyList()
         }
         val deduped = loaded.distinctBy { it.url }
@@ -557,10 +554,8 @@ class BrowserProfileStore(context: Context) {
 
     private fun loadBookmarksFromSyncFile(file: File): List<BrowserBookmark> =
         runCatching {
-            val raw = file.readText()
-            if (raw.trimStart().startsWith("[")) return loadBookmarksFromLegacyJson(JSONArray(raw))
-            val root = JSONObject(raw)
-            val records = root.optJSONObject("bookmarks") ?: root
+            val root = JSONObject(file.readText())
+            val records = root.optJSONObject("bookmarks") ?: JSONObject()
             buildList {
                 val keys = records.keys()
                 while (keys.hasNext()) {
@@ -583,26 +578,6 @@ class BrowserProfileStore(context: Context) {
                 }
             }
         }.getOrDefault(emptyList())
-
-    private fun loadBookmarksFromLegacyFile(file: File): List<BrowserBookmark> =
-        runCatching { loadBookmarksFromLegacyJson(JSONArray(file.readText())) }.getOrDefault(emptyList())
-
-    private fun loadBookmarksFromLegacyJson(array: JSONArray): List<BrowserBookmark> =
-        buildList {
-            for (index in 0 until array.length()) {
-                val item = array.optJSONObject(index) ?: continue
-                val url = normalizeBookmarkUrl(item.optString("url"))
-                if (url.isBlank()) continue
-                add(
-                    BrowserBookmark(
-                        url = url,
-                        title = item.optString("title").trim().ifBlank { url },
-                        createdAt = item.optLong("createdAt"),
-                        iconPath = item.optCleanString("iconPath")
-                    )
-                )
-            }
-        }
 
     private fun loadSettings(): BrowserSettings {
         return loadBrowserSettings(settingsFile)

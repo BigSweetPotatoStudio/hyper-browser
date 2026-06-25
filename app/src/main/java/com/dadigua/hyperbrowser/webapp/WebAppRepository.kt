@@ -21,7 +21,6 @@ import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.ui.webapp.WebAppActivity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.ByteArrayOutputStream
@@ -31,7 +30,6 @@ class WebAppRepository(
     private val context: Context
 ) {
     private val storeFile = File(context.filesDir, "webapps.json")
-    private val legacyStoreFile = File(context.filesDir, "web_apps.json")
     private val faviconStore = FaviconRepository(context)
     private val state = MutableStateFlow(load())
 
@@ -362,7 +360,6 @@ class WebAppRepository(
     private fun load(): List<WebAppDefinition> {
         val items = when {
             storeFile.exists() -> loadFromSyncFile(storeFile)
-            legacyStoreFile.exists() -> loadFromLegacyFile(legacyStoreFile)
             else -> emptyList()
         }.sortedByDescending { it.lastOpenedAt }
         if (!storeFile.exists() && items.isNotEmpty()) {
@@ -373,10 +370,8 @@ class WebAppRepository(
 
     private fun loadFromSyncFile(file: File): List<WebAppDefinition> =
         runCatching {
-            val raw = file.readText()
-            if (raw.trimStart().startsWith("[")) return loadFromLegacyJson(JSONArray(raw))
-            val root = JSONObject(raw)
-            val apps = root.optJSONObject("apps") ?: root
+            val root = JSONObject(file.readText())
+            val apps = root.optJSONObject("apps") ?: JSONObject()
             buildList {
                 val keys = apps.keys()
                 while (keys.hasNext()) {
@@ -406,32 +401,6 @@ class WebAppRepository(
                 }
             }
         }.getOrDefault(emptyList())
-
-    private fun loadFromLegacyFile(file: File): List<WebAppDefinition> =
-        runCatching { loadFromLegacyJson(JSONArray(file.readText())) }.getOrDefault(emptyList())
-
-    private fun loadFromLegacyJson(array: JSONArray): List<WebAppDefinition> =
-        buildList {
-            for (index in 0 until array.length()) {
-                val item = array.optJSONObject(index) ?: continue
-                val startUrl = item.optString("startUrl").trim()
-                if (startUrl.isBlank()) continue
-                add(
-                    WebAppDefinition(
-                        id = item.optString("id").trim().ifBlank {
-                            UUID.nameUUIDFromBytes(startUrl.toByteArray(Charsets.UTF_8)).toString()
-                        },
-                        name = item.optString("name").trim().ifBlank { Uri.parse(startUrl).host ?: "WebApp" },
-                        startUrl = startUrl,
-                        iconPath = siteModeIconPath(item.optString("iconPath").ifBlank { null }),
-                        themeColor = item.optInt("themeColor", Color.rgb(18, 109, 106)),
-                        displayMode = item.optString("displayMode", "standalone"),
-                        createdAt = item.optLong("createdAt"),
-                        lastOpenedAt = item.optLong("lastOpenedAt")
-                    )
-                )
-            }
-        }
 
     private fun webAppsSyncJson(items: List<WebAppDefinition>): JSONObject {
         val now = System.currentTimeMillis()
