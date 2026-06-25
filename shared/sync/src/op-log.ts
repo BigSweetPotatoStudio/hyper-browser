@@ -901,7 +901,6 @@ function bookmarksJsonRecords(bookmarks: Record<string, BookmarkSyncRecord>): Re
       title: bookmark.title,
       createdAt: bookmark.createdAt,
       updatedAt: bookmark.updatedAt,
-      ...(bookmark.iconDataUrl ? { iconDataUrl: bookmark.iconDataUrl } : {}),
       rev: bookmark.rev,
     };
   });
@@ -1055,7 +1054,6 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
       title: bookmark.title,
       createdAt: bookmark.createdAt,
       updatedAt: bookmark.updatedAt || operation.createdAt,
-      iconDataUrl: bookmark.iconDataUrl,
       rev: recordRev,
     };
     tombstoneKeys.forEach((key) => {
@@ -1183,7 +1181,6 @@ function normalizeStoredBookmarkRecord(raw: unknown, fallbackId = ""): BookmarkS
     title: record.title,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
-    iconDataUrl: record.iconDataUrl,
     rev: normalizeRevision(source.rev),
   };
 }
@@ -1223,7 +1220,6 @@ function normalizeBookmarkRecordInput(input: Partial<BookmarkRecord>, _state?: S
     title,
     createdAt: Number(input.createdAt) || Number(input.updatedAt) || Date.now(),
     updatedAt: Number(input.updatedAt) || Number(input.createdAt) || Date.now(),
-    iconDataUrl: cleanOptionalString(input.iconDataUrl) || null,
   };
 }
 
@@ -1368,8 +1364,7 @@ function compareBookmarkRecords(left: BookmarkSyncRecord, right: BookmarkSyncRec
 
 function bookmarkFieldsChanged(left: BookmarkSyncRecord, right: BookmarkRecord): boolean {
   return left.url !== right.url ||
-    left.title !== right.title ||
-    (left.iconDataUrl || null) !== (right.iconDataUrl || null);
+    left.title !== right.title;
 }
 
 function appFieldsChanged(left: WebAppSyncRecord, right: WebAppRecord): boolean {

@@ -76,7 +76,7 @@ export type BrowserSyncService = {
   deleteRemoteWebApp: (input: string | Partial<WebAppRecord> | null | undefined) => Promise<WebAppRecord[]>;
   loadLauncherLayout: () => Promise<SyncV2LocalSnapshot["layout"]>;
   saveLauncherLayout: (layout: SyncV2LocalSnapshot["layout"]) => Promise<void>;
-  addBookmarkToSyncFolder: (input: { title: string; url: string; iconDataUrl?: string | null }) => Promise<BrowserSyncResult>;
+  addBookmarkToSyncFolder: (input: { title: string; url: string }) => Promise<BrowserSyncResult>;
 };
 
 export type BrowserSyncServiceOptions = {
@@ -219,7 +219,7 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     return activeWebAppsFromState(await loadStateFiles());
   }
 
-  async function addBookmarkToSyncFolder(input: { title: string; url: string; iconDataUrl?: string | null }): Promise<BrowserSyncResult> {
+  async function addBookmarkToSyncFolder(input: { title: string; url: string }): Promise<BrowserSyncResult> {
     let settings = await options.loadSettings();
     settings = await ensureBookmarkFolder(settings);
     const url = identityKeyForUrl(input.url.trim());
@@ -239,7 +239,6 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
         title,
         createdAt: existing?.createdAt || now,
         updatedAt: now,
-        iconDataUrl: input.iconDataUrl ?? existing?.iconDataUrl ?? null,
       };
       const next = appendOperation(current, currentState, { type: "bookmark.upsert", bookmark });
       await options.saveSyncV2Store(next.store);
@@ -412,7 +411,6 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
         title: node.title?.trim() || existing?.title || hostLabel(url),
         createdAt: existing?.createdAt || now,
         updatedAt: now,
-        iconDataUrl: existing?.iconDataUrl ?? null,
       });
     }
     return [...selected.values()];

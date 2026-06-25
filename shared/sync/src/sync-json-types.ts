@@ -26,7 +26,6 @@ export type BookmarkSyncRecord = {
   title: string;
   createdAt: number;
   updatedAt: number;
-  iconDataUrl?: string | null;
   // 书签本条记录的最后修改版本。
   rev: SyncRevision;
 };

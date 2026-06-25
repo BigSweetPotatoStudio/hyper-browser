@@ -208,10 +208,6 @@ class BrowserProfileStore(context: Context) {
     fun launcherSyncJson(): JSONObject? =
         readJSONObject(launcherLayoutFile)?.let { normalizeLauncherJson(it) }
 
-    fun saveLauncherLayout(layout: JSONObject) {
-        launcherLayoutFile.writeText(normalizeLauncherJson(layout).toString())
-    }
-
     fun saveLauncherSyncJson(json: JSONObject) {
         launcherLayoutFile.writeText(json.deepCopy().toString())
     }
@@ -476,8 +472,6 @@ class BrowserProfileStore(context: Context) {
                     val item = records.optJSONObject(key) ?: continue
                     val url = normalizeBookmarkUrl(item.optString("url").ifBlank { key })
                     if (url.isBlank()) continue
-                    val iconPath = item.optCleanString("iconPath")
-                        ?: faviconStore.saveIconDataUrl(url, item.optCleanString("iconDataUrl"))
                     add(
                         BrowserBookmark(
                             url = url,
@@ -485,7 +479,7 @@ class BrowserProfileStore(context: Context) {
                             createdAt = item.optLong("createdAt").takeIf { it > 0 }
                                 ?: item.optLong("updatedAt").takeIf { it > 0 }
                                 ?: System.currentTimeMillis(),
-                            iconPath = iconPath
+                            iconPath = null
                         )
                     )
                 }

@@ -282,7 +282,6 @@ private fun BrowserScreen(
     fun saveBookmarkThroughBackground(
         url: String,
         title: String,
-        iconPath: String? = null,
         onFailure: (() -> Unit)? = null
     ) {
         val cleanUrl = url.trim()
@@ -290,9 +289,6 @@ private fun BrowserScreen(
         val payload = JSONObject()
             .put("title", title.ifBlank { cleanUrl })
             .put("url", cleanUrl)
-        iconPath?.takeIf { it.isNotBlank() }
-            ?.let { faviconStore.iconDataUrl(it, cleanUrl) }
-            ?.let { payload.put("iconDataUrl", it) }
         HyperBridge.sendBackgroundCommand(context, "bookmarks.save", payload)
             .accept(
                 { },
@@ -630,13 +626,6 @@ private fun BrowserScreen(
             "data.launcherLayout" -> okData(
                 JSONObject().put("layout", profileStore.loadLauncherLayout() ?: JSONObject.NULL)
             )
-            "launcher.layout.save" -> {
-                val rawLayout = payload.optString("layout")
-                val layout = runCatching { JSONObject(rawLayout) }.getOrNull()
-                    ?: return bridgeError("Invalid launcher layout.")
-                profileStore.saveLauncherLayout(layout)
-                ok()
-            }
             "search.submit" -> {
                 pendingHyperCommand = HyperCommand.Search.Submit(payload.optString("query"))
                 ok()
@@ -1831,7 +1820,7 @@ private fun BrowserScreen(
                                     optimisticBookmarkState = currentPageUrl to currentPageBookmarked
                                 }
                             } else {
-                                saveBookmarkThroughBackground(currentPageUrl, pageState.title, currentIconPath) {
+                                saveBookmarkThroughBackground(currentPageUrl, pageState.title) {
                                     optimisticBookmarkState = currentPageUrl to currentPageBookmarked
                                 }
                             }
@@ -2006,16 +1995,6 @@ private fun addWebAppToLauncherLayout(context: Context, id: String, name: String
         .accept(
             { },
             { throwable -> Log.w(BROWSER_ACTIVITY_TAG, "Failed to add WebApp to launcher layout", throwable) }
-        )
-}
-
-private fun removeWebAppFromLauncherLayout(context: Context, webAppId: String) {
-    val cleanId = webAppId.trim()
-    if (cleanId.isBlank()) return
-    HyperBridge.sendBackgroundCommand(context, "launcher.layout.removeWebApp", JSONObject().put("id", cleanId))
-        .accept(
-            { },
-            { throwable -> Log.w(BROWSER_ACTIVITY_TAG, "Failed to remove WebApp from launcher layout", throwable) }
         )
 }
 

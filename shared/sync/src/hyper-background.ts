@@ -105,7 +105,6 @@ export function createHyperBackgroundCommandHandler<TSyncResult extends SyncBack
     return {
       title: page.title,
       url: page.url,
-      ...(page.iconDataUrl ? { iconDataUrl: page.iconDataUrl } : {}),
     };
   }
 
