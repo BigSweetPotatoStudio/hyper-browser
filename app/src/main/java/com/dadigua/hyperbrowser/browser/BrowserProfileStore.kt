@@ -168,12 +168,15 @@ data class SavedBrowserTabs(
 
 class BrowserProfileStore(context: Context) {
     private val historyFile = File(context.filesDir, "browser_history.json")
-    private val bookmarksFile = File(context.filesDir, "browser_bookmarks.json")
+    private val bookmarksFile = File(context.filesDir, "bookmarks.json")
+    private val legacyBookmarksFile = File(context.filesDir, "browser_bookmarks.json")
     private val settingsFile = File(context.filesDir, SETTINGS_FILE_NAME)
     private val tabsFile = File(context.filesDir, "browser_tabs.json")
-    private val launcherLayoutFile = File(context.filesDir, "launcher_layout.json")
+    private val launcherLayoutFile = File(context.filesDir, "launcher.json")
+    private val legacyLauncherLayoutFile = File(context.filesDir, "launcher_layout.json")
     private val tabSessionStateDir = File(context.filesDir, "browser_tab_states")
     private val tabThumbnailDir = File(context.filesDir, "browser_tab_thumbnails")
+    private val faviconStore = FaviconRepository(context)
     private val historyState = MutableStateFlow(loadHistory())
     private val bookmarksState = MutableStateFlow(loadBookmarks())
     private val settingsState = MutableStateFlow(loadSettings())
@@ -181,6 +184,16 @@ class BrowserProfileStore(context: Context) {
     fun observeHistory(): StateFlow<List<BrowserHistoryEntry>> = historyState
     fun observeBookmarks(): StateFlow<List<BrowserBookmark>> = bookmarksState
     fun observeSettings(): StateFlow<BrowserSettings> = settingsState
+
+    fun bookmarksSyncJson(): JSONObject {
+        readJSONObject(bookmarksFile)?.let { return it }
+        saveBookmarks(bookmarksState.value)
+        return readJSONObject(bookmarksFile)
+            ?: JSONObject()
+                .put("schemaVersion", 2)
+                .put("bookmarks", JSONObject())
+                .put("bookmarkTombstones", JSONObject())
+    }
 
     fun mergeBookmarks(imported: List<BrowserBookmark>): Int {
         val current = bookmarksState.value.associateBy { normalizeBookmarkUrl(it.url) }
@@ -215,12 +228,18 @@ class BrowserProfileStore(context: Context) {
     }
 
     fun loadLauncherLayout(): JSONObject? {
-        if (!launcherLayoutFile.exists()) return null
-        return runCatching { JSONObject(launcherLayoutFile.readText()) }.getOrNull()
+        val layout = readJSONObject(launcherLayoutFile)
+        if (layout != null) return launcherJsonToUiLayout(layout)
+        return readJSONObject(legacyLauncherLayoutFile)
     }
 
     fun saveLauncherLayout(layout: JSONObject) {
-        launcherLayoutFile.writeText(layout.toString())
+        val stored = if (isLauncherJson(layout)) {
+            normalizeLauncherJson(layout)
+        } else {
+            uiLayoutToLauncherJson(layout, System.currentTimeMillis())
+        }
+        launcherLayoutFile.writeText(stored.toString())
     }
 
     fun loadTabSessionState(tabId: String): String? {
@@ -526,32 +545,64 @@ class BrowserProfileStore(context: Context) {
     }
 
     private fun loadBookmarks(): List<BrowserBookmark> {
-        if (!bookmarksFile.exists()) return emptyList()
-        return runCatching {
-            val array = JSONArray(bookmarksFile.readText())
-            val loaded = buildList {
-                for (index in 0 until array.length()) {
-                    val item = array.getJSONObject(index)
-                    val url = normalizeBookmarkUrl(item.optString("url"))
+        val loaded = when {
+            bookmarksFile.exists() -> loadBookmarksFromSyncFile(bookmarksFile)
+            legacyBookmarksFile.exists() -> loadBookmarksFromLegacyFile(legacyBookmarksFile)
+            else -> emptyList()
+        }
+        val deduped = loaded.distinctBy { it.url }
+        if (deduped != loaded || (!bookmarksFile.exists() && deduped.isNotEmpty())) saveBookmarks(deduped)
+        return deduped
+    }
+
+    private fun loadBookmarksFromSyncFile(file: File): List<BrowserBookmark> =
+        runCatching {
+            val raw = file.readText()
+            if (raw.trimStart().startsWith("[")) return loadBookmarksFromLegacyJson(JSONArray(raw))
+            val root = JSONObject(raw)
+            val records = root.optJSONObject("bookmarks") ?: root
+            buildList {
+                val keys = records.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val item = records.optJSONObject(key) ?: continue
+                    val url = normalizeBookmarkUrl(item.optString("url").ifBlank { key })
                     if (url.isBlank()) continue
-                    val title = item.optString("title").trim().ifBlank {
-                        url
-                    }
+                    val iconPath = item.optCleanString("iconPath")
+                        ?: faviconStore.saveIconDataUrl(url, item.optCleanString("iconDataUrl"))
                     add(
                         BrowserBookmark(
                             url = url,
-                            title = title,
-                            createdAt = item.optLong("createdAt"),
-                            iconPath = item.optCleanString("iconPath")
+                            title = item.optString("title").trim().ifBlank { url },
+                            createdAt = item.optLong("createdAt").takeIf { it > 0 }
+                                ?: item.optLong("updatedAt").takeIf { it > 0 }
+                                ?: System.currentTimeMillis(),
+                            iconPath = iconPath
                         )
                     )
                 }
             }
-            val deduped = loaded.distinctBy { it.url }
-            if (deduped != loaded) saveBookmarks(deduped)
-            deduped
         }.getOrDefault(emptyList())
-    }
+
+    private fun loadBookmarksFromLegacyFile(file: File): List<BrowserBookmark> =
+        runCatching { loadBookmarksFromLegacyJson(JSONArray(file.readText())) }.getOrDefault(emptyList())
+
+    private fun loadBookmarksFromLegacyJson(array: JSONArray): List<BrowserBookmark> =
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val url = normalizeBookmarkUrl(item.optString("url"))
+                if (url.isBlank()) continue
+                add(
+                    BrowserBookmark(
+                        url = url,
+                        title = item.optString("title").trim().ifBlank { url },
+                        createdAt = item.optLong("createdAt"),
+                        iconPath = item.optCleanString("iconPath")
+                    )
+                )
+            }
+        }
 
     private fun loadSettings(): BrowserSettings {
         return loadBrowserSettings(settingsFile)
@@ -572,17 +623,65 @@ class BrowserProfileStore(context: Context) {
     }
 
     private fun saveBookmarks(items: List<BrowserBookmark>) {
-        val array = JSONArray()
-        items.forEach {
-            array.put(
-                JSONObject()
-                    .put("url", it.url)
-                    .put("title", it.title)
-                    .put("createdAt", it.createdAt)
-                    .putCleanNullable("iconPath", it.iconPath)
-            )
+        val now = System.currentTimeMillis()
+        val existing = readJSONObject(bookmarksFile)
+        val existingBookmarks = existing?.optJSONObject("bookmarks") ?: JSONObject()
+        val tombstones = existing?.optJSONObject("bookmarkTombstones")?.deepCopy() ?: JSONObject()
+        val nextBookmarks = JSONObject()
+        val activeKeys = items.mapNotNull { normalizeBookmarkUrl(it.url).takeIf { url -> url.isNotBlank() } }.toSet()
+        val existingKeys = existingBookmarks.keys().asSequence().toList()
+
+        existingKeys.forEach { key ->
+            if (key !in activeKeys && !tombstones.has(key)) {
+                val rev = existingBookmarks.optJSONObject(key)?.optJSONObject("rev")
+                tombstones.put(
+                    key,
+                    JSONObject()
+                        .put("deletedAt", java.time.Instant.ofEpochMilli(now).toString())
+                        .put("rev", syncRevisionJson(now, rev?.optString("deviceId").orEmpty()))
+                )
+            }
         }
-        bookmarksFile.writeText(array.toString())
+
+        items.forEach { bookmark ->
+            val url = normalizeBookmarkUrl(bookmark.url)
+            if (url.isBlank()) return@forEach
+            val existingRecord = existingBookmarks.optJSONObject(url)
+            val iconDataUrl = faviconStore.iconDataUrl(bookmark.iconPath, url)
+            val title = bookmark.title.trim().ifBlank { url }
+            val createdAt = bookmark.createdAt.takeIf { it > 0 }
+                ?: existingRecord?.optLong("createdAt")?.takeIf { it > 0 }
+                ?: now
+            val changed = existingRecord == null ||
+                existingRecord.optString("url") != url ||
+                existingRecord.optString("title") != title ||
+                existingRecord.optCleanString("iconDataUrl") != iconDataUrl
+            val existingRev = existingRecord?.optJSONObject("rev")
+            val rev = if (changed) {
+                syncRevisionJson(now, existingRev?.optString("deviceId").orEmpty())
+            } else {
+                existingRev?.deepCopy() ?: syncRevisionJson(createdAt, "")
+            }
+            nextBookmarks.put(
+                url,
+                JSONObject()
+                    .put("url", url)
+                    .put("title", title)
+                    .put("createdAt", createdAt)
+                    .put("updatedAt", if (changed) now else existingRecord.optLong("updatedAt").takeIf { it > 0 } ?: createdAt)
+                    .putCleanNullable("iconDataUrl", iconDataUrl)
+                    .put("rev", rev)
+            )
+            tombstones.remove(url)
+        }
+
+        bookmarksFile.writeText(
+            JSONObject()
+                .put("schemaVersion", 2)
+                .put("bookmarks", nextBookmarks)
+                .put("bookmarkTombstones", tombstones)
+                .toString()
+        )
     }
 
     private fun saveSettings(settings: BrowserSettings) {
@@ -608,6 +707,203 @@ class BrowserProfileStore(context: Context) {
                 .put("privacySettingsVersion", CURRENT_PRIVACY_SETTINGS_VERSION)
                 .toString()
         )
+    }
+
+    private fun readJSONObject(file: File): JSONObject? {
+        if (!file.exists()) return null
+        return runCatching { JSONObject(file.readText()) }.getOrNull()
+    }
+
+    private fun JSONObject.deepCopy(): JSONObject =
+        JSONObject(toString())
+
+    private fun syncRevisionJson(counter: Long, deviceId: String): JSONObject =
+        JSONObject()
+            .put("counter", counter.coerceAtLeast(0L))
+            .put("deviceId", deviceId.trim())
+
+    private fun isLauncherJson(layout: JSONObject): Boolean =
+        layout.has("pages") || layout.has("rev") || launcherDockContainsCells(layout.optJSONArray("dock"))
+
+    private fun launcherDockContainsCells(dock: JSONArray?): Boolean =
+        dock != null && dock.length() > 0 && dock.opt(0) is JSONObject
+
+    private fun launcherJsonToUiLayout(layout: JSONObject): JSONObject {
+        if (!isLauncherJson(layout)) return layout
+        val clean = normalizeLauncherJson(layout)
+        val cells = JSONArray()
+        val pages = clean.optJSONArray("pages") ?: JSONArray()
+        for (pageIndex in 0 until pages.length()) {
+            val page = pages.optJSONObject(pageIndex) ?: continue
+            val pageCells = sortLauncherCells(page.optJSONArray("cells"))
+            for (cellIndex in 0 until pageCells.length()) {
+                val cell = pageCells.optJSONObject(cellIndex) ?: continue
+                val id = cell.optString("id").trim()
+                if (id.isBlank()) continue
+                cells.put(
+                    JSONObject()
+                        .put("id", id)
+                        .put("page", pageIndex)
+                        .put("row", 0)
+                        .put("column", 0)
+                        .put("index", launcherIndex(cell, cellIndex))
+                )
+            }
+        }
+
+        val dock = JSONArray()
+        val dockCells = sortLauncherCells(clean.optJSONArray("dock"))
+        for (index in 0 until dockCells.length()) {
+            val id = dockCells.optJSONObject(index)?.optString("id")?.trim().orEmpty()
+            if (id.isNotBlank()) dock.put(id)
+        }
+
+        val folders = JSONArray()
+        val sourceFolders = clean.optJSONArray("folders") ?: JSONArray()
+        for (index in 0 until sourceFolders.length()) {
+            val folder = sourceFolders.optJSONObject(index) ?: continue
+            val id = folder.optString("id").trim()
+            if (id.isBlank()) continue
+            val childIds = JSONArray()
+            val childCells = sortLauncherCells(folder.optJSONArray("cells"))
+            for (childIndex in 0 until childCells.length()) {
+                val childId = childCells.optJSONObject(childIndex)?.optString("id")?.trim().orEmpty()
+                if (childId.isNotBlank()) childIds.put(childId)
+            }
+            folders.put(
+                JSONObject()
+                    .put("id", id)
+                    .put("title", folder.optString("title").ifBlank { "Folder" })
+                    .put("childIds", childIds)
+            )
+        }
+
+        return JSONObject()
+            .put("version", 4)
+            .put("cells", cells)
+            .put("dock", dock)
+            .put("folders", folders)
+    }
+
+    private fun uiLayoutToLauncherJson(layout: JSONObject, counter: Long): JSONObject {
+        val pagesByIndex = linkedMapOf<Int, MutableList<JSONObject>>()
+        val cells = layout.optJSONArray("cells") ?: JSONArray()
+        for (index in 0 until cells.length()) {
+            val cell = cells.optJSONObject(index) ?: continue
+            val id = cell.optString("id").trim()
+            if (id.isBlank()) continue
+            val page = launcherIndexField(cell, "page", 0)
+            pagesByIndex.getOrPut(page) { mutableListOf() }
+                .add(launcherCellJson(id, launcherIndex(cell, index)))
+        }
+
+        val pages = JSONArray()
+        pagesByIndex.toSortedMap().values.forEach { pageCells ->
+            pages.put(JSONObject().put("cells", JSONArray(pageCells.sortedWith(compareBy<JSONObject> { launcherIndex(it, 0) }.thenBy { it.optString("id") }))))
+        }
+
+        val dock = JSONArray()
+        val uiDock = layout.optJSONArray("dock") ?: JSONArray()
+        for (index in 0 until uiDock.length()) {
+            val id = uiDock.optString(index).trim()
+            if (id.isNotBlank()) dock.put(launcherCellJson(id, index))
+        }
+
+        val folders = JSONArray()
+        val uiFolders = layout.optJSONArray("folders") ?: JSONArray()
+        for (index in 0 until uiFolders.length()) {
+            val folder = uiFolders.optJSONObject(index) ?: continue
+            val id = folder.optString("id").trim()
+            if (id.isBlank()) continue
+            val childCells = JSONArray()
+            val childIds = folder.optJSONArray("childIds") ?: JSONArray()
+            for (childIndex in 0 until childIds.length()) {
+                val childId = childIds.optString(childIndex).trim()
+                if (childId.isNotBlank()) childCells.put(launcherCellJson(childId, childIndex))
+            }
+            folders.put(
+                JSONObject()
+                    .put("id", id)
+                    .put("title", folder.optString("title").ifBlank { "Folder" })
+                    .put("cells", childCells)
+            )
+        }
+
+        val deviceId = readJSONObject(launcherLayoutFile)
+            ?.optJSONObject("rev")
+            ?.optString("deviceId")
+            .orEmpty()
+        return JSONObject()
+            .apply { if (pages.length() > 0) put("pages", pages) }
+            .apply { if (dock.length() > 0) put("dock", dock) }
+            .apply { if (folders.length() > 0) put("folders", folders) }
+            .put("rev", syncRevisionJson(counter, deviceId))
+    }
+
+    private fun normalizeLauncherJson(layout: JSONObject): JSONObject {
+        val pages = JSONArray()
+        val sourcePages = layout.optJSONArray("pages") ?: JSONArray()
+        for (index in 0 until sourcePages.length()) {
+            val page = sourcePages.optJSONObject(index) ?: continue
+            val cells = sortLauncherCells(page.optJSONArray("cells"))
+            if (cells.length() > 0) pages.put(JSONObject().put("cells", cells))
+        }
+
+        val dock = sortLauncherCells(layout.optJSONArray("dock"))
+        val folders = JSONArray()
+        val sourceFolders = layout.optJSONArray("folders") ?: JSONArray()
+        for (index in 0 until sourceFolders.length()) {
+            val folder = sourceFolders.optJSONObject(index) ?: continue
+            val id = folder.optString("id").trim()
+            if (id.isBlank()) continue
+            folders.put(
+                JSONObject()
+                    .put("id", id)
+                    .put("title", folder.optString("title").ifBlank { "Folder" })
+                    .put("cells", sortLauncherCells(folder.optJSONArray("cells")))
+            )
+        }
+
+        return JSONObject()
+            .apply { if (pages.length() > 0) put("pages", pages) }
+            .apply { if (dock.length() > 0) put("dock", dock) }
+            .apply { if (folders.length() > 0) put("folders", folders) }
+            .put("rev", layout.optJSONObject("rev")?.deepCopy() ?: syncRevisionJson(0L, ""))
+    }
+
+    private fun sortLauncherCells(cells: JSONArray?): JSONArray {
+        val result = JSONArray()
+        val values = buildList {
+            if (cells == null) return@buildList
+            for (index in 0 until cells.length()) {
+                when (val raw = cells.opt(index)) {
+                    is JSONObject -> {
+                        val id = raw.optString("id").trim()
+                        if (id.isNotBlank()) add(launcherCellJson(id, launcherIndex(raw, index)))
+                    }
+                    is String -> if (raw.trim().isNotBlank()) add(launcherCellJson(raw.trim(), index))
+                }
+            }
+        }.sortedWith(compareBy<JSONObject> { launcherIndex(it, 0) }.thenBy { it.optString("id") })
+        values.forEach { result.put(it) }
+        return result
+    }
+
+    private fun launcherCellJson(id: String, index: Int): JSONObject =
+        JSONObject()
+            .put("id", id)
+            .put("index", index.coerceAtLeast(0))
+
+    private fun launcherIndex(cell: JSONObject, fallback: Int): Int =
+        launcherIndexField(cell, "index", fallback)
+
+    private fun launcherIndexField(cell: JSONObject, name: String, fallback: Int): Int {
+        val value = cell.opt(name)
+        return when (value) {
+            is Number -> value.toInt().coerceAtLeast(0)
+            is String -> value.toIntOrNull()?.coerceAtLeast(0) ?: fallback
+            else -> fallback
+        }
     }
 
     private fun tabSessionStateFile(tabId: String): File? {

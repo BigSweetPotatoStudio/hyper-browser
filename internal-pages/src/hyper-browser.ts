@@ -93,12 +93,10 @@ type WebDavSyncResult = {
 type WebDavLocalSyncData = {
   deviceId: string;
   deviceName: string;
-  metadata: {
-    bookmarks: BookmarkRecord[] | Record<string, BookmarkRecord>;
-    webApps: WebAppRecord[] | Record<string, WebAppRecord>;
-  };
   bookmarks: BookmarkRecord[] | Record<string, BookmarkRecord>;
+  bookmarkTombstones?: Record<string, unknown>;
   webApps: WebAppRecord[] | Record<string, WebAppRecord>;
+  appTombstones?: Record<string, unknown>;
   settings?: BrowserSettings;
 };
 

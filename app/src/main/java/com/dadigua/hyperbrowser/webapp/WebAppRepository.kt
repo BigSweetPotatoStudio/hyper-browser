@@ -30,11 +30,15 @@ import java.util.UUID
 class WebAppRepository(
     private val context: Context
 ) {
-    private val storeFile = File(context.filesDir, "web_apps.json")
+    private val storeFile = File(context.filesDir, "webapps.json")
+    private val legacyStoreFile = File(context.filesDir, "web_apps.json")
     private val faviconStore = FaviconRepository(context)
     private val state = MutableStateFlow(load())
 
     fun observeAll(): StateFlow<List<WebAppDefinition>> = state
+
+    fun syncJson(): JSONObject =
+        readJSONObject(storeFile) ?: webAppsSyncJson(state.value)
 
     suspend fun get(id: String): WebAppDefinition? = state.value.firstOrNull { it.id == id }
 
@@ -352,46 +356,183 @@ class WebAppRepository(
 
     private fun save(items: List<WebAppDefinition>) {
         state.value = items
-        val array = JSONArray()
-        items.forEach { item ->
-            array.put(
-                JSONObject()
-                    .put("id", item.id)
-                    .put("name", item.name)
-                    .put("startUrl", item.startUrl)
-                    .put("iconPath", item.iconPath)
-                    .put("themeColor", item.themeColor)
-                    .put("displayMode", item.displayMode)
-                    .put("createdAt", item.createdAt)
-                    .put("lastOpenedAt", item.lastOpenedAt)
-            )
-        }
-        storeFile.writeText(array.toString())
+        storeFile.writeText(webAppsSyncJson(items).toString())
     }
 
     private fun load(): List<WebAppDefinition> {
-        if (!storeFile.exists()) return emptyList()
-        return runCatching {
-            val array = JSONArray(storeFile.readText())
+        val items = when {
+            storeFile.exists() -> loadFromSyncFile(storeFile)
+            legacyStoreFile.exists() -> loadFromLegacyFile(legacyStoreFile)
+            else -> emptyList()
+        }.sortedByDescending { it.lastOpenedAt }
+        if (!storeFile.exists() && items.isNotEmpty()) {
+            storeFile.writeText(webAppsSyncJson(items).toString())
+        }
+        return items
+    }
+
+    private fun loadFromSyncFile(file: File): List<WebAppDefinition> =
+        runCatching {
+            val raw = file.readText()
+            if (raw.trimStart().startsWith("[")) return loadFromLegacyJson(JSONArray(raw))
+            val root = JSONObject(raw)
+            val apps = root.optJSONObject("apps") ?: root
             buildList {
-                for (index in 0 until array.length()) {
-                    val item = array.getJSONObject(index)
+                val keys = apps.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val item = apps.optJSONObject(key) ?: continue
+                    val startUrl = item.optString("startUrl").trim()
+                    if (startUrl.isBlank()) continue
+                    val id = item.optString("id").trim().ifBlank { key.trim() }
+                    if (id.isBlank()) continue
                     add(
                         WebAppDefinition(
-                            id = item.getString("id"),
-                            name = item.getString("name"),
-                            startUrl = item.getString("startUrl"),
-                            iconPath = siteModeIconPath(item.optString("iconPath").ifBlank { null }),
+                            id = id,
+                            name = item.optString("name").trim().ifBlank { Uri.parse(startUrl).host ?: "WebApp" },
+                            startUrl = startUrl,
+                            iconPath = siteModeIconPath(item.optCleanString("iconPath"))
+                                ?: iconPathFromSyncRecord(id, startUrl, item),
                             themeColor = item.optInt("themeColor", Color.rgb(18, 109, 106)),
                             displayMode = item.optString("displayMode", "standalone"),
-                            createdAt = item.optLong("createdAt"),
-                            lastOpenedAt = item.optLong("lastOpenedAt")
+                            createdAt = item.optLong("createdAt").takeIf { it > 0 }
+                                ?: item.optLong("updatedAt").takeIf { it > 0 }
+                                ?: System.currentTimeMillis(),
+                            lastOpenedAt = item.optLong("lastOpenedAt").takeIf { it > 0 }
+                                ?: item.optLong("updatedAt").takeIf { it > 0 }
+                                ?: System.currentTimeMillis()
                         )
                     )
                 }
-            }.sortedByDescending { it.lastOpenedAt }
+            }
         }.getOrDefault(emptyList())
+
+    private fun loadFromLegacyFile(file: File): List<WebAppDefinition> =
+        runCatching { loadFromLegacyJson(JSONArray(file.readText())) }.getOrDefault(emptyList())
+
+    private fun loadFromLegacyJson(array: JSONArray): List<WebAppDefinition> =
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val startUrl = item.optString("startUrl").trim()
+                if (startUrl.isBlank()) continue
+                add(
+                    WebAppDefinition(
+                        id = item.optString("id").trim().ifBlank {
+                            UUID.nameUUIDFromBytes(startUrl.toByteArray(Charsets.UTF_8)).toString()
+                        },
+                        name = item.optString("name").trim().ifBlank { Uri.parse(startUrl).host ?: "WebApp" },
+                        startUrl = startUrl,
+                        iconPath = siteModeIconPath(item.optString("iconPath").ifBlank { null }),
+                        themeColor = item.optInt("themeColor", Color.rgb(18, 109, 106)),
+                        displayMode = item.optString("displayMode", "standalone"),
+                        createdAt = item.optLong("createdAt"),
+                        lastOpenedAt = item.optLong("lastOpenedAt")
+                    )
+                )
+            }
+        }
+
+    private fun webAppsSyncJson(items: List<WebAppDefinition>): JSONObject {
+        val now = System.currentTimeMillis()
+        val existing = readJSONObject(storeFile)
+        val existingApps = existing?.optJSONObject("apps") ?: JSONObject()
+        val tombstones = existing?.optJSONObject("appTombstones")?.deepCopy() ?: JSONObject()
+        val activeIds = items.map { it.id.trim() }.filter { it.isNotBlank() }.toSet()
+        val nextApps = JSONObject()
+        val existingIds = existingApps.keys().asSequence().toList()
+
+        existingIds.forEach { id ->
+            if (id !in activeIds && !tombstones.has(id)) {
+                val rev = existingApps.optJSONObject(id)?.optJSONObject("rev")
+                tombstones.put(
+                    id,
+                    JSONObject()
+                        .put("deletedAt", java.time.Instant.ofEpochMilli(now).toString())
+                        .put("rev", syncRevisionJson(now, rev?.optString("deviceId").orEmpty()))
+                )
+            }
+        }
+
+        items.forEach { item ->
+            val id = item.id.trim()
+            val startUrl = item.startUrl.trim()
+            if (id.isBlank() || startUrl.isBlank()) return@forEach
+            val existingRecord = existingApps.optJSONObject(id)
+            val iconDataUrl = iconDataUrl(item)
+            val iconSource = iconSource(item)
+            val name = item.name.trim().ifBlank { startUrl }
+            val displayMode = item.displayMode.ifBlank { "standalone" }
+            val createdAt = item.createdAt.takeIf { it > 0 }
+                ?: existingRecord?.optLong("createdAt")?.takeIf { it > 0 }
+                ?: now
+            val changed = existingRecord == null ||
+                existingRecord.optString("name") != name ||
+                existingRecord.optString("startUrl") != startUrl ||
+                existingRecord.optInt("themeColor", Color.rgb(18, 109, 106)) != item.themeColor ||
+                existingRecord.optString("displayMode", "standalone") != displayMode ||
+                existingRecord.optCleanString("iconDataUrl") != iconDataUrl ||
+                existingRecord.optCleanString("iconSource") != iconSource
+            val existingRev = existingRecord?.optJSONObject("rev")
+            val rev = if (changed) {
+                syncRevisionJson(now, existingRev?.optString("deviceId").orEmpty())
+            } else {
+                existingRev?.deepCopy() ?: syncRevisionJson(createdAt, "")
+            }
+            nextApps.put(
+                id,
+                JSONObject()
+                    .put("id", id)
+                    .put("name", name)
+                    .put("startUrl", startUrl)
+                    .put("themeColor", item.themeColor)
+                    .put("displayMode", displayMode)
+                    .put("createdAt", createdAt)
+                    .put("lastOpenedAt", item.lastOpenedAt.takeIf { it > 0 } ?: now)
+                    .put("updatedAt", if (changed) now else existingRecord.optLong("updatedAt").takeIf { it > 0 } ?: createdAt)
+                    .putJsonNullable("iconDataUrl", iconDataUrl)
+                    .putJsonNullable("iconSource", iconSource)
+                    .put("rev", rev)
+            )
+            tombstones.remove(id)
+        }
+
+        return JSONObject()
+            .put("schemaVersion", 2)
+            .put("apps", nextApps)
+            .put("appTombstones", tombstones)
     }
+
+    private fun iconPathFromSyncRecord(id: String, startUrl: String, item: JSONObject): String? {
+        val iconDataUrl = item.optCleanString("iconDataUrl")
+        return when (item.optCleanString("iconSource")) {
+            "custom" -> faviconStore.saveCustomIconDataUrl(id.ifBlank { startUrl }, iconDataUrl)
+            "site" -> faviconStore.saveIconDataUrl(startUrl, iconDataUrl)
+            else -> null
+        } ?: faviconStore.cachedIconPath(startUrl)
+    }
+
+    private fun readJSONObject(file: File): JSONObject? {
+        if (!file.exists()) return null
+        return runCatching { JSONObject(file.readText()) }.getOrNull()
+    }
+
+    private fun JSONObject.deepCopy(): JSONObject =
+        JSONObject(toString())
+
+    private fun syncRevisionJson(counter: Long, deviceId: String): JSONObject =
+        JSONObject()
+            .put("counter", counter.coerceAtLeast(0L))
+            .put("deviceId", deviceId.trim())
+
+    private fun JSONObject.optCleanString(name: String): String? {
+        if (!has(name) || isNull(name)) return null
+        val value = optString(name).trim()
+        return value.takeIf { it.isNotBlank() && it != "null" && it != "undefined" }
+    }
+
+    private fun JSONObject.putJsonNullable(name: String, value: Any?): JSONObject =
+        put(name, value ?: JSONObject.NULL)
 
     private fun siteModeIconPath(iconPath: String?): String? =
         iconPath?.takeUnless { isLegacyNoIconPath(it) }

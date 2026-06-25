@@ -173,11 +173,7 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     const settings = await options.loadSettings();
     await withLocalLock(async () => {
       const current = await options.loadSyncV2Store();
-      const itemId = input.id ? `app:${input.id}` : "";
-      const placement = itemId && current.state.layout.items[itemId]
-        ? undefined
-        : { container: "desktop:0", index: nextDesktopIndex(current.state) };
-      const { store } = appendWebAppUpsert(current, input, placement);
+      const { store } = appendWebAppUpsert(current, input, { container: "desktop:0", index: nextDesktopIndex(current.state) });
       await options.saveSyncV2Store(store);
     });
     if (settings.webDavUrl.trim()) await syncNow();
@@ -266,9 +262,8 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
   }
 
   function nextDesktopIndex(state: SyncV2State): number {
-    return Object.values(state.layout.items)
-      .filter((item) => item.container === "desktop:0")
-      .reduce((max, item) => Math.max(max, item.index), -1) + 1;
+    return (state.layout.pages?.[0]?.cells || [])
+      .reduce((max, cell) => Math.max(max, cell.index), -1) + 1;
   }
 
   async function ensureBookmarkFolder(settings: SyncSettings): Promise<SyncSettings> {

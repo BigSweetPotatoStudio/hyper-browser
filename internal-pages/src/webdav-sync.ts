@@ -57,6 +57,7 @@ async function loadLocalSnapshot(): Promise<SyncV2LocalSnapshot> {
   const localData = await requestWebDavLocalData();
   const layout = await requestLauncherLayout();
   return {
+    bookmarks: localData.bookmarks || [],
     webApps: localData.webApps || [],
     layout,
   };
@@ -118,13 +119,21 @@ export async function recordAndroidBookmarkDeletes(bookmarks: BookmarkRecord[]):
 async function applyAndroidState(state: SyncV2State): Promise<void> {
   const clean = state;
   await applyWebDavSyncRecords({
-    bookmarks: { bookmarks: clean.bookmarks },
-    webApps: { apps: clean.apps },
+    bookmarks: {
+      schemaVersion: 2,
+      bookmarks: clean.bookmarks,
+      bookmarkTombstones: clean.bookmarkTombstones,
+    },
+    webApps: {
+      schemaVersion: 2,
+      apps: clean.apps,
+      appTombstones: clean.appTombstones,
+    },
   });
   const nextLayout = layoutFromState(clean);
   const currentLayout = await requestLauncherLayout().catch(() => null);
   if (canonicalLauncherLayout(currentLayout) !== canonicalLauncherLayout(nextLayout)) {
-    await saveLauncherLayout(nextLayout);
+    await saveLauncherLayout(clean.layout as object);
   }
 }
 
