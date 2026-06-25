@@ -79,8 +79,8 @@ function BookmarksPage() {
 
   const items = bookmarks || [];
   const visibleItems = useMemo(() => {
-    if (query.trim()) return sortBookmarks(filterBookmarks(items, query));
-    return sortBookmarks(items);
+    if (query.trim()) return sortBookmarksByAddedOrder(filterBookmarks(items, query));
+    return sortBookmarksByAddedOrder(items);
   }, [items, query]);
 
   return (
@@ -186,11 +186,20 @@ function normalizeBookmarkItems(items: BookmarkItem[]): BookmarkItem[] {
     }));
 }
 
-function sortBookmarks(items: BookmarkItem[]): BookmarkItem[] {
-  return [...items].sort((left, right) => (
-    (left.title || left.url).localeCompare(right.title || right.url) ||
-    left.url.localeCompare(right.url)
-  ));
+function sortBookmarksByAddedOrder(items: BookmarkItem[]): BookmarkItem[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const leftCreatedAt = Number(left.item.createdAt) || 0;
+      const rightCreatedAt = Number(right.item.createdAt) || 0;
+      if (leftCreatedAt && rightCreatedAt && leftCreatedAt !== rightCreatedAt) {
+        return rightCreatedAt - leftCreatedAt;
+      }
+      if (leftCreatedAt && !rightCreatedAt) return -1;
+      if (!leftCreatedAt && rightCreatedAt) return 1;
+      return left.index - right.index;
+    })
+    .map(({ item }) => item);
 }
 
 function filterBookmarks(items: BookmarkItem[], query: string): BookmarkItem[] {

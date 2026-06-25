@@ -507,9 +507,7 @@ function bookmarkNodeTreeSignature(nodes: BrowserBookmarkNode[]): string {
       selected.set(url, { title: node.title || url, url });
     }
   });
-  return JSON.stringify([...selected.values()].sort((left, right) =>
-    left.title.localeCompare(right.title) || left.url.localeCompare(right.url)
-  ));
+  return JSON.stringify([...selected.values()]);
 }
 
 function bookmarkRecordsTreeSignature(records: BookmarkRecord[]): string {
@@ -538,7 +536,8 @@ function canonicalizeFlatBookmarkRecords(records: BookmarkRecord[]): BookmarkRec
 }
 
 function compareBookmarkPlacement(left: BookmarkRecord, right: BookmarkRecord): number {
-  return left.title.localeCompare(right.title) ||
+  return (right.createdAt || 0) - (left.createdAt || 0) ||
+    left.title.localeCompare(right.title) ||
     left.url.localeCompare(right.url);
 }
 

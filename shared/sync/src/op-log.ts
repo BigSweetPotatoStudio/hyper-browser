@@ -1359,7 +1359,8 @@ function cleanOptionalString(value: unknown): string {
 }
 
 function compareBookmarkRecords(left: BookmarkSyncRecord, right: BookmarkSyncRecord): number {
-  return left.title.localeCompare(right.title) ||
+  return (right.createdAt || 0) - (left.createdAt || 0) ||
+    left.title.localeCompare(right.title) ||
     left.url.localeCompare(right.url);
 }
 

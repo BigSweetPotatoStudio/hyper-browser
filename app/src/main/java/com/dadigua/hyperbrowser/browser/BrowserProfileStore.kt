@@ -458,8 +458,16 @@ class BrowserProfileStore(context: Context) {
             bookmarksFile.exists() -> loadBookmarksFromSyncFile(bookmarksFile)
             else -> emptyList()
         }
-        return loaded.distinctBy { it.url }
+        return orderBookmarksByAddedAt(loaded)
     }
+
+    private fun orderBookmarksByAddedAt(items: List<BrowserBookmark>): List<BrowserBookmark> =
+        items.distinctBy { it.url }
+            .sortedWith(
+                compareByDescending<BrowserBookmark> { it.createdAt }
+                    .thenBy { it.title }
+                    .thenBy { it.url }
+            )
 
     private fun loadBookmarksFromSyncFile(file: File): List<BrowserBookmark> =
         runCatching {
