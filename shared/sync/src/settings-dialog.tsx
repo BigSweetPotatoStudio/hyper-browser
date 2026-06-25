@@ -17,7 +17,6 @@ export type SyncSettingsDialogLabels = {
   username: string;
   password: string;
   folderTitle: string;
-  deviceName: string;
   help: string;
   sync: string;
   syncing: string;
@@ -136,10 +135,6 @@ export function SyncSettingsDialog(props: Props) {
               <input className="sync-settings-input" type="text" value={values.folderTitle || ""} onChange={(event) => update("folderTitle", event.currentTarget.value)} />
             </label>
           )}
-          <label className="sync-settings-field">
-            <span className="sync-settings-label">{props.labels.deviceName}</span>
-            <input className="sync-settings-input" type="text" value={values.deviceName} onChange={(event) => update("deviceName", event.currentTarget.value)} />
-          </label>
         </div>
         <p className="sync-settings-message">{props.labels.help}</p>
         <div className="sync-settings-actions">

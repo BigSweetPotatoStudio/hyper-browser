@@ -43,7 +43,7 @@ function HomePage() {
         webDavSyncUrl: values.webDavUrl.trim(),
         webDavSyncUsername: values.username.trim(),
         webDavSyncPassword: values.password,
-        webDavSyncDeviceName: values.deviceName.trim(),
+        webDavSyncDeviceName: "Android",
       });
       setSettingsConfigured(isWebDavConfigured(savedSettings));
       const result = await waitForLauncherLayoutSaves().then(() => sendBackgroundCommand<WebDavSyncResult>("sync.run"));
@@ -287,7 +287,7 @@ function normalizeDialogValues(values: SyncSettingsDialogValues): SyncSettingsDi
     ...values,
     webDavUrl: values.webDavUrl.trim(),
     username: values.username.trim(),
-    deviceName: values.deviceName.trim() || "Android",
+    deviceName: "Android",
   };
 }
 
@@ -307,7 +307,6 @@ const androidSyncSettingsLabels = {
   username: t("settings.webDavUsername"),
   password: t("settings.webDavPassword"),
   folderTitle: "Sync folder title",
-  deviceName: t("settings.webDavDeviceName"),
   help: t("settings.webDavHelp"),
   sync: t("settings.webDavSyncNow"),
   syncing: t("settings.webDavSyncingShort"),

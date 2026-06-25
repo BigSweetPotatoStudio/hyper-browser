@@ -183,7 +183,6 @@ const companionSyncSettingsLabels = {
   username: "Username",
   password: "Password or app token",
   folderTitle: "Sync folder title",
-  deviceName: "Device name",
   help: "Remote data is stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, and manifest.json.",
   sync: "Sync",
   syncing: "Syncing...",
@@ -231,7 +230,7 @@ function dialogValuesToSettings(values: SyncSettingsDialogValues, current: SyncS
     username: values.username,
     password: values.password,
     folderTitle: values.folderTitle || current.folderTitle,
-    deviceName: values.deviceName,
+    deviceName: DEFAULT_DEVICE_NAME,
   });
 }
 
@@ -241,7 +240,7 @@ function normalizeDialogValues(values: SyncSettingsDialogValues): SyncSettingsDi
     webDavUrl: values.webDavUrl.trim(),
     username: values.username.trim(),
     folderTitle: values.folderTitle?.trim() || "Hyper Browser",
-    deviceName: values.deviceName.trim() || DEFAULT_DEVICE_NAME,
+    deviceName: DEFAULT_DEVICE_NAME,
   };
 }
 
@@ -251,7 +250,7 @@ function normalizeSettings(settings: SyncSettings): SyncSettings {
     webDavUrl: settings.webDavUrl.trim(),
     username: settings.username.trim(),
     folderTitle: settings.folderTitle.trim() || "Hyper Browser",
-    deviceName: settings.deviceName.trim() || DEFAULT_DEVICE_NAME,
+    deviceName: DEFAULT_DEVICE_NAME,
   };
 }
 

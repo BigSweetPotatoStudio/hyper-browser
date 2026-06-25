@@ -230,9 +230,8 @@ export function LauncherSyncActions(props: {
   onSync: () => void;
 }) {
   const syncing = props.state === "syncing";
-  const title = props.settingsConfigured
-    ? props.labels.syncTitle || props.labels.sync
-    : props.labels.setupTitle || props.labels.sync;
+  const showSync = props.settingsConfigured === true;
+  const syncTitle = props.labels.syncTitle || props.labels.sync;
 
   return (
     <>
@@ -246,9 +245,11 @@ export function LauncherSyncActions(props: {
         </button>
       )}
       <button type="button" onClick={props.onOpenSettings}>{props.labels.settings}</button>
-      <button type="button" disabled={syncing} title={title} onClick={props.onSync}>
-        {syncing ? props.labels.syncing : props.labels.sync}
-      </button>
+      {showSync && (
+        <button type="button" disabled={syncing} title={syncTitle} onClick={props.onSync}>
+          {syncing ? props.labels.syncing : props.labels.sync}
+        </button>
+      )}
     </>
   );
 }

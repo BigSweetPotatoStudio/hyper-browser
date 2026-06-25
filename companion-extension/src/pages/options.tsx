@@ -77,10 +77,6 @@ function OptionsPage() {
             <span className="label">Chrome folder title</span>
             <input className="input" type="text" value={settings.folderTitle} onChange={(event) => update("folderTitle", event.currentTarget.value)} />
           </label>
-          <label className="field">
-            <span className="label">Device name</span>
-            <input className="input" type="text" value={settings.deviceName} onChange={(event) => update("deviceName", event.currentTarget.value)} />
-          </label>
         </div>
         <p className="message">Remote data is stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, and manifest.json.</p>
         <div className="actions">
@@ -109,7 +105,7 @@ function normalizeSettings(settings: SyncSettings): SyncSettings {
     webDavUrl: settings.webDavUrl.trim(),
     username: settings.username.trim(),
     folderTitle: settings.folderTitle.trim() || "Hyper Browser",
-    deviceName: settings.deviceName.trim() || "Chrome",
+    deviceName: "Chrome",
   };
 }
 
