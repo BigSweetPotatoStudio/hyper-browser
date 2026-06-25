@@ -287,6 +287,7 @@ export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput, place
   const id = existing?.id || inputId || crypto.randomUUID();
   if (store.state.appTombstones[id]) throw new Error("Deleted WebApp UUID cannot be reused.");
   const now = Date.now();
+  const hasIconDataUrl = Object.prototype.hasOwnProperty.call(input, "iconDataUrl");
   const app: WebAppRecord = {
     id,
     name: input.name.trim() || input.startUrl,
@@ -297,8 +298,8 @@ export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput, place
     lastOpenedAt: input.lastOpenedAt || existing?.lastOpenedAt || now,
     updatedAt: now,
     deletedAt: null,
-    iconDataUrl: input.iconDataUrl ?? existing?.iconDataUrl ?? null,
-    iconSource: input.iconSource || existing?.iconSource || (input.iconDataUrl ? "custom" : "title"),
+    iconDataUrl: hasIconDataUrl ? input.iconDataUrl ?? null : existing?.iconDataUrl ?? null,
+    iconSource: input.iconSource || (hasIconDataUrl ? (input.iconDataUrl ? "custom" : "title") : existing?.iconSource) || "title",
   };
   let next = appendOperation(store, { type: "app.upsert", app });
   const itemId = `app:${id}`;

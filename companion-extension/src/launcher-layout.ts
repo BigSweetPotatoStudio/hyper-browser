@@ -1,6 +1,7 @@
 import type { LauncherLayout, LauncherLayoutStorage } from "@hyper-launcher";
-import { appendLayoutSnapshotOperations, canonicalJson, layoutFromState } from "@hyper-sync/op-log";
-import { loadSyncV2Store, saveSyncV2Store } from "./storage";
+import { layoutFromState } from "@hyper-sync/op-log";
+import { browser } from "wxt/browser";
+import { loadSyncV2Store } from "./storage";
 
 export const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"];
 export const DEPRECATED_ENTRY_IDS = ["system:chrome"];
@@ -20,9 +21,6 @@ export const launcherLayoutStorage: LauncherLayoutStorage = {
 
 async function saveLauncherLayoutIfCurrent(layout: LauncherLayout, reason: "user" | "system"): Promise<void> {
   if (reason !== "user") return;
-  const current = await loadSyncV2Store();
-  const next = appendLayoutSnapshotOperations(current, layout);
-  if (canonicalJson(current) !== canonicalJson(next)) {
-    await saveSyncV2Store(next);
-  }
+  const response = await browser.runtime.sendMessage({ type: "launcher.layout.save", payload: layout });
+  if (!response?.ok) throw new Error(response?.error || "Unable to save launcher layout.");
 }

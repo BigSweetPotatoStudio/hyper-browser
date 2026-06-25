@@ -4,7 +4,7 @@ import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type Launcher
 import { shouldRefreshLauncherAfterSync } from "@hyper-sync";
 import { SyncSettingsDialog, type SyncSettingsDialogResult, type SyncSettingsDialogValues } from "@hyper-sync/settings-dialog";
 import "../hyper-browser";
-import type { BrowserSettings, WebDavSyncResult } from "../hyper-browser";
+import type { BrowserSettings, WebAppItem, WebDavSyncResult } from "../hyper-browser";
 import "../styles.css";
 import { t } from "../i18n";
 import { createLauncherLayoutStorage, waitForLauncherLayoutSaves } from "../launcher-layout-storage";
@@ -119,13 +119,15 @@ function HomePage() {
       if (action === "extensions") window.hyperBrowser.showExtensions();
     },
     deleteApp: async (app) => {
-      const items = await window.hyperBrowser.deleteApp(app.id);
-      scheduleAutoSync();
+      const items = await sendBackgroundCommand<WebAppItem[]>("webapps.delete", { id: app.id });
       return items;
     },
     saveApp: async (app, changes) => {
-      const items = await window.hyperBrowser.updateApp(app.id, changes.name, changes.startUrl, changes.iconDataUrl);
-      scheduleAutoSync();
+      const items = await sendBackgroundCommand<WebAppItem[]>("webapps.save", {
+        ...app,
+        ...changes,
+        id: app.id,
+      });
       return items;
     },
     chooseAppIcon: (app) => window.hyperBrowser.chooseAppIcon(app.id),
@@ -133,8 +135,12 @@ function HomePage() {
       window.hyperBrowser.pinApp(app.id);
     },
     updateAppIcon: async (app, iconDataUrl) => {
-      const items = await window.hyperBrowser.updateAppIcon(app.id, iconDataUrl);
-      scheduleAutoSync();
+      const items = await sendBackgroundCommand<WebAppItem[]>("webapps.save", {
+        ...app,
+        id: app.id,
+        iconDataUrl,
+        iconSource: iconDataUrl ? "custom" : "site",
+      });
       return items;
     },
   }), [scheduleAutoSync, systemEntries]);

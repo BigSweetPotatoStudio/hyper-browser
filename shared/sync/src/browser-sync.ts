@@ -69,6 +69,8 @@ export type BrowserSyncService = {
   loadRemoteWebApps: () => Promise<WebAppRecord[]>;
   saveRemoteWebApp: (input: Partial<WebAppRecord> & { name: string; startUrl: string }) => Promise<WebAppRecord[]>;
   deleteRemoteWebApp: (input: string | Partial<WebAppRecord> | null | undefined) => Promise<WebAppRecord[]>;
+  loadLauncherLayout: () => Promise<SyncV2LocalSnapshot["layout"]>;
+  saveLauncherLayout: (layout: SyncV2LocalSnapshot["layout"]) => Promise<void>;
   addBookmarkToSyncFolder: (input: { title: string; url: string; iconDataUrl?: string | null }) => Promise<BrowserSyncResult>;
 };
 
@@ -143,6 +145,21 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
 
   async function loadRemoteBookmarks(): Promise<BookmarkRecord[]> {
     return activeBookmarksFromState((await options.loadSyncV2Store()).state);
+  }
+
+  async function loadLauncherLayout(): Promise<SyncV2LocalSnapshot["layout"]> {
+    return layoutFromState((await options.loadSyncV2Store()).state);
+  }
+
+  async function saveLauncherLayout(layout: SyncV2LocalSnapshot["layout"]): Promise<void> {
+    if (!layout) return;
+    await withLocalLock(async () => {
+      const current = await options.loadSyncV2Store();
+      const next = appendLocalSnapshotOperations(current, { layout });
+      if (canonicalJson(current) !== canonicalJson(next)) {
+        await options.saveSyncV2Store(next);
+      }
+    });
   }
 
   async function recordLocalBookmarkFolderSnapshot(events: BrowserBookmarkEvent[] = []): Promise<boolean | null> {
@@ -438,6 +455,8 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     loadRemoteWebApps,
     saveRemoteWebApp,
     deleteRemoteWebApp,
+    loadLauncherLayout,
+    saveLauncherLayout,
     addBookmarkToSyncFolder,
   };
 }

@@ -38,8 +38,13 @@ const hyperCommands = createHyperBackgroundCommandHandler<SyncResult>({
   listWebApps: browserSyncService.loadRemoteWebApps,
   saveWebApp: browserSyncService.saveRemoteWebApp,
   deleteWebApp: (input) => browserSyncService.deleteRemoteWebApp(input as string | Partial<WebAppRecord>),
+  loadLauncherLayout: browserSyncService.loadLauncherLayout,
+  saveLauncherLayout: (layout) => browserSyncService.saveLauncherLayout(layout as Parameters<typeof browserSyncService.saveLauncherLayout>[0]),
   notifyLauncherChanged,
-  shouldScheduleAfterMutation: (type) => type === "webapps.addFromCurrentPage" || type.startsWith("webapps."),
+  shouldScheduleAfterMutation: (type) =>
+    type === "webapps.addFromCurrentPage" ||
+    type.startsWith("webapps.") ||
+    type.startsWith("launcher.layout."),
 });
 
 export function startBackground(): void {

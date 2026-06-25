@@ -1,7 +1,15 @@
 import { createSyncBackgroundController } from "@hyper-sync/background";
 import { createHyperBackgroundCommandHandler } from "@hyper-sync/hyper-background";
-import { recordAndroidBookmarkDeletes, recordAndroidBookmarkUpserts, recordAndroidLauncherLayoutEdit, runAndroidWebDavSync, runAndroidWebDavSyncIfEnabled } from "./webdav-sync";
-import type { BookmarkRecord } from "@hyper-sync";
+import {
+  deleteAndroidBookmarkFromSync,
+  deleteAndroidWebAppFromSync,
+  runAndroidWebDavSync,
+  runAndroidWebDavSyncIfEnabled,
+  saveAndroidBookmarkToSync,
+  saveAndroidLauncherLayoutToSync,
+  saveAndroidWebAppToSync,
+} from "./webdav-sync";
+import type { BookmarkRecord, WebAppRecord } from "@hyper-sync";
 import type { WebDavSyncResult } from "./hyper-browser";
 
 const NATIVE_APP = "hyperBrowser";
@@ -41,19 +49,13 @@ const internalPageMessageTypes = new Set([
   "update.downloadState",
   "update.install",
   "bookmarks.open",
-  "bookmarks.delete",
-  "bookmarks.save",
   "history.open",
   "history.remove",
   "history.clear",
   "apps.open",
   "apps.openStandalone",
   "apps.pin",
-  "apps.edit",
-  "apps.update",
   "apps.icon.choose",
-  "apps.icon.update",
-  "apps.delete",
   "panel.extensions",
 ]);
 
@@ -83,10 +85,13 @@ const hyperCommands = createHyperBackgroundCommandHandler<WebDavSyncResult>({
   findBookmarkByUrl,
   saveBookmark,
   deleteBookmark,
+  listWebApps,
+  saveWebApp,
+  deleteWebApp,
   loadLauncherLayout: requestLauncherLayout,
   saveLauncherLayout,
   notifyLauncherChanged,
-  shouldScheduleAfterMutation: (type) => type.startsWith("launcher.layout.") || type.startsWith("bookmarks."),
+  shouldScheduleAfterMutation: (type) => type.startsWith("launcher.layout.") || type.startsWith("bookmarks.") || type.startsWith("webapps."),
 });
 
 function startBackground(): void {
@@ -176,9 +181,8 @@ async function requestLauncherLayout(): Promise<object | null> {
 }
 
 async function saveLauncherLayout(layout: unknown): Promise<void> {
-  await requestNativeObject("launcher.layout.save", { layout: JSON.stringify(layout || {}) });
   if (layout && typeof layout === "object") {
-    await recordAndroidLauncherLayoutEdit(layout as object);
+    await saveAndroidLauncherLayoutToSync(layout as object);
   }
 }
 
@@ -198,47 +202,33 @@ async function findBookmarkByUrl(input: { url: string }): Promise<unknown | null
 
 async function saveBookmark(input: unknown): Promise<unknown[]> {
   if (!isPlainObject(input)) throw new Error("Invalid bookmark payload.");
-  const payload = normalizeBookmarkPayload(input);
-  const bookmarks = await requestNativeItems("bookmarks.save", payload);
-  const targets = bookmarkSaveTargets(bookmarks, payload);
-  if (targets.length > 0) await recordAndroidBookmarkUpserts(targets);
-  return bookmarks;
+  await saveAndroidBookmarkToSync(input as Partial<BookmarkRecord> & { oldUrl?: string });
+  return requestNativeItems("data.bookmarks");
 }
 
 async function deleteBookmark(input: { url?: string }): Promise<unknown[]> {
-  const bookmarks = await listBookmarks();
-  const targets = bookmarkDeleteTargets(bookmarks, input);
-  if (targets.length > 0) await recordAndroidBookmarkDeletes(targets);
-  return requestNativeItems("bookmarks.delete", {
-    ...(input.url ? { url: input.url } : {}),
-  });
-}
-
-function bookmarkDeleteTargets(bookmarks: unknown[], input: { url?: string }): BookmarkRecord[] {
-  const items = bookmarks.filter(isBookmarkRecord);
-  const urlKey = normalizeBookmarkUrlKey(stringFromUnknown(input.url));
-  if (!urlKey) return [];
-  return items.filter((bookmark) => {
-    const candidate = normalizeBookmarkUrlKey(bookmark.url);
-    return candidate === urlKey || normalizeBookmarkUrlKey(bookmark.url) === urlKey;
-  });
-}
-
-function bookmarkSaveTargets(bookmarks: unknown[], input: Record<string, unknown>): BookmarkRecord[] {
-  const items = bookmarks.filter(isBookmarkRecord);
-  const urlKey = normalizeBookmarkUrlKey(stringFromUnknown(input.url));
-  if (!urlKey) return [];
-  const match = items.find((bookmark) => {
-    const candidate = normalizeBookmarkUrlKey(bookmark.url);
-    return candidate === urlKey || normalizeBookmarkUrlKey(bookmark.url) === urlKey;
-  });
-  return match ? [match] : [];
+  await deleteAndroidBookmarkFromSync(input);
+  return requestNativeItems("data.bookmarks");
 }
 
 function isBookmarkRecord(value: unknown): value is BookmarkRecord {
   if (!isPlainObject(value)) return false;
   const url = stringFromUnknown(value.url);
   return !!url;
+}
+
+async function listWebApps(): Promise<unknown[]> {
+  return requestNativeItems("data.apps");
+}
+
+async function saveWebApp(input: Partial<WebAppRecord> & { name: string; startUrl: string }): Promise<unknown[]> {
+  await saveAndroidWebAppToSync(input);
+  return requestNativeItems("data.apps");
+}
+
+async function deleteWebApp(input: unknown): Promise<unknown[]> {
+  await deleteAndroidWebAppFromSync(input as string | Partial<WebAppRecord> | null | undefined);
+  return requestNativeItems("data.apps");
 }
 
 async function requestNativeObject<T = unknown>(type: string, payload: Record<string, unknown> = {}): Promise<T> {
@@ -261,19 +251,6 @@ async function requestNativeItems<T = unknown>(type: string, payload: Record<str
   if (!response.itemsJson) return [];
   const items = JSON.parse(response.itemsJson) as unknown;
   return Array.isArray(items) ? items as T[] : [];
-}
-
-function normalizeBookmarkPayload(input: Record<string, unknown>): Record<string, string> {
-  const payload: Record<string, string> = {};
-  const oldUrl = stringFromUnknown(input.oldUrl);
-  const title = stringFromUnknown(input.title);
-  const url = stringFromUnknown(input.url);
-  const iconPath = stringFromUnknown(input.iconPath);
-  if (oldUrl) payload.oldUrl = oldUrl;
-  if (title) payload.title = title;
-  if (url) payload.url = url;
-  if (iconPath) payload.iconPath = iconPath;
-  return payload;
 }
 
 function normalizeBookmarkUrlKey(value: string): string {

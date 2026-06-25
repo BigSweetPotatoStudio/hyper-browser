@@ -1661,8 +1661,6 @@ sealed interface HyperCommand {
         data class Open(val id: String) : Apps
         data class OpenStandalone(val id: String) : Apps
         data class Pin(val id: String) : Apps
-        data class Edit(val id: String, val result: GeckoResult<Any>? = null) : Apps
-        data class Delete(val id: String) : Apps
     }
 
     sealed interface Panel : HyperCommand {

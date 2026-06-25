@@ -87,12 +87,15 @@ function AppsPage() {
   }), []);
 
   function saveEditingApp(app: WebAppItem, changes: LauncherAppChanges) {
-    window.hyperBrowser.updateApp(app.id, changes.name, changes.startUrl, changes.iconDataUrl)
+    sendBackgroundCommand<WebAppItem[]>("webapps.save", {
+      ...app,
+      ...changes,
+      id: app.id,
+    })
       .then((items) => {
         setApps(items);
         setFailed(false);
         setEditingApp(null);
-        sendBackgroundCommand("sync.soon").catch((error) => console.warn("Unable to schedule WebApp sync.", error));
       })
       .catch(() => loadApps(false));
   }
@@ -160,10 +163,9 @@ function AppsPage() {
           app={deletingApp}
           onClose={() => setDeletingApp(null)}
           onConfirm={() => {
-            window.hyperBrowser.deleteApp(deletingApp.id)
-              .then(() => sendBackgroundCommand("sync.soon"))
-              .catch((error) => console.warn("Unable to schedule WebApp deletion sync.", error));
-            setApps((current) => (current || []).filter((app) => app.id !== deletingApp.id));
+            sendBackgroundCommand<WebAppItem[]>("webapps.delete", { id: deletingApp.id })
+              .then((items) => setApps(items))
+              .catch((error) => console.warn("Unable to delete WebApp.", error));
             setDeletingApp(null);
           }}
         />

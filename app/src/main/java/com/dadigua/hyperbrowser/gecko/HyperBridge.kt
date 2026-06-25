@@ -44,19 +44,13 @@ object HyperBridge {
         "update.downloadState",
         "update.install",
         "bookmarks.open",
-        "bookmarks.delete",
-        "bookmarks.save",
         "history.open",
         "history.remove",
         "history.clear",
         "apps.open",
         "apps.openStandalone",
         "apps.pin",
-        "apps.edit",
-        "apps.update",
         "apps.icon.choose",
-        "apps.icon.update",
-        "apps.delete",
         "panel.extensions"
     )
     private val CONTENT_SCRIPT_MESSAGE_TYPES = setOf(

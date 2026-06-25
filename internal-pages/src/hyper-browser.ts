@@ -1,4 +1,5 @@
 import type { BookmarkRecord, WebAppRecord } from "@hyper-sync";
+import { sendBackgroundCommand } from "./background-command";
 
 type BridgeResponse = {
   ok: boolean;
@@ -173,19 +174,13 @@ type HyperBridgeMessageType =
   | "update.downloadState"
   | "update.install"
   | "bookmarks.open"
-  | "bookmarks.delete"
-  | "bookmarks.save"
   | "history.open"
   | "history.remove"
   | "history.clear"
   | "apps.open"
   | "apps.openStandalone"
   | "apps.pin"
-  | "apps.edit"
-  | "apps.update"
   | "apps.icon.choose"
-  | "apps.icon.update"
-  | "apps.delete"
   | "panel.extensions";
 
 type BridgePayload = Record<string, string>;
@@ -271,7 +266,6 @@ type HyperBrowserApi = {
   openApp(id: string): void;
   openStandaloneApp(id: string): void;
   pinApp(id: string): void;
-  editApp(id: string): Promise<WebAppItem[]>;
   updateApp(id: string, name: string, startUrl: string, iconDataUrl?: string | null): Promise<WebAppItem[]>;
   chooseAppIcon(id: string): Promise<string | null>;
   updateAppIcon(id: string, iconDataUrl: string | null): Promise<WebAppItem[]>;
@@ -364,7 +358,7 @@ window.hyperBrowser = {
       .then((result) => result.layout && typeof result.layout === "object" ? result.layout : null);
   },
   saveLauncherLayout(layout) {
-    return send("launcher.layout.save", { layout: JSON.stringify(layout) }).then(() => undefined);
+    return sendBackgroundCommand("launcher.layout.save", layout).then(() => undefined);
   },
   updateSearchEngine(searchEngineId, customSearchUrl = "") {
     return send("settings.searchEngine.update", { searchEngineId, customSearchUrl })
@@ -472,23 +466,32 @@ window.hyperBrowser = {
   pinApp(id) {
     command("apps.pin", { id });
   },
-  editApp(id) {
-    return requestItems<WebAppItem>("apps.edit", { id });
-  },
   updateApp(id, name, startUrl, iconDataUrl) {
-    const payload: BridgePayload = { id, name, startUrl };
-    if (iconDataUrl !== undefined) payload.iconDataUrl = iconDataUrl || "";
-    return requestItems<WebAppItem>("apps.update", payload);
+    const payload: Partial<WebAppItem> & { id: string; name: string; startUrl: string } = { id, name, startUrl };
+    if (iconDataUrl !== undefined) {
+      payload.iconDataUrl = iconDataUrl || null;
+      payload.iconSource = iconDataUrl ? "custom" : "site";
+    }
+    return sendBackgroundCommand<WebAppItem[]>("webapps.save", payload);
   },
   chooseAppIcon(id) {
     return requestObject<{ iconDataUrl?: string | null }>("apps.icon.choose", { id })
       .then((result) => result.iconDataUrl || null);
   },
   updateAppIcon(id, iconDataUrl) {
-    return requestItems<WebAppItem>("apps.icon.update", { id, iconDataUrl: iconDataUrl || "" });
+    return requestItems<WebAppItem>("data.apps")
+      .then((items) => {
+        const app = items.find((item) => item.id === id);
+        if (!app) throw new Error("WebApp not found.");
+        return sendBackgroundCommand<WebAppItem[]>("webapps.save", {
+          ...app,
+          iconDataUrl: iconDataUrl || null,
+          iconSource: iconDataUrl ? "custom" : "site",
+        });
+      });
   },
   deleteApp(id) {
-    return requestItems<WebAppItem>("apps.delete", { id });
+    return sendBackgroundCommand<WebAppItem[]>("webapps.delete", { id });
   }
 };
 

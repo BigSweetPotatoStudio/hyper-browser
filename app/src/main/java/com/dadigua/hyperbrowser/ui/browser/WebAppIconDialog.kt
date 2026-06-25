@@ -46,13 +46,7 @@ import com.dadigua.hyperbrowser.webapp.WebAppIconPreset
 import com.dadigua.hyperbrowser.webapp.WebAppIconPresets
 import java.text.BreakIterator
 
-internal enum class WebAppDetailsDialogMode {
-    Install,
-    Edit
-}
-
 internal data class WebAppDetailsDialogState(
-    val mode: WebAppDetailsDialogMode,
     val webAppId: String? = null,
     val name: String,
     val startUrl: String,
@@ -79,15 +73,7 @@ internal fun WebAppDetailsDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text(
-                stringResource(
-                    if (state.mode == WebAppDetailsDialogMode.Install) {
-                        R.string.webapp_install_dialog_title
-                    } else {
-                        R.string.webapp_edit_dialog_title
-                    }
-                )
-            )
+            Text(stringResource(R.string.webapp_install_dialog_title))
         },
         text = {
             Column(
@@ -205,15 +191,7 @@ internal fun WebAppDetailsDialog(
         },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text(
-                    stringResource(
-                        if (state.mode == WebAppDetailsDialogMode.Install) {
-                            R.string.common_action_install
-                        } else {
-                            R.string.common_action_save
-                        }
-                    )
-                )
+                Text(stringResource(R.string.common_action_install))
             }
         },
         dismissButton = {
