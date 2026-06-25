@@ -145,7 +145,7 @@ Card/List 的展示行为必须分开：
 
 ## 内置 HTML 页面与 HyperCommand
 
-首页、书签页、历史页优先作为 GeckoView 内置页面开发，而不是 Compose 面板。源码使用 React + TypeScript/TSX，放在：
+首页、搜索页、设置页、WebApp 管理页、书签页、历史页优先作为 GeckoView 内置页面开发，而不是 Compose 面板。源码使用 React + TypeScript/TSX，放在：
 
 ```text
 internal-pages/
@@ -165,11 +165,16 @@ pnpm --dir internal-pages build
 
 Android 构建也会通过 Gradle 自动执行 `internal-pages` 的 pnpm install/build。
 
-- `hyper://home` -> `resource://android/assets/home.html`
-- `hyper://bookmarks` -> `resource://android/assets/bookmarks.html#data=...`
-- `hyper://history` -> `resource://android/assets/history.html#data=...`
+语义路由包括：
 
-地址栏必须显示语义 URL，例如 `hyper://home`、`hyper://bookmarks`、`hyper://history`，不要向用户暴露 `resource://android/assets/...`。
+- `hyper://home`
+- `hyper://search`
+- `hyper://settings`
+- `hyper://apps`
+- `hyper://bookmarks`
+- `hyper://history`
+
+实际页面通过内置 WebExtension 的 `moz-extension://.../*.html` 加载。地址栏必须显示语义 URL，例如 `hyper://home`、`hyper://bookmarks`、`hyper://history`，不要向用户暴露 `moz-extension://...` 或 `resource://android/assets/...`。
 
 内置页面中的浏览器操作通过 `window.hyperBrowser` 发出，bridge 源码统一放在：
 
@@ -177,9 +182,9 @@ Android 构建也会通过 Gradle 自动执行 `internal-pages` 的 pnpm install
 internal-pages/src/hyper-browser.ts
 ```
 
-不要手改 `app/src/main/assets/home.html`、`bookmarks.html`、`history.html` 或生成的 `internal/` bundle；这些文件由 Vite 生成。
+不要手改 `app/src/main/assets/*.html` 或生成的 `internal/` bundle；这些文件由 Vite 生成。
 
-不要再使用 `hyper://api/...` 或 `hyper://command/...` 作为内置页面 API。内置页面必须作为内置 WebExtension 页面加载。页面 JS 只调用 `window.hyperBrowser`；包装层通过 `browser.runtime.sendMessage(...)` 发给 `background.js`，再由 `background.js` 调用 `browser.runtime.sendNativeMessage("hyperBrowser", ...)` 进入 Kotlin bridge。
+不要再使用 `hyper://api/...` 或 `hyper://command/...` 作为内置页面 API。内置页面必须作为内置 WebExtension 页面加载。页面 JS 只调用 `window.hyperBrowser`；包装层通过 `browser.runtime.sendMessage(...)` 发给 `internal-pages/src/background.ts`，再由 background 调用 `browser.runtime.sendNativeMessage("hyperBrowser", ...)` 进入 Kotlin bridge。
 
 Kotlin 侧要把页面路由和页面命令分开：
 
@@ -205,6 +210,8 @@ Kotlin 侧要把页面路由和页面命令分开：
 - `request*Data()` 必须返回 Promise，并由 bridge 直接返回 JSON 数据；不要通过 URL 跳转、hash 二次加载或 fallback 到旧协议取数据
 - 内置页面的数据修改必须由页面通过 `window.hyperBrowser` bridge 发起，并由页面自己更新 React state / DOM；Kotlin/native 只负责持久化、系统能力和返回 JSON 结果
 - 需要原生 UI 参与的异步流程，例如 WebApp 编辑弹窗，必须通过 bridge Promise / `GeckoResult` 在保存、取消或失败后返回结果；不要用 `session.loadUri("javascript:...")`、focus/pageshow 轮询、重新 load 内置页或 hash reload 来刷新页面
+- 书签、WebApp 和 launcher 布局写入必须走 background 统一命令，例如 `bookmarks.save`、`webapps.save`、`launcher.layout.save`、`launcher.layout.addWebApp`；不要在页面或 Kotlin handler 里绕过 background 直接写业务 JSON
+- Android native 侧只暴露当前页面信息、系统能力和 `sync.localFile.read` / `sync.localFile.save` 文件适配；WebDAV 合并、新旧判断、墓碑和自动同步调度都放在 `shared/sync` 与 background 层
 
 移动端内置页要求：
 
@@ -306,9 +313,21 @@ popup 容器高度必须覆盖 WebExtension 内容的可交互区域。不要让
 首版不用 Room，使用 app 私有目录 JSON 文件：
 
 - `browser_history.json`
-- `browser_bookmarks.json`
-- `web_apps.json`
+- `bookmarks.json`
+- `webapps.json`
+- `launcher.json`
+- `browser_settings.json`
+- `browser_downloads.json`
+- `browser_tabs.json`
 - `installed_extensions.json`
+
+WebDAV 同步的本地和远端业务文件保持同形态：
+
+- `bookmarks.json`
+- `webapps.json`
+- `launcher.json`
+
+远端 `manifest.json` 只是摘要和调试索引，不作为业务合并源。`shared/sync/src/sync-json-types.ts` 是三份同步 JSON 的类型定义来源。旧数据迁移应做成单独迁移功能，不要在同步读路径里继续加 fallback。
 
 保持结构简单，后续需要迁移再引入 Room/DataStore。
 
