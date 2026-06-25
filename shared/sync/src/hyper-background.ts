@@ -62,9 +62,6 @@ type LauncherLayout = Record<string, unknown> & {
   cells?: LauncherCell[];
   dock?: unknown[];
   folders?: LauncherFolder[];
-  gridColumns?: number;
-  updatedAt?: number;
-  editedAt?: number;
 };
 
 type LauncherLayoutMutation = {
@@ -237,23 +234,18 @@ function addWebAppToLauncherLayout(layout: unknown, itemId: string): LauncherLay
   if (launcherLayoutContainsItem(current, itemId)) return { changed: false, layout: current };
 
   const cells = current.cells || [];
-  const columns = positiveInteger(current.gridColumns) || inferLauncherGridColumns(cells);
-  const nextIndex = nextLauncherCellIndex(cells, columns);
+  const nextIndex = nextLauncherCellIndex(cells);
   current.cells = [
     ...cells,
     {
       page: 0,
-      row: Math.floor(nextIndex / columns),
-      column: nextIndex % columns,
+      row: 0,
+      column: 0,
       id: itemId,
       index: nextIndex,
     },
   ];
   current.version = positiveInteger(current.version) || 4;
-  current.gridColumns = columns;
-  const now = Date.now();
-  current.editedAt = now;
-  current.updatedAt = now;
   return { changed: true, layout: current };
 }
 
@@ -291,11 +283,6 @@ function removeWebAppFromLauncherLayout(layout: unknown, itemId: string): Launch
     });
   }
 
-  if (changed) {
-    const now = Date.now();
-    current.editedAt = now;
-    current.updatedAt = now;
-  }
   return { changed, layout: current };
 }
 
@@ -324,19 +311,10 @@ function launcherLayoutContainsItem(layout: LauncherLayout, itemId: string): boo
     (layout.folders || []).some((folder) => Array.isArray(folder.childIds) && folder.childIds.some((id) => stringValue(id) === itemId));
 }
 
-function inferLauncherGridColumns(cells: LauncherCell[]): number {
-  return cells.reduce((maxColumn, cell) => {
-    const column = positiveInteger(cell.column);
-    return column !== null && column > maxColumn ? column : maxColumn;
-  }, 3) + 1;
-}
-
-function nextLauncherCellIndex(cells: LauncherCell[], columns: number): number {
+function nextLauncherCellIndex(cells: LauncherCell[]): number {
   return cells.reduce((maxIndex, cell) => {
     const explicit = positiveInteger(cell.index);
-    const cellIndex = explicit !== null
-      ? explicit
-      : (positiveInteger(cell.page) || 0) * columns + (positiveInteger(cell.row) || 0) * columns + (positiveInteger(cell.column) || 0);
+    const cellIndex = explicit !== null ? explicit : maxIndex + 1;
     return cellIndex > maxIndex ? cellIndex : maxIndex;
   }, -1) + 1;
 }

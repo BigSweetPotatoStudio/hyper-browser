@@ -130,8 +130,7 @@ async function applyAndroidState(state: SyncV2State): Promise<void> {
 
 function canonicalLauncherLayout(layout: unknown): string {
   if (!layout || typeof layout !== "object" || Array.isArray(layout)) return "";
-  const { updatedAt: _updatedAt, ...rest } = layout as Record<string, unknown>;
-  return canonicalJson(rest);
+  return canonicalJson(layout);
 }
 
 async function withLocalLock<T>(operation: () => Promise<T>): Promise<T> {

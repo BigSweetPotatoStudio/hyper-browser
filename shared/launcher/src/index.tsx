@@ -98,17 +98,12 @@ export type LauncherLayout = {
   cells: LauncherDesktopCell[];
   dock: string[];
   folders: LauncherFolderLayout[];
-  gridColumns?: number;
-  editedAt?: number;
-  updatedAt?: number;
 };
 
 type DesktopCell = LauncherDesktopCell;
 type FolderLayout = LauncherFolderLayout;
 
 type StoredLauncherLayout = Partial<LauncherLayout> & {
-  order?: string[];
-  pages?: string[][];
   version?: number;
 };
 
@@ -341,7 +336,7 @@ export function LauncherPage({
   const labels = useMemo<LauncherLabels>(() => ({ ...defaultLabels, ...labelOverrides }), [labelOverrides]);
   const gridMetrics = useDesktopGridMetrics(variant);
   const [apps, setApps] = useState<LauncherApp[]>([]);
-  const [layout, setLayout] = useState<LauncherLayout>({ version: LAYOUT_VERSION, cells: [], dock: [...platform.defaultDockEntryIds], folders: [], gridColumns: gridMetrics.columns });
+  const [layout, setLayout] = useState<LauncherLayout>({ version: LAYOUT_VERSION, cells: [], dock: [...platform.defaultDockEntryIds], folders: [] });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -397,7 +392,7 @@ export function LauncherPage({
     if (loading) return;
     const reason = layoutSaveReason.current;
     layoutSaveReason.current = "system";
-    Promise.resolve(layoutStorage.save({ ...layout, version: LAYOUT_VERSION, gridColumns: gridMetrics.columns }, { reason })).catch(console.error);
+    Promise.resolve(layoutStorage.save({ ...layout, version: LAYOUT_VERSION }, { reason })).catch(console.error);
   }, [gridMetrics.columns, layout, loading, layoutStorage]);
 
   useEffect(() => {
@@ -521,13 +516,9 @@ export function LauncherPage({
 
   function commitLayout(updater: (current: LauncherLayout) => LauncherLayout) {
     setLayout((current) => {
-      const now = Date.now();
       const next = {
         ...limitDockItems(pruneEmptyFolders(removeDeprecatedEntryIds(updater(current), deprecatedEntryIds))),
         version: LAYOUT_VERSION,
-        gridColumns: gridMetrics.columns,
-        editedAt: now,
-        updatedAt: now,
       };
       layoutSaveReason.current = "user";
       onLayoutChanged?.(next);
@@ -550,15 +541,12 @@ export function LauncherPage({
         .filter((id) => visibleDesktopIdSet.has(id));
       const nextCellIds = uniqueStrings([...preservedCellIds, ...autoDesktopIds, ...autoWebAppIds]);
       const nextCells = normalizeDesktopCells(pruned.cells, nextCellIds, gridMetrics);
-      const next = sameCells(pruned.cells, nextCells, gridMetrics) && pruned.gridColumns === gridMetrics.columns
+      const next = sameCells(pruned.cells, nextCells, gridMetrics)
         ? pruned
         : {
             ...pruned,
             cells: nextCells,
             version: LAYOUT_VERSION,
-            gridColumns: gridMetrics.columns,
-            editedAt: pruned.editedAt,
-            updatedAt: pruned.updatedAt,
           };
       if (next !== current) layoutSaveReason.current = "system";
       return next === current ? current : next;
@@ -2013,14 +2001,6 @@ function normalizeStoredLayout(
     .filter((id) => !deprecatedEntryIds.has(id))
     .slice(0, MAX_DOCK_ITEMS);
   const dockSet = new Set(dock);
-  const legacyOrder = Array.isArray(value?.order)
-    ? uniqueStrings(value.order).filter((id) => !dockSet.has(id) && !deprecatedEntryIds.has(id))
-    : [];
-  const pages = Array.isArray(value?.pages)
-    ? value.pages
-      .filter((page): page is string[] => Array.isArray(page))
-      .map((page) => uniqueStrings(page).filter((id) => !dockSet.has(id) && !deprecatedEntryIds.has(id)))
-    : [];
   const cells = Array.isArray(value?.cells)
     ? value.cells
       .filter((cell): cell is DesktopCell => (
@@ -2031,10 +2011,9 @@ function normalizeStoredLayout(
       ))
       .filter((cell) => !dockSet.has(cell.id) && !deprecatedEntryIds.has(cell.id))
     : [];
-  const gridColumns = readStoredGridColumns(value?.gridColumns, cells, metrics);
   return {
     version: LAYOUT_VERSION,
-    cells: cells.length > 0 ? normalizeDesktopCells(cells, [], metrics, gridColumns) : (pages.length > 0 ? pagesToCells(pages, metrics) : idsToCells(legacyOrder, metrics, 0)),
+    cells: normalizeDesktopCells(cells, [], metrics),
     dock,
     folders: Array.isArray(value?.folders)
       ? value.folders
@@ -2045,9 +2024,6 @@ function normalizeStoredLayout(
           childIds: uniqueStrings(folder.childIds).filter((id) => !dockSet.has(id) && !deprecatedEntryIds.has(id)),
         }))
       : [],
-    gridColumns: metrics.columns,
-    editedAt: Number.isFinite(value?.editedAt) ? Number(value?.editedAt) : undefined,
-    updatedAt: Number.isFinite(value?.updatedAt) ? Number(value?.updatedAt) : undefined,
   };
 }
 
@@ -2106,7 +2082,7 @@ function buildDesktopSlots(cells: DesktopCell[], metrics: DesktopGridMetrics, re
   });
 }
 
-function normalizeDesktopCells(cells: DesktopCell[], visibleIds: string[], metrics: DesktopGridMetrics, sourceColumns?: number): DesktopCell[] {
+function normalizeDesktopCells(cells: DesktopCell[], visibleIds: string[], metrics: DesktopGridMetrics): DesktopCell[] {
   const visibleSet = new Set(visibleIds);
   const hasVisibleSet = visibleSet.size > 0;
   const seen = new Set<string>();
@@ -2115,7 +2091,7 @@ function normalizeDesktopCells(cells: DesktopCell[], visibleIds: string[], metri
   for (const cell of cells) {
     if (seen.has(cell.id)) continue;
     if (hasVisibleSet && !visibleSet.has(cell.id)) continue;
-    let globalIndex = canonicalCellIndex(cell, metrics, sourceColumns);
+    let globalIndex = canonicalCellIndex(cell, metrics);
     while (usedIndexes.has(globalIndex)) globalIndex += 1;
     nextCells.push(cellFromGlobalIndex(globalIndex, metrics, cell.id));
     seen.add(cell.id);
@@ -2137,10 +2113,6 @@ function normalizeDesktopCells(cells: DesktopCell[], visibleIds: string[], metri
 function idsToCells(ids: string[], metrics: DesktopGridMetrics, startPage: number): DesktopCell[] {
   const startIndex = startPage * metrics.capacity;
   return uniqueStrings(ids).map((id, index) => cellFromGlobalIndex(startIndex + index, metrics, id));
-}
-
-function pagesToCells(pages: string[][], metrics: DesktopGridMetrics): DesktopCell[] {
-  return pages.flatMap((page, pageIndex) => idsToCells(page, metrics, pageIndex));
 }
 
 function sameCells(left: DesktopCell[], right: DesktopCell[], metrics: DesktopGridMetrics): boolean {
@@ -2294,19 +2266,12 @@ function cellFromGlobalIndex(index: number, metrics: DesktopGridMetrics, id: str
   return { ...globalIndexToCell(normalizedIndex, metrics), id, index: normalizedIndex };
 }
 
-function canonicalCellIndex(cell: DesktopCell, metrics: DesktopGridMetrics, sourceColumns?: number): number {
+function canonicalCellIndex(cell: DesktopCell, metrics: DesktopGridMetrics): number {
   if (Number.isInteger(cell.index)) return Math.max(0, Number(cell.index));
-  const columns = Math.max(1, sourceColumns || metrics.columns);
   const page = Math.max(0, cell.page);
   const row = Math.max(0, cell.row);
   const column = Math.max(0, cell.column);
-  return page * metrics.rows * columns + row * columns + column;
-}
-
-function readStoredGridColumns(value: unknown, cells: DesktopCell[], metrics: DesktopGridMetrics): number {
-  if (Number.isInteger(value) && Number(value) > 0) return Number(value);
-  const maxStoredColumn = cells.reduce((max, cell) => Math.max(max, Number.isInteger(cell.column) ? cell.column : 0), 0);
-  return Math.max(1, metrics.columns, maxStoredColumn + 1);
+  return page * metrics.capacity + row * metrics.columns + column;
 }
 
 function cellDropId(cell: DesktopCellPosition): string {

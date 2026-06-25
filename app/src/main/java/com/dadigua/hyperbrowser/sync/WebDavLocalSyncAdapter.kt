@@ -32,8 +32,8 @@ class WebDavLocalSyncAdapter(
             .put("deviceId", config.deviceId)
             .put("deviceName", config.deviceName)
             .put("metadata", known.toJson())
-            .put("bookmarks", bookmarksArray(localBookmarkRecords(known.bookmarks, config.deviceId, now)))
-            .put("webApps", webAppsArray(localWebAppRecords(known.webApps, config.deviceId, now)))
+            .put("bookmarks", bookmarksObject(localBookmarkRecords(known.bookmarks, config.deviceId, now)))
+            .put("webApps", webAppsObject(localWebAppRecords(known.webApps, config.deviceId, now)))
     }
 
     suspend fun applyRecords(
@@ -232,7 +232,7 @@ class WebDavLocalSyncAdapter(
                 if (webAppRepository.delete(current.id)) removed += 1
             }
         }
-        activeRecords.values.sortedByDescending { it.updatedAt }.forEach { record ->
+        activeRecords.values.forEach { record ->
             val current = currentById[record.id]
             if (current == null ||
                 current.name != record.name ||
@@ -321,8 +321,8 @@ private class WebDavSyncMetadataStore(context: Context) {
         return runCatching {
             val root = JSONObject(file.readText())
             SyncMetadata(
-                bookmarks = bookmarkRecordsById(parseBookmarkRecords(root.opt("bookmarks") ?: JSONArray())),
-                webApps = parseWebAppRecords(root.opt("webApps") ?: JSONArray()).associateBy { it.id }
+                bookmarks = bookmarkRecordsById(parseBookmarkMetadataRecords(root.opt("bookmarks"))),
+                webApps = parseWebAppMetadataRecords(root.opt("webApps")).associateBy { it.id }
             )
         }.getOrDefault(SyncMetadata(emptyMap(), emptyMap()))
     }
@@ -332,8 +332,8 @@ private class WebDavSyncMetadataStore(context: Context) {
             JSONObject()
                 .put("schemaVersion", 1)
                 .put("updatedAt", System.currentTimeMillis())
-                .put("bookmarks", bookmarksArray(bookmarks))
-                .put("webApps", webAppsArray(webApps))
+                .put("bookmarks", bookmarksObject(bookmarks))
+                .put("webApps", webAppsObject(webApps))
                 .toString()
         )
     }
@@ -345,8 +345,8 @@ private data class SyncMetadata(
 ) {
     fun toJson(): JSONObject =
         JSONObject()
-            .put("bookmarks", bookmarksArray(bookmarks.values))
-            .put("webApps", webAppsArray(webApps.values))
+            .put("bookmarks", bookmarksObject(bookmarks.values))
+            .put("webApps", webAppsObject(webApps.values))
 }
 
 private data class SyncBookmarkRecord(
@@ -457,29 +457,14 @@ private fun parseBookmarkRecords(raw: String?): List<SyncBookmarkRecord> {
     if (raw.isNullOrBlank()) return emptyList()
     return runCatching {
         val root = JSONObject(raw)
-        val wrapped = root.opt("items") ?: root.opt("bookmarks")
-        if (wrapped != null) parseBookmarkRecords(wrapped) else parseBookmarkRecordsMap(root)
+        parseBookmarkRecordsMap(root.optJSONObject("bookmarks") ?: root)
     }.getOrDefault(emptyList())
 }
 
 private fun parseBookmarkRecordsPayload(raw: String?): List<SyncBookmarkRecord> {
     if (raw.isNullOrBlank()) return emptyList()
-    val clean = raw.trim()
-    return runCatching {
-        if (clean.startsWith("[")) {
-            parseBookmarkRecords(JSONArray(clean))
-        } else {
-            parseBookmarkRecords(clean)
-        }
-    }.getOrDefault(emptyList())
+    return parseBookmarkRecords(raw)
 }
-
-private fun parseBookmarkRecords(value: Any?): List<SyncBookmarkRecord> =
-    when (value) {
-        is JSONArray -> parseBookmarkRecords(value)
-        is JSONObject -> parseBookmarkRecordsMap(value)
-        else -> emptyList()
-    }
 
 private fun parseBookmarkRecordsMap(map: JSONObject): List<SyncBookmarkRecord> =
     buildList {
@@ -491,12 +476,16 @@ private fun parseBookmarkRecordsMap(map: JSONObject): List<SyncBookmarkRecord> =
         }
     }
 
-private fun parseBookmarkRecords(array: JSONArray): List<SyncBookmarkRecord> =
-    buildList {
-        for (index in 0 until array.length()) {
-            val item = array.optJSONObject(index) ?: continue
-            parseBookmarkRecord(item, fallbackUrl = null)?.let(::add)
+private fun parseBookmarkMetadataRecords(value: Any?): List<SyncBookmarkRecord> =
+    when (value) {
+        is JSONObject -> parseBookmarkRecordsMap(value)
+        is JSONArray -> buildList {
+            for (index in 0 until value.length()) {
+                val item = value.optJSONObject(index) ?: continue
+                parseBookmarkRecord(item, fallbackUrl = null)?.let(::add)
+            }
         }
+        else -> emptyList()
     }
 
 private fun parseBookmarkRecord(item: JSONObject, fallbackUrl: String?): SyncBookmarkRecord? {
@@ -521,29 +510,14 @@ private fun parseWebAppRecords(raw: String?): List<SyncWebAppRecord> {
     if (raw.isNullOrBlank()) return emptyList()
     return runCatching {
         val root = JSONObject(raw)
-        val wrapped = root.opt("items") ?: root.opt("apps") ?: root.opt("webApps")
-        if (wrapped != null) parseWebAppRecords(wrapped) else parseWebAppRecordsMap(root)
+        parseWebAppRecordsMap(root.optJSONObject("apps") ?: root)
     }.getOrDefault(emptyList())
 }
 
 private fun parseWebAppRecordsPayload(raw: String?): List<SyncWebAppRecord> {
     if (raw.isNullOrBlank()) return emptyList()
-    val clean = raw.trim()
-    return runCatching {
-        if (clean.startsWith("[")) {
-            parseWebAppRecords(JSONArray(clean))
-        } else {
-            parseWebAppRecords(clean)
-        }
-    }.getOrDefault(emptyList())
+    return parseWebAppRecords(raw)
 }
-
-private fun parseWebAppRecords(value: Any?): List<SyncWebAppRecord> =
-    when (value) {
-        is JSONArray -> parseWebAppRecords(value)
-        is JSONObject -> parseWebAppRecordsMap(value)
-        else -> emptyList()
-    }
 
 private fun parseWebAppRecordsMap(map: JSONObject): List<SyncWebAppRecord> =
     buildList {
@@ -555,12 +529,16 @@ private fun parseWebAppRecordsMap(map: JSONObject): List<SyncWebAppRecord> =
         }
     }
 
-private fun parseWebAppRecords(array: JSONArray): List<SyncWebAppRecord> =
-    buildList {
-        for (index in 0 until array.length()) {
-            val item = array.optJSONObject(index) ?: continue
-            parseWebAppRecord(item, fallbackId = null)?.let(::add)
+private fun parseWebAppMetadataRecords(value: Any?): List<SyncWebAppRecord> =
+    when (value) {
+        is JSONObject -> parseWebAppRecordsMap(value)
+        is JSONArray -> buildList {
+            for (index in 0 until value.length()) {
+                val item = value.optJSONObject(index) ?: continue
+                parseWebAppRecord(item, fallbackId = null)?.let(::add)
+            }
         }
+        else -> emptyList()
     }
 
 private fun parseWebAppRecord(item: JSONObject, fallbackId: String?): SyncWebAppRecord? {
@@ -589,42 +567,46 @@ private fun parseWebAppRecord(item: JSONObject, fallbackId: String?): SyncWebApp
     )
 }
 
-private fun bookmarksArray(records: Collection<SyncBookmarkRecord>): JSONArray =
-    JSONArray().apply {
+private fun bookmarksObject(records: Collection<SyncBookmarkRecord>): JSONObject =
+    JSONObject().apply {
         records.forEach { record ->
-            put(
-                JSONObject()
-                    .put("url", record.url)
-                    .put("title", record.title)
-                    .put("createdAt", record.createdAt)
-                    .put("updatedAt", record.updatedAt)
-                    .putJsonNullable("deletedAt", record.deletedAt)
-                    .putJsonNullable("iconDataUrl", record.iconDataUrl)
-                    .putRevision(record.rev)
-            )
+            val key = bookmarkRecordKey(record)
+            if (key.isNotBlank()) put(key, bookmarkJson(record))
         }
     }
 
-private fun webAppsArray(records: Collection<SyncWebAppRecord>): JSONArray =
-    JSONArray().apply {
+private fun bookmarkJson(record: SyncBookmarkRecord): JSONObject =
+    JSONObject()
+        .put("url", record.url)
+        .put("title", record.title)
+        .put("createdAt", record.createdAt)
+        .put("updatedAt", record.updatedAt)
+        .putJsonNullable("deletedAt", record.deletedAt)
+        .putJsonNullable("iconDataUrl", record.iconDataUrl)
+        .putRevision(record.rev)
+
+private fun webAppsObject(records: Collection<SyncWebAppRecord>): JSONObject =
+    JSONObject().apply {
         records.forEach { record ->
-            put(
-                JSONObject()
-                    .put("id", record.id)
-                    .put("name", record.name)
-                    .put("startUrl", record.startUrl)
-                    .put("themeColor", record.themeColor)
-                    .put("displayMode", record.displayMode)
-                    .put("createdAt", record.createdAt)
-                    .put("lastOpenedAt", record.lastOpenedAt)
-                    .put("updatedAt", record.updatedAt)
-                    .put("deletedAt", record.deletedAt)
-                    .put("iconDataUrl", record.iconDataUrl)
-                    .put("iconSource", record.iconSource)
-                    .putRevision(record.rev)
-            )
+            val id = record.id.trim()
+            if (id.isNotBlank()) put(id, webAppJson(record))
         }
     }
+
+private fun webAppJson(record: SyncWebAppRecord): JSONObject =
+    JSONObject()
+        .put("id", record.id)
+        .put("name", record.name)
+        .put("startUrl", record.startUrl)
+        .put("themeColor", record.themeColor)
+        .put("displayMode", record.displayMode)
+        .put("createdAt", record.createdAt)
+        .put("lastOpenedAt", record.lastOpenedAt)
+        .put("updatedAt", record.updatedAt)
+        .put("deletedAt", record.deletedAt)
+        .put("iconDataUrl", record.iconDataUrl)
+        .put("iconSource", record.iconSource)
+        .putRevision(record.rev)
 
 private fun JSONObject.optRevision(): SyncRevision {
     val rev = optJSONObject("rev") ?: return SyncRevision()

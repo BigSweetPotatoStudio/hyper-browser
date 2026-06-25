@@ -41,8 +41,6 @@ export type SyncV2LayoutItem = {
 export type SyncV2LayoutState = {
   items: Record<string, SyncV2LayoutItem>;
   itemTombstones: Record<string, SyncV2Tombstone>;
-  editedAt: number;
-  editedDeviceId: string;
   rev: Revision;
 };
 
@@ -60,7 +58,7 @@ export type SyncV2Operation =
   | SyncV2BaseOperation<"bookmark.delete"> & BookmarkDeleteInput
   | SyncV2BaseOperation<"app.upsert"> & { app: Partial<WebAppRecord> & { id: string; name: string; startUrl: string } }
   | SyncV2BaseOperation<"app.delete"> & { appId: string }
-  | SyncV2BaseOperation<"layout.replace"> & { layout: LauncherLayoutLike; editedAt?: number }
+  | SyncV2BaseOperation<"layout.replace"> & { layout: LauncherLayoutLike }
   | SyncV2BaseOperation<"layout.place"> & { item: Omit<SyncV2LayoutItem, "rev"> }
   | SyncV2BaseOperation<"layout.hide"> & { itemId: string }
   | SyncV2BaseOperation<"layout.deleteItem"> & { itemId: string };
@@ -79,7 +77,7 @@ type SyncV2OperationInput =
   | ({ type: "bookmark.delete" } & BookmarkDeleteInput)
   | { type: "app.upsert"; app: Partial<WebAppRecord> & { id: string; name: string; startUrl: string } }
   | { type: "app.delete"; appId: string }
-  | { type: "layout.replace"; layout: LauncherLayoutLike; editedAt?: number }
+  | { type: "layout.replace"; layout: LauncherLayoutLike }
   | { type: "layout.place"; item: Omit<SyncV2LayoutItem, "rev"> }
   | { type: "layout.hide"; itemId: string }
   | { type: "layout.deleteItem"; itemId: string };
@@ -92,29 +90,18 @@ export type SyncV2Store = {
   outbox: SyncV2Operation[];
 };
 
-type LegacyBookmarkRecord = BookmarkRecord & {
-  sourceDeviceId?: string;
-};
-
-type LegacyWebAppRecord = WebAppRecord & {
-  sourceDeviceId?: string;
-  identityKey?: string;
-  scopeUrl?: string;
-};
-
 export type LauncherLayoutLike = {
   version?: number;
   cells?: Array<{ id: string; page?: number; row?: number; column?: number; index?: number }>;
   dock?: string[];
   folders?: Array<{ id: string; title?: string; childIds?: string[] }>;
-  gridColumns?: number;
-  updatedAt?: number;
-  editedAt?: number;
 };
 
+type SnapshotRecordCollection<T> = Array<T> | Record<string, T>;
+
 export type SyncV2LocalSnapshot = {
-  bookmarks?: Array<BookmarkRecord & { rev?: Partial<Revision> }>;
-  webApps?: Array<WebAppRecord & { rev?: Partial<Revision> }>;
+  bookmarks?: SnapshotRecordCollection<BookmarkRecord & { rev?: Partial<Revision> }>;
+  webApps?: SnapshotRecordCollection<WebAppRecord & { rev?: Partial<Revision> }>;
   layout?: LauncherLayoutLike | null;
 };
 
@@ -164,8 +151,6 @@ export function createEmptyState(): SyncV2State {
     layout: {
       items: {},
       itemTombstones: {},
-      editedAt: 0,
-      editedDeviceId: "",
       rev: { counter: 0, deviceId: "" },
     },
   };
@@ -216,7 +201,7 @@ export function ensureState(value: unknown): SyncV2State {
     layout: {
       items: readLayoutItemMap(state.layout?.items),
       itemTombstones: state.layout?.itemTombstones || {},
-      ...readLayoutMetadata(state.layout, readLayoutItemMap(state.layout?.items), state.layout?.itemTombstones || {}),
+      rev: normalizeRevision(state.layout?.rev),
     },
   });
 }
@@ -268,8 +253,6 @@ function sanitizeState(state: SyncV2State): SyncV2State {
   });
 
   compactStateTombstones(clean);
-  clean.layout.editedAt = normalizeTimestamp(clean.layout.editedAt);
-  clean.layout.editedDeviceId = clean.layout.editedDeviceId || clean.layout.rev.deviceId || "";
   clean.layout.rev = normalizeRevision(clean.layout.rev);
 
   return clean;
@@ -367,10 +350,13 @@ export function appendLocalSnapshotOperations(store: SyncV2Store, snapshot: Sync
   return next;
 }
 
-function appendBookmarkSnapshotOperations(store: SyncV2Store, bookmarks: BookmarkRecord[]): SyncV2Store {
+function appendBookmarkSnapshotOperations(
+  store: SyncV2Store,
+  bookmarks: SnapshotRecordCollection<BookmarkRecord & { rev?: Partial<Revision> }>,
+): SyncV2Store {
   let next = store;
   const local = new Map<string, BookmarkRecord>();
-  bookmarks.forEach((bookmark) => {
+  snapshotRecordValues(bookmarks).forEach((bookmark) => {
     const record = normalizeBookmarkRecordInput(bookmark, next.state);
     if (!record) return;
     if (record.deletedAt != null) {
@@ -394,10 +380,13 @@ function appendBookmarkSnapshotOperations(store: SyncV2Store, bookmarks: Bookmar
   return next;
 }
 
-function appendWebAppSnapshotOperations(store: SyncV2Store, webApps: Array<WebAppRecord & { rev?: Partial<Revision> }>): SyncV2Store {
+function appendWebAppSnapshotOperations(
+  store: SyncV2Store,
+  webApps: SnapshotRecordCollection<WebAppRecord & { rev?: Partial<Revision> }>,
+): SyncV2Store {
   let next = store;
   const local = new Map<string, WebAppRecord & { rev?: Partial<Revision> }>();
-  webApps.forEach((app) => {
+  snapshotRecordValues(webApps).forEach((app) => {
     const id = app.id?.trim();
     if (id) local.set(id, { ...app, id });
   });
@@ -425,22 +414,24 @@ function appendWebAppSnapshotOperations(store: SyncV2Store, webApps: Array<WebAp
   return next;
 }
 
+function snapshotRecordValues<T>(records: SnapshotRecordCollection<T>): T[] {
+  return Array.isArray(records) ? records : Object.values(records || {});
+}
+
 function snapshotCanOverrideRevision(snapshot: { rev?: Partial<Revision> }, target: { rev?: Partial<Revision> }): boolean {
   return compareRevision(normalizeRevision(snapshot.rev), normalizeRevision(target.rev)) >= 0;
 }
 
 export function appendLayoutSnapshotOperations(store: SyncV2Store, layout: LauncherLayoutLike): SyncV2Store {
-  const editedAt = layoutEditedAt(layout);
-  if (!editedAt || editedAt <= layoutEditedAt(store.state.layout)) return store;
   if (!layoutDocumentChanged(layoutFromState(store.state), layout)) return store;
-  return appendOperation(store, { type: "layout.replace", layout: { ...layout, editedAt, updatedAt: editedAt }, editedAt });
+  return appendOperation(store, { type: "layout.replace", layout });
 }
 
 export function activeBookmarksFromState(state: SyncV2State): BookmarkRecord[] {
   return Object.values(ensureState(state).bookmarks)
     .sort(compareBookmarkRecords)
     .map((raw) => {
-      const { rev: _rev, sourceDeviceId: _sourceDeviceId, ...bookmark } = raw as SyncV2Bookmark & { sourceDeviceId?: string };
+      const { rev: _rev, ...bookmark } = raw;
       return bookmark as BookmarkRecord;
     });
 }
@@ -453,26 +444,19 @@ export function findBookmarkByUrlInState(state: SyncV2State, url: string): Bookm
     .filter((bookmark) => bookmarkRecordKey(bookmark) === key)
     .sort((left, right) => compareRevision(right.rev, left.rev))[0];
   if (!match) return null;
-  const { rev: _rev, sourceDeviceId: _sourceDeviceId, ...bookmark } = match as SyncV2Bookmark & { sourceDeviceId?: string };
+  const { rev: _rev, ...bookmark } = match;
   return bookmark as BookmarkRecord;
 }
 
 export function activeWebAppsFromState(state: SyncV2State): WebAppRecord[] {
   return Object.values(ensureState(state).apps)
-    .sort((left, right) => right.updatedAt - left.updatedAt || left.name.localeCompare(right.name))
     .map((raw) => {
-      const {
-        rev: _rev,
-        identityKey: _identityKey,
-        sourceDeviceId: _sourceDeviceId,
-        scopeUrl: _scopeUrl,
-        ...app
-      } = raw as SyncV2App & { identityKey?: string; sourceDeviceId?: string; scopeUrl?: string };
+      const { rev: _rev, ...app } = raw;
       return app as WebAppRecord;
     });
 }
 
-export function layoutFromState(state: SyncV2State, fallbackGridColumns = 4): LauncherLayoutLike {
+export function layoutFromState(state: SyncV2State): LauncherLayoutLike {
   const clean = ensureState(state);
   const folderItems = Object.values(clean.layout.items).filter((item) => item.kind === "folder" && item.container !== null);
   const folderIdSet = new Set(folderItems.map((item) => item.id));
@@ -488,7 +472,7 @@ export function layoutFromState(state: SyncV2State, fallbackGridColumns = 4): La
     .sort(compareLayoutItems)
     .slice(0, 4)
     .map((item) => item.id);
-  const cells = desktop.map((item, index) => desktopCellFromLayoutItem(item, index, fallbackGridColumns));
+  const cells = desktop.map(desktopCellFromLayoutItem);
   const folders = folderItems.map((folder) => ({
     id: folder.id,
     title: folder.title || "Folder",
@@ -502,9 +486,6 @@ export function layoutFromState(state: SyncV2State, fallbackGridColumns = 4): La
     cells,
     dock,
     folders,
-    gridColumns: fallbackGridColumns,
-    editedAt: clean.layout.editedAt || undefined,
-    updatedAt: clean.layout.editedAt || undefined,
   };
 }
 
@@ -694,49 +675,25 @@ function compareLayoutStates(left: SyncV2LayoutState, right: SyncV2LayoutState):
   return compareRevision(left.rev, right.rev);
 }
 
-function layoutEditedAt(layout: { editedAt?: number; updatedAt?: number } | null | undefined): number {
-  return normalizeTimestamp(layout?.editedAt);
-}
-
 function layoutDocumentChanged(left: LauncherLayoutLike, right: LauncherLayoutLike): boolean {
   return canonicalJson(layoutDocumentSignature(left)) !== canonicalJson(layoutDocumentSignature(right));
 }
 
 function layoutDocumentSignature(layout: LauncherLayoutLike): unknown {
   return {
-    cells: layout.cells || [],
+    cells: (layout.cells || []).map((cell) => ({
+      id: cell.id,
+      index: Number.isInteger(cell.index) && Number(cell.index) >= 0 ? Number(cell.index) : -1,
+    })),
     dock: layout.dock || [],
     folders: layout.folders || [],
-    gridColumns: layout.gridColumns || 4,
   };
-}
-
-function readLayoutMetadata(
-  rawLayout: unknown,
-  items: Record<string, SyncV2LayoutItem>,
-  itemTombstones: unknown,
-): Pick<SyncV2LayoutState, "editedAt" | "editedDeviceId" | "rev"> {
-  const source = rawLayout && typeof rawLayout === "object" && !Array.isArray(rawLayout)
-    ? rawLayout as Record<string, unknown>
-    : {};
-  const rawRev = normalizeRevision(source.rev);
-  const rev = rawRev.counter > 0 || rawRev.deviceId
-    ? rawRev
-    : maxLayoutRevision(items, readRecordMap<SyncV2Tombstone>(itemTombstones));
-  const editedAt = normalizeTimestamp(source.editedAt) ||
-    (revisionLooksLikeEpochMs(rev.counter) ? rev.counter : 0);
-  const editedDeviceId = stringValue(source.editedDeviceId) || stringValue(source.deviceId) || rev.deviceId || "";
-  return { editedAt, editedDeviceId, rev };
 }
 
 function layoutStateFromLauncherLayout(
   layout: LauncherLayoutLike,
   rev: Revision,
-  deviceId: string,
-  editedAt: number,
 ): SyncV2LayoutState | null {
-  const normalizedEditedAt = normalizeTimestamp(editedAt);
-  if (!normalizedEditedAt) return null;
   const items: Record<string, SyncV2LayoutItem> = {};
   layoutPlacements(layout).forEach((item) => {
     items[item.id] = { ...item, rev };
@@ -744,31 +701,13 @@ function layoutStateFromLauncherLayout(
   return {
     items,
     itemTombstones: {},
-    editedAt: normalizedEditedAt,
-    editedDeviceId: deviceId || rev.deviceId,
     rev,
   };
 }
 
-function markLayoutEdited(layout: SyncV2LayoutState, rev: Revision, deviceId: string, editedAt: number): void {
+function markLayoutEdited(layout: SyncV2LayoutState, rev: Revision): void {
   layout.itemTombstones = {};
-  layout.editedAt = normalizeTimestamp(editedAt);
-  layout.editedDeviceId = deviceId || rev.deviceId;
   layout.rev = rev;
-}
-
-function maxLayoutRevision(
-  items: Record<string, SyncV2LayoutItem>,
-  tombstones: Record<string, SyncV2Tombstone>,
-): Revision {
-  let result: Revision = { counter: 0, deviceId: "" };
-  const visit = (record?: { rev?: Revision }) => {
-    const rev = normalizeRevision(record?.rev);
-    if (compareRevision(rev, result) > 0) result = rev;
-  };
-  Object.values(items || {}).forEach(visit);
-  Object.values(tombstones || {}).forEach(visit);
-  return result;
 }
 
 function normalizeRevision(value: unknown, fallbackDeviceId: unknown = ""): Revision {
@@ -784,14 +723,6 @@ function normalizeRevision(value: unknown, fallbackDeviceId: unknown = ""): Revi
 function normalizeTimestamp(value: unknown): number {
   const timestamp = Number(value);
   return Number.isFinite(timestamp) && timestamp > 0 ? Math.floor(timestamp) : 0;
-}
-
-function revisionLooksLikeEpochMs(value: number): boolean {
-  return Number.isFinite(value) && value >= 1_000_000_000_000;
-}
-
-function stringValue(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
 }
 
 function compactStateTombstones(state: SyncV2State): void {
@@ -891,10 +822,7 @@ function stateToRemoteFiles(state: SyncV2State): Record<string, unknown> {
     },
     [LAUNCHER_FILE]: {
       schemaVersion: SYNC_V2_SCHEMA_VERSION,
-      editedAt: clean.layout.editedAt,
-      deviceId: clean.layout.editedDeviceId || clean.layout.rev.deviceId,
-      rev: clean.layout.rev,
-      layout: layoutFromState(clean),
+      layout: clean.layout,
     },
     [MANIFEST_FILE]: {
       schemaVersion: SYNC_V2_SCHEMA_VERSION,
@@ -913,7 +841,6 @@ function stateToRemoteFiles(state: SyncV2State): Record<string, unknown> {
         appTombstones: Object.keys(clean.appTombstones).length,
         layoutItems: Object.keys(clean.layout.items).length,
         layoutItemTombstones: 0,
-        layoutEditedAt: clean.layout.editedAt,
       },
     },
   };
@@ -939,29 +866,17 @@ async function writeRemoteStateFiles(
 }
 
 function mergeBookmarkFileIntoState(state: SyncV2State, value: unknown): void {
-  if (!value) return;
-  if (Array.isArray(value)) {
-    legacyBookmarkRecords(value).forEach((record) => applyLegacyBookmarkRecord(state, record));
-    return;
-  }
-  if (typeof value !== "object") return;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
   const root = value as Record<string, unknown>;
   mergeLwwMapInto(state.bookmarks, readBookmarkRecordMap(root.bookmarks));
-  mergeLwwMapInto(state.bookmarkTombstones, readBookmarkTombstoneMap(root.bookmarkTombstones || root.tombstones));
-  legacyBookmarkRecords(root.items || root.bookmarks).forEach((record) => applyLegacyBookmarkRecord(state, record));
+  mergeLwwMapInto(state.bookmarkTombstones, readBookmarkTombstoneMap(root.bookmarkTombstones));
 }
 
 function mergeWebAppFileIntoState(state: SyncV2State, value: unknown): void {
-  if (!value) return;
-  if (Array.isArray(value)) {
-    legacyWebAppRecords(value).forEach((record) => applyLegacyWebAppRecord(state, record));
-    return;
-  }
-  if (typeof value !== "object") return;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
   const root = value as Record<string, unknown>;
-  mergeLwwMapInto(state.apps, readWebAppRecordMap(root.apps || root.webApps));
-  mergeLwwMapInto(state.appTombstones, readRecordMap<SyncV2Tombstone>(root.appTombstones || root.tombstones));
-  legacyWebAppRecords(root.items || root.webApps).forEach((record) => applyLegacyWebAppRecord(state, record));
+  mergeLwwMapInto(state.apps, readWebAppRecordMap(root.apps));
+  mergeLwwMapInto(state.appTombstones, readRecordMap<SyncV2Tombstone>(root.appTombstones));
 }
 
 function mergeLauncherFileIntoState(state: SyncV2State, value: unknown): void {
@@ -976,30 +891,16 @@ function readLauncherLayoutState(value: unknown): SyncV2LayoutState | null {
   const layout = root.layout;
   if (layout && typeof layout === "object" && !Array.isArray(layout)) {
     const source = layout as Record<string, unknown>;
-    if (source.items || source.itemTombstones || source.tombstones) {
-      const items = readLayoutItemMap(source.items);
-      const itemTombstones = readRecordMap<SyncV2Tombstone>(source.itemTombstones || source.tombstones);
-      return {
-        items,
-        itemTombstones,
-        ...readLayoutMetadata({ ...source, editedAt: source.editedAt || root.editedAt, deviceId: source.editedDeviceId || source.deviceId || root.deviceId, rev: source.rev || root.rev }, items, itemTombstones),
-      };
-    }
-    const rootRev = normalizeRevision(root.rev);
-    const editedAt = normalizeTimestamp(root.editedAt) || normalizeTimestamp(source.editedAt) || normalizeTimestamp(source.updatedAt);
-    const rev = rootRev.counter > 0 || rootRev.deviceId
-      ? rootRev
-      : {
-          counter: 0,
-          deviceId: stringValue(root.deviceId) || stringValue(source.editedDeviceId) || stringValue(source.deviceId) || "legacy",
-        };
-    return layoutStateFromLauncherLayout(source as LauncherLayoutLike, rev, rev.deviceId, editedAt);
+    if (!source.items) return null;
+    const items = readLayoutItemMap(source.items);
+    const itemTombstones = readRecordMap<SyncV2Tombstone>(source.itemTombstones);
+    return {
+      items,
+      itemTombstones,
+      rev: normalizeRevision(source.rev),
+    };
   }
-  const rev = revisionFromLegacy(root);
-  const editedAt = normalizeTimestamp((root as LauncherLayoutLike).editedAt) ||
-    normalizeTimestamp((root as LauncherLayoutLike).updatedAt) ||
-    (revisionLooksLikeEpochMs(rev.counter) ? rev.counter : 0);
-  return layoutStateFromLauncherLayout(root as LauncherLayoutLike, rev, rev.deviceId, editedAt);
+  return null;
 }
 
 function mergeLwwMapInto<T extends { rev?: Revision }>(target: Record<string, T>, source: Record<string, T>): void {
@@ -1065,70 +966,6 @@ function readLayoutItemMap(value: unknown): Record<string, SyncV2LayoutItem> {
   return result;
 }
 
-function legacyBookmarkRecords(value: unknown): LegacyBookmarkRecord[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is Partial<BookmarkRecord> => !!item && typeof item === "object")
-    .map((item) => normalizeLegacyBookmarkRecord(item))
-    .filter((item): item is LegacyBookmarkRecord => !!item);
-}
-
-function legacyWebAppRecords(value: unknown): LegacyWebAppRecord[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is Partial<LegacyWebAppRecord> => !!item && typeof item === "object")
-    .map((item): LegacyWebAppRecord => ({
-      id: String(item.id || "").trim(),
-      name: String(item.name || item.startUrl || ""),
-      startUrl: String(item.startUrl || ""),
-      themeColor: Number(item.themeColor) || 0xff126d6a,
-      displayMode: String(item.displayMode || "standalone"),
-      createdAt: Number(item.createdAt) || Number(item.updatedAt) || 0,
-      lastOpenedAt: Number(item.lastOpenedAt) || Number(item.updatedAt) || Number(item.createdAt) || 0,
-      updatedAt: Number(item.updatedAt) || Number(item.createdAt) || 0,
-      deletedAt: item.deletedAt == null ? null : Number(item.deletedAt) || Date.parse(String(item.deletedAt)) || 0,
-      sourceDeviceId: String(item.sourceDeviceId || "legacy"),
-      iconDataUrl: typeof item.iconDataUrl === "string" ? item.iconDataUrl : null,
-      iconSource: item.iconSource === "custom" || item.iconSource === "site" || item.iconSource === "title" ? item.iconSource : "title",
-    }))
-    .filter((item) => !!item.id && !!item.startUrl);
-}
-
-function applyLegacyBookmarkRecord(state: SyncV2State, record: LegacyBookmarkRecord): void {
-  const bookmark = normalizeBookmarkRecordInput(record, state);
-  if (!bookmark) return;
-  const key = bookmarkRecordKey(bookmark);
-  const rev = revisionFromLegacy(record);
-  if (bookmark.deletedAt != null) {
-    state.bookmarkTombstones[key] = { deletedAt: new Date(bookmark.deletedAt).toISOString(), rev };
-    delete state.bookmarks[key];
-    return;
-  }
-  state.bookmarks[key] = { ...bookmark, deletedAt: null, rev };
-}
-
-function applyLegacyWebAppRecord(state: SyncV2State, record: LegacyWebAppRecord): void {
-  const id = record.id.trim();
-  if (!id) return;
-  const rev = revisionFromLegacy(record);
-  if (record.deletedAt != null) {
-    state.appTombstones[id] = { deletedAt: new Date(record.deletedAt).toISOString(), rev };
-    delete state.apps[id];
-    delete state.layout.items[`app:${id}`];
-    return;
-  }
-  const { sourceDeviceId: _sourceDeviceId, ...app } = record;
-  state.apps[id] = { ...app, id, deletedAt: null, rev };
-}
-
-function revisionFromLegacy(value: Record<string, unknown> | LegacyBookmarkRecord | LegacyWebAppRecord): Revision {
-  const deviceId = cleanOptionalString((value as { sourceDeviceId?: string }).sourceDeviceId) || "legacy";
-  return {
-    counter: 0,
-    deviceId,
-  };
-}
-
 function countRemoteRecords(state: SyncV2State): number {
   const clean = ensureState(state);
   return Object.keys(clean.bookmarks).length +
@@ -1152,7 +989,7 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     const key = bookmarkRecordKey(bookmark);
     const current = state.bookmarks[key];
     if (current && compareRevision(current.rev, rev) > 0) return;
-    const recordRev = revisionWithDevice(rev, current?.rev.deviceId || legacySourceDeviceId(operation.bookmark) || operation.deviceId);
+    const recordRev = revisionWithDevice(rev, current?.rev.deviceId || operation.deviceId);
     state.bookmarks[key] = {
       ...bookmark,
       updatedAt: bookmark.updatedAt || operation.createdAt,
@@ -1184,7 +1021,7 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     if (!id || state.appTombstones[id]) return;
     const current = state.apps[id];
     if (current && compareRevision(current.rev, rev) > 0) return;
-    const recordRev = revisionWithDevice(rev, current?.rev.deviceId || legacySourceDeviceId(operation.app) || operation.deviceId);
+    const recordRev = revisionWithDevice(rev, current?.rev.deviceId || operation.deviceId);
     state.apps[id] = {
       id,
       name: operation.app.name.trim() || operation.app.startUrl,
@@ -1219,8 +1056,6 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     const nextLayout = layoutStateFromLauncherLayout(
       operation.layout,
       rev,
-      operation.deviceId,
-      normalizeTimestamp(operation.editedAt) || operation.createdAt,
     );
     if (!nextLayout) return;
     if (compareLayoutStates(state.layout, nextLayout) > 0) return;
@@ -1235,7 +1070,7 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     const current = state.layout.items[item.id];
     if (current && compareRevision(current.rev, rev) > 0) return;
     state.layout.items[item.id] = { ...item, rev };
-    markLayoutEdited(state.layout, rev, operation.deviceId, operation.createdAt);
+    markLayoutEdited(state.layout, rev);
     return;
   }
   if (operation.type === "layout.hide") {
@@ -1245,7 +1080,7 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     const current = state.layout.items[itemId];
     if (current && compareRevision(current.rev, rev) > 0) return;
     delete state.layout.items[itemId];
-    markLayoutEdited(state.layout, rev, operation.deviceId, operation.createdAt);
+    markLayoutEdited(state.layout, rev);
     return;
   }
   if (operation.type === "layout.deleteItem") {
@@ -1254,7 +1089,7 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     if (!itemId) return;
     delete state.layout.items[itemId];
     delete state.layout.itemTombstones[itemId];
-    markLayoutEdited(state.layout, rev, operation.deviceId, operation.createdAt);
+    markLayoutEdited(state.layout, rev);
   }
 }
 
@@ -1267,12 +1102,6 @@ function revisionWithDevice(rev: Revision, deviceId: unknown): Revision {
     counter: rev.counter,
     deviceId: cleanOptionalString(deviceId) || rev.deviceId,
   };
-}
-
-function legacySourceDeviceId(value: unknown): string {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? cleanOptionalString((value as { sourceDeviceId?: unknown }).sourceDeviceId)
-    : "";
 }
 
 function compareOperations(left: SyncV2Operation, right: SyncV2Operation): number {
@@ -1321,15 +1150,14 @@ function maxStateCounter(state: SyncV2State): number {
 
 function layoutPlacements(layout: LauncherLayoutLike): Map<string, Omit<SyncV2LayoutItem, "rev">> {
   const result = new Map<string, Omit<SyncV2LayoutItem, "rev">>();
-  const columns = Math.max(1, Math.floor(layout.gridColumns || 4));
-  (layout.cells || []).forEach((cell, index) => {
-    if (!cell.id) return;
+  (layout.cells || []).forEach((cell) => {
+    if (!cell.id || !Number.isInteger(cell.index) || Number(cell.index) < 0) return;
     result.set(cell.id, {
       id: cell.id,
       kind: layoutItemKind(cell.id),
       ...(cell.id.startsWith("app:") ? { appId: cell.id.slice(4) } : {}),
       container: "desktop:0",
-      index: stableCellIndex(cell, columns, index),
+      index: Number(cell.index),
     });
   });
   (layout.dock || []).forEach((id, index) => {
@@ -1363,22 +1191,13 @@ function layoutPlacements(layout: LauncherLayoutLike): Map<string, Omit<SyncV2La
   return result;
 }
 
-function stableCellIndex(cell: { page?: number; row?: number; column?: number; index?: number }, columns: number, fallback: number): number {
-  if (Number.isInteger(cell.index) && Number(cell.index) >= 0) return Number(cell.index);
-  const page = Number.isInteger(cell.page) ? Math.max(0, Number(cell.page)) : 0;
-  const row = Number.isInteger(cell.row) ? Math.max(0, Number(cell.row)) : 0;
-  const column = Number.isInteger(cell.column) ? Math.max(0, Number(cell.column)) : 0;
-  return page * 10000 + row * columns + column || fallback;
-}
-
-function desktopCellFromLayoutItem(item: SyncV2LayoutItem, fallbackIndex: number, fallbackGridColumns: number): NonNullable<LauncherLayoutLike["cells"]>[number] {
-  const columns = Math.max(1, Math.floor(fallbackGridColumns || 4));
-  const index = Number.isFinite(item.index) ? Math.max(0, Math.floor(item.index)) : fallbackIndex;
+function desktopCellFromLayoutItem(item: SyncV2LayoutItem): NonNullable<LauncherLayoutLike["cells"]>[number] {
+  const index = Number.isFinite(item.index) ? Math.max(0, Math.floor(item.index)) : 0;
   return {
     id: item.id,
     page: 0,
-    row: Math.floor(index / columns),
-    column: index % columns,
+    row: 0,
+    column: 0,
     index,
   };
 }
@@ -1410,15 +1229,13 @@ function normalizeLayoutItemInput(raw: unknown, fallbackId?: string): Omit<SyncV
     ...(kind === "app" && appId ? { appId } : {}),
     ...(typeof source.title === "string" ? { title: source.title } : {}),
     container,
-    index: normalizeLayoutIndex(source.index, source.order),
+    index: normalizeLayoutIndex(source.index),
   };
 }
 
-function normalizeLayoutIndex(indexValue: unknown, legacyOrderValue: unknown, fallback = 0): number {
+function normalizeLayoutIndex(indexValue: unknown, fallback = 0): number {
   const index = Number(indexValue);
   if (Number.isFinite(index)) return Math.max(0, Math.floor(index));
-  const legacyOrder = Number(legacyOrderValue);
-  if (Number.isFinite(legacyOrder)) return Math.max(0, Math.floor(legacyOrder / 1000));
   return fallback;
 }
 
@@ -1428,38 +1245,21 @@ function layoutItemKind(id: string): "app" | "folder" | "system" {
   return "system";
 }
 
-function normalizeLegacyBookmarkRecord(item: Partial<LegacyBookmarkRecord>): LegacyBookmarkRecord | null {
-  const url = bookmarkUrlKey(String(item.url || "").trim());
-  if (!url) return null;
-  const updatedAt = Number(item.updatedAt) || Number(item.createdAt) || 0;
-  const createdAt = Number(item.createdAt) || updatedAt;
-  const deletedAt = item.deletedAt == null ? null : Number(item.deletedAt) || Date.parse(String(item.deletedAt)) || 0;
-  return {
-    url,
-    title: String(item.title || item.url || ""),
-    createdAt,
-    updatedAt,
-    deletedAt,
-    sourceDeviceId: String(item.sourceDeviceId || "legacy"),
-    iconDataUrl: typeof item.iconDataUrl === "string" ? item.iconDataUrl : null,
-  };
-}
-
 function normalizeStoredBookmarkRecord(raw: unknown, fallbackId = ""): SyncV2Bookmark | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const source = raw as Partial<SyncV2Bookmark> & { sourceDeviceId?: string };
+  const source = raw as Partial<SyncV2Bookmark>;
   if (!source.rev) return null;
   const fallbackUrl = looksLikeUrlKey(fallbackId) ? fallbackId : "";
   const record = normalizeBookmarkRecordInput({
     ...source,
     url: source.url || fallbackUrl,
   });
-  return record ? { ...record, rev: normalizeRevision(source.rev, source.sourceDeviceId) } : null;
+  return record ? { ...record, rev: normalizeRevision(source.rev) } : null;
 }
 
 function normalizeStoredWebAppRecord(raw: unknown, fallbackId = ""): SyncV2App | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const source = raw as Partial<SyncV2App> & { sourceDeviceId?: string };
+  const source = raw as Partial<SyncV2App>;
   if (!source.rev) return null;
   const id = cleanOptionalString(source.id) || cleanOptionalString(fallbackId);
   const startUrl = String(source.startUrl || "").trim();
@@ -1480,7 +1280,7 @@ function normalizeStoredWebAppRecord(raw: unknown, fallbackId = ""): SyncV2App |
     deletedAt: source.deletedAt == null ? null : Number(source.deletedAt) || Date.parse(String(source.deletedAt)) || 0,
     iconDataUrl: cleanOptionalString(source.iconDataUrl) || null,
     ...(iconSource ? { iconSource } : {}),
-    rev: normalizeRevision(source.rev, source.sourceDeviceId),
+    rev: normalizeRevision(source.rev),
   };
 }
 

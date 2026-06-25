@@ -143,12 +143,6 @@ internal fun browserSiteSettingsHost(url: String): String {
     }.getOrDefault("")
 }
 
-private fun JSONObject.optPositiveLong(name: String): Long? {
-    if (!has(name) || isNull(name)) return null
-    val value = optLong(name, 0L)
-    return value.takeIf { it > 0L }
-}
-
 private fun JSONObject.optCleanString(name: String): String? {
     if (!has(name) || isNull(name)) return null
     val value = optString(name).trim()
@@ -226,10 +220,6 @@ class BrowserProfileStore(context: Context) {
     }
 
     fun saveLauncherLayout(layout: JSONObject) {
-        val current = loadLauncherLayout()
-        val currentEditedAt = current?.optPositiveLong("editedAt") ?: 0L
-        val nextEditedAt = layout.optPositiveLong("editedAt") ?: 0L
-        if (currentEditedAt > 0L && nextEditedAt > 0L && currentEditedAt > nextEditedAt) return
         launcherLayoutFile.writeText(layout.toString())
     }
 
