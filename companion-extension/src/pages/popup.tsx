@@ -36,7 +36,7 @@ function Popup() {
   function addBookmark() {
     setBusyAction("bookmark");
     setMessage("Adding bookmark...");
-    sendCommand<SyncResult>("bookmarks.addFromCurrentPage")
+    sendCommand<SyncResult>("bookmarks.save")
       .then((result) => {
         setMessage(`Bookmark added and synced ${result.bookmarkCount} bookmarks.`);
         refreshBookmarkStatus();

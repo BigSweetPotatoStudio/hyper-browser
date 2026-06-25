@@ -1,4 +1,5 @@
 import { browser, type Browser } from "wxt/browser";
+import type { BrowserBookmarkEvent } from "@hyper-sync/browser-sync";
 import { createSyncBackgroundController } from "@hyper-sync/background";
 import { createHyperBackgroundCommandHandler } from "@hyper-sync/hyper-background";
 import { loadSettings } from "./storage";
@@ -10,6 +11,8 @@ const CAPTURED_ICON_SIZE = 128;
 const AUTO_SYNC_DEBOUNCE_MS = 1800;
 const REMOTE_SYNC_ALARM = "hyper-browser-remote-sync";
 const REMOTE_SYNC_ALARM_MINUTES = 1;
+let chromeBookmarkSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingChromeBookmarkEvents: BrowserBookmarkEvent[] = [];
 
 const syncBackground = createSyncBackgroundController<SyncResult>({
   debounceMs: AUTO_SYNC_DEBOUNCE_MS,
@@ -26,7 +29,11 @@ const hyperCommands = createHyperBackgroundCommandHandler<SyncResult>({
   getCurrentPage: getCurrentPageInfo,
   listBookmarks: browserSyncService.loadRemoteBookmarks,
   findBookmarkByUrl: ({ url }) => browserSyncService.findBookmarkByUrl(url),
-  addBookmark: browserSyncService.addBookmarkToSyncFolder,
+  saveBookmark: (input) => browserSyncService.addBookmarkToSyncFolder({
+    title: input.title || input.url || "",
+    url: input.url || "",
+    iconDataUrl: input.iconDataUrl ?? null,
+  }),
   deleteBookmark: browserSyncService.deleteRemoteBookmark,
   listWebApps: browserSyncService.loadRemoteWebApps,
   saveWebApp: browserSyncService.saveRemoteWebApp,
@@ -51,6 +58,21 @@ export function startBackground(): void {
       syncBackground.checkRemoteChanges({ notifyPages: true }).catch(console.error);
     }
   });
+
+  browser.bookmarks.onCreated.addListener((id, node) => scheduleChromeBookmarkSnapshot({
+    id,
+    parentId: node.parentId,
+  }));
+  browser.bookmarks.onChanged.addListener((id) => scheduleChromeBookmarkSnapshot({ id }));
+  browser.bookmarks.onMoved.addListener((id, moveInfo) => scheduleChromeBookmarkSnapshot({
+    id,
+    parentId: moveInfo.parentId,
+    oldParentId: moveInfo.oldParentId,
+  }));
+  browser.bookmarks.onRemoved.addListener((id, removeInfo) => scheduleChromeBookmarkSnapshot({
+    id,
+    parentId: removeInfo.parentId,
+  }));
 
   browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || typeof message.type !== "string") return false;
@@ -105,6 +127,27 @@ async function syncIfConfigured(): Promise<SyncResult | null> {
   const settings = await loadSettings();
   if (!settings.webDavUrl.trim()) return null;
   return runBookmarkSyncNow();
+}
+
+function scheduleChromeBookmarkSnapshot(event?: BrowserBookmarkEvent): void {
+  if (event) pendingChromeBookmarkEvents.push(event);
+  if (chromeBookmarkSnapshotTimer) clearTimeout(chromeBookmarkSnapshotTimer);
+  chromeBookmarkSnapshotTimer = setTimeout(() => {
+    chromeBookmarkSnapshotTimer = null;
+    flushChromeBookmarkSnapshot().catch(console.error);
+  }, AUTO_SYNC_DEBOUNCE_MS);
+}
+
+async function flushChromeBookmarkSnapshot(): Promise<void> {
+  const events = pendingChromeBookmarkEvents;
+  pendingChromeBookmarkEvents = [];
+  const changed = await browserSyncService.recordLocalBookmarkFolderSnapshot(events);
+  if (changed === null) {
+    pendingChromeBookmarkEvents.push(...events);
+    scheduleChromeBookmarkSnapshot();
+    return;
+  }
+  if (changed) syncBackground.scheduleSync();
 }
 
 function notifyRemoteSynced(updatedAt: number, syncResult: SyncResult): void {

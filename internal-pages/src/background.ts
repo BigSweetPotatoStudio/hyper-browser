@@ -80,7 +80,6 @@ const hyperCommands = createHyperBackgroundCommandHandler<WebDavSyncResult>({
   sync: syncBackground,
   listBookmarks,
   findBookmarkByUrl,
-  addBookmark: saveBookmark,
   saveBookmark,
   deleteBookmark,
   loadLauncherLayout: requestLauncherLayout,

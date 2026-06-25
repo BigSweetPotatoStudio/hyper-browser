@@ -17,11 +17,6 @@ export type CurrentPageInfo = {
   iconDataUrl?: string | null;
 };
 
-export type BookmarkSaveInput = Partial<BookmarkRecord> & {
-  title: string;
-  url: string;
-};
-
 export type BookmarkUpdateInput = Partial<BookmarkRecord> & {
   oldUrl?: string;
   title?: string;
@@ -39,7 +34,6 @@ export type HyperBackgroundAdapter<TSyncResult extends SyncBackgroundSignal> = {
   getCurrentPage?: () => Promise<CurrentPageInfo>;
   listBookmarks?: () => Promise<unknown>;
   findBookmarkByUrl?: (input: { url: string }) => Promise<unknown>;
-  addBookmark?: (input: BookmarkSaveInput) => Promise<unknown>;
   saveBookmark?: (input: BookmarkUpdateInput) => Promise<unknown>;
   deleteBookmark?: (input: { url: string }) => Promise<unknown>;
   listWebApps?: () => Promise<unknown>;
@@ -97,10 +91,8 @@ export function createHyperBackgroundCommandHandler<TSyncResult extends SyncBack
         return handled(await requireCapability(adapter.findBookmarkByUrl, command.type)(bookmarkUrlInput(command.payload)));
       case "bookmarks.getFromCurrentPage":
         return handled(await findBookmarkFromCurrentPage(command.type));
-      case "bookmarks.addFromCurrentPage":
-        return handled(await addBookmarkFromCurrentPage(command.type));
       case "bookmarks.save":
-        return handled(await mutate(command.type, () => requireCapability(adapter.saveBookmark, command.type)(bookmarkUpdateInput(command.payload))));
+        return handled(await saveBookmark(command.type, command.payload));
       case "bookmarks.delete":
         return handled(await mutate(command.type, () => requireCapability(adapter.deleteBookmark, command.type)(bookmarkDeleteInput(command.payload))));
       case "webapps.list":
@@ -122,13 +114,20 @@ export function createHyperBackgroundCommandHandler<TSyncResult extends SyncBack
     }
   }
 
-  async function addBookmarkFromCurrentPage(type: string): Promise<unknown> {
+  async function saveBookmark(type: string, payload: unknown): Promise<unknown> {
+    const input = payload == null
+      ? await currentPageBookmarkInput(type)
+      : bookmarkUpdateInput(payload);
+    return mutate(type, () => requireCapability(adapter.saveBookmark, type)(input));
+  }
+
+  async function currentPageBookmarkInput(type: string): Promise<BookmarkUpdateInput> {
     const page = await requireCapability(adapter.getCurrentPage, type)();
-    return mutate(type, () => requireCapability(adapter.addBookmark, type)({
+    return {
       title: page.title,
       url: page.url,
       ...(page.iconDataUrl ? { iconDataUrl: page.iconDataUrl } : {}),
-    }));
+    };
   }
 
   async function findBookmarkFromCurrentPage(type: string): Promise<unknown> {

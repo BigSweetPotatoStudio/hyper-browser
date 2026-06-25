@@ -37,9 +37,16 @@ export type BrowserSyncResult = {
 
 export type BrowserBookmarkNode = {
   id: string;
+  parentId?: string;
   title: string;
   url?: string;
   children?: BrowserBookmarkNode[];
+};
+
+export type BrowserBookmarkEvent = {
+  id?: string;
+  parentId?: string;
+  oldParentId?: string;
 };
 
 export type BrowserBookmarkCreateDetails = {
@@ -55,6 +62,7 @@ export type BrowserBookmarkUpdateChanges = {
 
 export type BrowserSyncService = {
   syncNow: () => Promise<BrowserSyncResult>;
+  recordLocalBookmarkFolderSnapshot: (events?: BrowserBookmarkEvent[]) => Promise<boolean | null>;
   loadRemoteBookmarks: () => Promise<BookmarkRecord[]>;
   findBookmarkByUrl: (url: string) => Promise<BookmarkRecord | null>;
   deleteRemoteBookmark: (input: string | { url?: string } | null | undefined) => Promise<BrowserSyncResult>;
@@ -77,12 +85,15 @@ export type BrowserSyncServiceOptions = {
     create: (bookmark: BrowserBookmarkCreateDetails) => Promise<BrowserBookmarkNode>;
     update: (id: string, changes: BrowserBookmarkUpdateChanges) => Promise<BrowserBookmarkNode>;
     remove: (id: string) => Promise<void>;
-    removeTree: (id: string) => Promise<void>;
   };
 };
 
+const LOCAL_BOOKMARK_PROJECTION_QUIET_MS = 4000;
+
 export function createBrowserSyncService(options: BrowserSyncServiceOptions): BrowserSyncService {
   let localLock: Promise<void> = Promise.resolve();
+  let localBookmarkProjectionDepth = 0;
+  let localBookmarkProjectionQuietUntil = 0;
 
   async function syncNow(): Promise<BrowserSyncResult> {
     let settings = await options.loadSettings();
@@ -132,6 +143,24 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
 
   async function loadRemoteBookmarks(): Promise<BookmarkRecord[]> {
     return activeBookmarksFromState((await options.loadSyncV2Store()).state);
+  }
+
+  async function recordLocalBookmarkFolderSnapshot(events: BrowserBookmarkEvent[] = []): Promise<boolean | null> {
+    if (shouldIgnoreLocalBookmarkEvents()) return null;
+    const settings = await options.loadSettings();
+    if (!settings.folderId.trim()) return false;
+    const folder = await getBookmarkNode(settings.folderId).catch(() => null);
+    if (!folder) return false;
+    if (events.length > 0 && !(await hasBookmarkEventInFolder(settings.folderId, events))) return false;
+    let changed = false;
+    await withLocalLock(async () => {
+      const current = await options.loadSyncV2Store();
+      const bookmarks = await collectLocalBookmarkRecords(settings, current.state);
+      const next = appendLocalSnapshotOperations(current, { bookmarks });
+      changed = canonicalJson(current) !== canonicalJson(next);
+      if (changed) await options.saveSyncV2Store(next);
+    });
+    return changed;
   }
 
   async function findBookmarkByUrl(url: string): Promise<BookmarkRecord | null> {
@@ -266,21 +295,23 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
   }
 
   async function applyBookmarkRecords(settings: SyncSettings, records: BookmarkRecord[]): Promise<{ imported: number; removed: number }> {
-    const canonicalRecords = canonicalizeFlatBookmarkRecords(records);
-    const root = (await options.bookmarks.getSubTree(settings.folderId))[0];
-    if (bookmarkNodeTreeSignature(root?.children || []) === bookmarkRecordsTreeSignature(canonicalRecords)) {
-      return { imported: 0, removed: 0 };
-    }
-    const removed = root?.children ? countBookmarkTree(root.children) : 0;
-    await removeFolderChildren(settings.folderId);
+    return withLocalBookmarkProjectionQuiet(async () => {
+      const canonicalRecords = canonicalizeFlatBookmarkRecords(records);
+      const root = (await options.bookmarks.getSubTree(settings.folderId))[0];
+      if (bookmarkNodeTreeSignature(root?.children || []) === bookmarkRecordsTreeSignature(canonicalRecords)) {
+        return { imported: 0, removed: 0 };
+      }
+      const removed = countDirectBookmarkChildren(root?.children || []);
+      await removeDirectBookmarkChildren(settings.folderId);
 
-    let imported = 0;
-    for (const record of canonicalRecords) {
-      await options.bookmarks.create({ parentId: settings.folderId, title: record.title || record.url, url: record.url });
-      imported += 1;
-    }
+      let imported = 0;
+      for (const record of canonicalRecords) {
+        await options.bookmarks.create({ parentId: settings.folderId, title: record.title || record.url, url: record.url });
+        imported += 1;
+      }
 
-    return { imported, removed };
+      return { imported, removed };
+    });
   }
 
   function syncResultFromState(
@@ -319,18 +350,70 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
 
   async function getFolderBookmarkNodes(folderId: string): Promise<BrowserBookmarkNode[]> {
     const root = (await options.bookmarks.getSubTree(folderId))[0];
-    const items: BrowserBookmarkNode[] = [];
-    const visit = (nodes: BrowserBookmarkNode[] = []): void => {
-      nodes.forEach((node) => {
-        if (node.url) {
-          items.push(node);
-          return;
-        }
-        visit(node.children || []);
+    return (root?.children || []).filter((node) => !!node.url);
+  }
+
+  async function collectLocalBookmarkRecords(settings: SyncSettings, state: SyncV2State): Promise<BookmarkRecord[]> {
+    const now = Date.now();
+    const existingByUrl = new Map(activeBookmarksFromState(state).map((bookmark) => [identityKeyForUrl(bookmark.url), bookmark]));
+    const selected = new Map<string, BookmarkRecord>();
+    for (const node of await getFolderBookmarkNodes(settings.folderId)) {
+      if (!node.url) continue;
+      const url = identityKeyForUrl(node.url);
+      if (!isHttpUrl(url) || selected.has(url)) continue;
+      const existing = existingByUrl.get(url);
+      selected.set(url, {
+        url,
+        title: node.title?.trim() || existing?.title || hostLabel(url),
+        createdAt: existing?.createdAt || now,
+        updatedAt: now,
+        deletedAt: null,
+        sourceDeviceId: settings.deviceId,
+        iconDataUrl: existing?.iconDataUrl ?? null,
       });
-    };
-    visit(root?.children || []);
-    return items;
+    }
+    return [...selected.values()];
+  }
+
+  async function hasBookmarkEventInFolder(folderId: string, events: BrowserBookmarkEvent[]): Promise<boolean> {
+    for (const event of events) {
+      const ids = uniqueStrings([event.id, event.parentId, event.oldParentId]);
+      for (const id of ids) {
+        if (id === folderId || await isBookmarkNodeUnderFolder(id, folderId)) return true;
+      }
+    }
+    return false;
+  }
+
+  async function isBookmarkNodeUnderFolder(nodeId: string, folderId: string): Promise<boolean> {
+    let currentId = nodeId;
+    const seen = new Set<string>();
+    while (currentId && !seen.has(currentId)) {
+      if (currentId === folderId) return true;
+      seen.add(currentId);
+      const node = await getBookmarkNode(currentId).catch(() => null);
+      const parentId = node?.parentId?.trim() || "";
+      if (!parentId) return false;
+      currentId = parentId;
+    }
+    return false;
+  }
+
+  function shouldIgnoreLocalBookmarkEvents(): boolean {
+    return localBookmarkProjectionDepth > 0 || Date.now() < localBookmarkProjectionQuietUntil;
+  }
+
+  async function withLocalBookmarkProjectionQuiet<T>(operation: () => Promise<T>): Promise<T> {
+    localBookmarkProjectionDepth += 1;
+    try {
+      return await operation();
+    } finally {
+      localBookmarkProjectionDepth -= 1;
+      if (localBookmarkProjectionDepth <= 0) {
+        localBookmarkProjectionDepth = 0;
+        localBookmarkProjectionQuietUntil = Date.now() + LOCAL_BOOKMARK_PROJECTION_QUIET_MS;
+      }
+    }
   }
 
   async function removeLocalBookmarksByUrl(folderId: string, url: string): Promise<void> {
@@ -343,20 +426,19 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     }
   }
 
-  async function removeFolderChildren(folderId: string): Promise<void> {
+  async function removeDirectBookmarkChildren(folderId: string): Promise<void> {
     const root = (await options.bookmarks.getSubTree(folderId))[0];
     const children = [...(root?.children || [])].reverse();
     for (const child of children) {
       if (child.url) {
         await options.bookmarks.remove(child.id);
-      } else {
-        await options.bookmarks.removeTree(child.id);
       }
     }
   }
 
   return {
     syncNow,
+    recordLocalBookmarkFolderSnapshot,
     loadRemoteBookmarks,
     findBookmarkByUrl,
     deleteRemoteBookmark,
@@ -367,22 +449,22 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
   };
 }
 
-function countBookmarkTree(nodes: BrowserBookmarkNode[]): number {
-  return nodes.reduce((count, node) => count + 1 + countBookmarkTree(node.children || []), 0);
+function countDirectBookmarkChildren(nodes: BrowserBookmarkNode[]): number {
+  return nodes.filter((node) => !!node.url).length;
 }
 
 function bookmarkNodeTreeSignature(nodes: BrowserBookmarkNode[]): string {
-  return JSON.stringify(nodes.map((node) => node.url
-    ? { kind: "bookmark", title: node.title || node.url, url: node.url }
-    : { kind: "folder", title: node.title || "Folder", children: bookmarkNodeTreeSignatureValue(node.children || []) }));
-}
-
-function bookmarkNodeTreeSignatureValue(nodes: BrowserBookmarkNode[]): unknown[] {
-  return nodes
-    .map((node) => node.url
-      ? { title: node.title || node.url, url: identityKeyForUrl(node.url || "") }
-      : { folder: true, title: node.title || "Folder", children: bookmarkNodeTreeSignatureValue(node.children || []) })
-    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const selected = new Map<string, { title: string; url: string }>();
+  nodes.forEach((node) => {
+    if (!node.url) return;
+    const url = identityKeyForUrl(node.url);
+    if (isHttpUrl(url) && !selected.has(url)) {
+      selected.set(url, { title: node.title || url, url });
+    }
+  });
+  return JSON.stringify([...selected.values()].sort((left, right) =>
+    left.title.localeCompare(right.title) || left.url.localeCompare(right.url)
+  ));
 }
 
 function bookmarkRecordsTreeSignature(records: BookmarkRecord[]): string {
@@ -413,4 +495,15 @@ function canonicalizeFlatBookmarkRecords(records: BookmarkRecord[]): BookmarkRec
 function compareBookmarkPlacement(left: BookmarkRecord, right: BookmarkRecord): number {
   return left.title.localeCompare(right.title) ||
     left.url.localeCompare(right.url);
+}
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  return values
+    .map((value) => value?.trim() || "")
+    .filter((value) => {
+      if (!value || seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
 }

@@ -363,6 +363,12 @@ function appendBookmarkSnapshotOperations(store: SyncV2Store, bookmarks: Bookmar
       next = appendOperation(next, { type: "bookmark.upsert", bookmark });
     }
   });
+  activeBookmarksFromState(next.state).forEach((bookmark) => {
+    const key = bookmarkRecordKey(bookmark);
+    if (key && !local.has(key)) {
+      next = appendOperation(next, { type: "bookmark.delete", ...bookmarkDeleteInput(bookmark) });
+    }
+  });
   return next;
 }
 
