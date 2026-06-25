@@ -48,6 +48,7 @@ type BrowserSettings = {
   searchEngineName: string;
   customSearchUrl: string;
   toolbarPosition: "top" | "bottom" | "dynamic_bottom";
+  websiteDisplayMode: "default" | "mobile" | "tablet" | "desktop";
   backgroundVideoEnhancementEnabled: boolean;
   openNewTabsInCurrentTab: boolean;
   dohEnabled: boolean;
@@ -156,6 +157,7 @@ type HyperBridgeMessageType =
   | "search.submit"
   | "settings.searchEngine.update"
   | "settings.toolbarPosition.update"
+  | "settings.websiteDisplayMode.update"
   | "settings.backgroundVideoEnhancement.update"
   | "settings.openNewTabsInCurrentTab.update"
   | "settings.locale.update"
@@ -245,6 +247,7 @@ type HyperBrowserApi = {
   saveLauncherLayout(layout: object): Promise<void>;
   updateSearchEngine(searchEngineId: BrowserSettings["searchEngineId"], customSearchUrl?: string): Promise<BrowserSettings>;
   updateToolbarPosition(toolbarPosition: BrowserSettings["toolbarPosition"]): Promise<BrowserSettings>;
+  updateWebsiteDisplayMode(websiteDisplayMode: BrowserSettings["websiteDisplayMode"]): Promise<BrowserSettings>;
   updateBackgroundVideoEnhancement(enabled: boolean): Promise<BrowserSettings>;
   updateOpenNewTabsInCurrentTab(enabled: boolean): Promise<BrowserSettings>;
   updateLocalePreference(localePreference: BrowserSettings["localePreference"]): Promise<BrowserSettings>;
@@ -371,6 +374,10 @@ window.hyperBrowser = {
   },
   updateToolbarPosition(toolbarPosition) {
     return send("settings.toolbarPosition.update", { toolbarPosition })
+      .then((response) => response.data as BrowserSettings);
+  },
+  updateWebsiteDisplayMode(websiteDisplayMode) {
+    return send("settings.websiteDisplayMode.update", { websiteDisplayMode })
       .then((response) => response.data as BrowserSettings);
   },
   updateBackgroundVideoEnhancement(enabled) {

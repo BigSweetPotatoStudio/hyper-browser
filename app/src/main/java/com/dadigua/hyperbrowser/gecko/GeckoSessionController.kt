@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -21,6 +22,7 @@ import java.security.Principal
 import java.net.URLEncoder
 import java.io.InputStream
 import com.dadigua.hyperbrowser.R
+import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.browser.DownloadHandler
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
@@ -360,6 +362,7 @@ class GeckoSessionController(
     private val onFocusRequest: () -> Unit = {},
     private val onSessionStateChange: (GeckoSession.SessionState) -> Unit = {},
     private val onPageStop: (Boolean) -> Unit = {},
+    private val websiteDisplayModeForSession: () -> String = { BrowserSettings.WEBSITE_DISPLAY_DEFAULT },
     private val mediaNotificationIntent: Intent? = null,
     private val mediaOwnerInfo: () -> BrowserMediaOwnerInfo? = { null }
 ) {
@@ -389,6 +392,7 @@ class GeckoSessionController(
     init {
         configureSession(session)
         registerBridgeHandler(session)
+        applyWebsiteDisplayModeForUrl(initialUrl)
         if (existingSession == null) {
             session.open(runtime)
             HyperBridge.ensureInstalled(appContext) {
@@ -816,6 +820,7 @@ class GeckoSessionController(
         }
         targetSession.progressDelegate = object : GeckoSession.ProgressDelegate {
             override fun onPageStart(session: GeckoSession, url: String) {
+                applyWebsiteDisplayModeForUrl(semanticUrlForRawUrl(url))
                 resetContentTouchState()
                 _state.value = _state.value.copy(isLoading = true, loadProgress = 0)
             }
@@ -869,6 +874,7 @@ class GeckoSessionController(
                 }
                 val target = semanticUrlForRawUrl(rawUrl)
                 if (target.isBlank()) return
+                applyWebsiteDisplayModeForUrl(target)
                 _state.value = _state.value.copy(
                     title = when {
                         isHomeUrl(target) -> "Hyper Browser"
@@ -901,6 +907,7 @@ class GeckoSessionController(
                     onHyperRoute(route)
                     return GeckoResult.fromValue(AllowOrDeny.DENY)
                 }
+                applyWebsiteDisplayModeForUrl(semanticUrlForRawUrl(request.uri))
                 return null
             }
 
@@ -1028,16 +1035,19 @@ class GeckoSessionController(
             insecureHttp = target.startsWith("http://"),
             securityLevel = securityLevelForUrl(target)
         )
+        applyWebsiteDisplayModeForUrl(target)
         session.loadUri(target)
     }
 
     fun loadHome(historyJson: String? = null) {
         lastLoadTarget = HOME_URL
+        applyWebsiteDisplayMode(BrowserSettings.WEBSITE_DISPLAY_DEFAULT)
         loadInternalPage(HOME_URL, "Hyper Browser", "home.html", historyJson)
     }
 
     fun loadSearch(query: String = "") {
         lastLoadTarget = SEARCH_URL
+        applyWebsiteDisplayMode(BrowserSettings.WEBSITE_DISPLAY_DEFAULT)
         _state.value = pageStateForUrl(SEARCH_URL).copy(title = appContext.getString(R.string.internal_title_search))
         val loadPage = {
             HyperBridge.pageUrl("search.html")?.let { url ->
@@ -1090,6 +1100,7 @@ class GeckoSessionController(
             recoverSession(force = true)
             return
         }
+        applyWebsiteDisplayModeForUrl(currentRecoveryTarget())
         runCatching { session.reload(GeckoSession.LOAD_FLAGS_BYPASS_CACHE) }
             .onFailure { recoverSession(force = true) }
     }
@@ -1103,6 +1114,7 @@ class GeckoSessionController(
         waitingForInitialLocation = visibleUrl != ABOUT_BLANK_URL
         sessionCrashed = false
         automaticRecoveryTarget = null
+        applyWebsiteDisplayModeForUrl(visibleUrl)
         _state.value = _state.value.copy(
             url = visibleUrl,
             insecureHttp = visibleUrl.startsWith("http://"),
@@ -1172,6 +1184,34 @@ class GeckoSessionController(
         })
     }
 
+    fun applyWebsiteDisplayMode(mode: String) {
+        val sessionSettings = session.settings
+        sessionSettings.setUserAgentOverride(null)
+        when (BrowserSettings.normalizedWebsiteDisplayMode(mode)) {
+            BrowserSettings.WEBSITE_DISPLAY_DESKTOP -> {
+                sessionSettings.setUserAgentMode(GeckoSessionSettings.USER_AGENT_MODE_DESKTOP)
+                sessionSettings.setViewportMode(GeckoSessionSettings.VIEWPORT_MODE_DESKTOP)
+            }
+            BrowserSettings.WEBSITE_DISPLAY_TABLET -> {
+                sessionSettings.setUserAgentMode(GeckoSessionSettings.USER_AGENT_MODE_MOBILE)
+                sessionSettings.setViewportMode(GeckoSessionSettings.VIEWPORT_MODE_DESKTOP)
+                sessionSettings.setUserAgentOverride(tabletUserAgent())
+            }
+            else -> {
+                sessionSettings.setUserAgentMode(GeckoSessionSettings.USER_AGENT_MODE_MOBILE)
+                sessionSettings.setViewportMode(GeckoSessionSettings.VIEWPORT_MODE_MOBILE)
+            }
+        }
+    }
+
+    fun applyWebsiteDisplayModeForUrl(url: String) {
+        if (isInternalUrl(url) || url.startsWith("moz-extension://")) {
+            applyWebsiteDisplayMode(BrowserSettings.WEBSITE_DISPLAY_DEFAULT)
+            return
+        }
+        applyWebsiteDisplayMode(websiteDisplayModeForSession())
+    }
+
     fun close(closeActivePlayback: Boolean = true): GeckoSessionCloseResult {
         val mediaNotifications = BrowserMediaNotificationController.get(appContext)
         val ownerInfo = currentMediaOwnerInfo()
@@ -1191,6 +1231,11 @@ class GeckoSessionController(
             runCatching { ownerSession.close() }
         }
         return GeckoSessionCloseResult.Closed
+    }
+
+    private fun tabletUserAgent(): String {
+        val androidVersion = Build.VERSION.RELEASE.takeIf { it.isNotBlank() } ?: "10"
+        return "Mozilla/5.0 (Android $androidVersion; Tablet; rv:151.0) Gecko/151.0 Firefox/151.0"
     }
 
     private fun registerBridgeHandler(targetSession: GeckoSession) {
@@ -1339,6 +1384,7 @@ class GeckoSessionController(
     private fun loadInternalPage(semanticUrl: String, title: String, page: String, bootstrapJson: String?) {
         lastLoadTarget = semanticUrl
         sessionCrashed = false
+        applyWebsiteDisplayMode(BrowserSettings.WEBSITE_DISPLAY_DEFAULT)
         _state.value = pageStateForUrl(semanticUrl).copy(title = title)
         val loadPage = {
             HyperBridge.pageUrl(page)?.let { url ->

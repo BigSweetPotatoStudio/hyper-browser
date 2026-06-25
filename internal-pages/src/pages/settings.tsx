@@ -26,6 +26,7 @@ function SettingsPage() {
   const [backupMessage, setBackupMessage] = useState("");
   const [searchEngineExpanded, setSearchEngineExpanded] = useState(false);
   const [toolbarExpanded, setToolbarExpanded] = useState(false);
+  const [websiteDisplayModeExpanded, setWebsiteDisplayModeExpanded] = useState(false);
   const [languageExpanded, setLanguageExpanded] = useState(false);
   const [tabBehaviorExpanded, setTabBehaviorExpanded] = useState(false);
   const [httpDnsExpanded, setHttpDnsExpanded] = useState(false);
@@ -40,6 +41,9 @@ function SettingsPage() {
   }, [query]);
   const showToolbarPosition = useMemo(() => {
     return matchesI18nText("settings.toolbarTerms", query);
+  }, [query]);
+  const showWebsiteDisplayMode = useMemo(() => {
+    return matchesI18nText("settings.websiteDisplayModeTerms", query);
   }, [query]);
   const showLanguageSettings = useMemo(() => {
     return matchesI18nText("settings.languageTerms", query);
@@ -65,6 +69,7 @@ function SettingsPage() {
   const hasSettingsQuery = query.trim() !== "";
   const searchEngineVisibleExpanded = searchEngineExpanded || hasSettingsQuery;
   const toolbarVisibleExpanded = toolbarExpanded || hasSettingsQuery;
+  const websiteDisplayModeVisibleExpanded = websiteDisplayModeExpanded || hasSettingsQuery;
   const languageVisibleExpanded = languageExpanded || hasSettingsQuery;
   const tabBehaviorVisibleExpanded = tabBehaviorExpanded || hasSettingsQuery;
   const httpDnsVisibleExpanded = httpDnsExpanded || hasSettingsQuery;
@@ -174,6 +179,12 @@ function SettingsPage() {
       .catch(() => setLoadError(t("settings.unavailable")));
   }
 
+  function updateWebsiteDisplayMode(websiteDisplayMode: BrowserSettings["websiteDisplayMode"]) {
+    window.hyperBrowser.updateWebsiteDisplayMode(websiteDisplayMode)
+      .then((value) => setSettings(value))
+      .catch(() => setLoadError(t("settings.unavailable")));
+  }
+
   function updateBackgroundVideoEnhancement(enabled: boolean) {
     setBatteryMessage("");
     window.hyperBrowser.updateBackgroundVideoEnhancement(enabled)
@@ -273,6 +284,13 @@ function SettingsPage() {
     if (toolbarPosition === "bottom") return t("settings.bottom");
     if (toolbarPosition === "top") return t("settings.top");
     return t("settings.dynamicBottom");
+  }
+
+  function websiteDisplayModeLabel(websiteDisplayMode?: BrowserSettings["websiteDisplayMode"]) {
+    if (websiteDisplayMode === "mobile") return t("settings.websiteDisplayMobile");
+    if (websiteDisplayMode === "tablet") return t("settings.websiteDisplayTablet");
+    if (websiteDisplayMode === "desktop") return t("settings.websiteDisplayDesktop");
+    return t("settings.websiteDisplayDefault");
   }
 
   function languagePreferenceLabel(value: LocalePreference = languagePreference) {
@@ -539,7 +557,7 @@ function SettingsPage() {
               </div>
             )}
           </div>
-        ) : !showToolbarPosition && !showLanguageSettings && !showTabBehavior && !showHttpDnsSettings && !showPrivacySettings && !showBackupSettings && !showBackgroundRuntime && !showUpdateSettings ? (
+        ) : !showToolbarPosition && !showWebsiteDisplayMode && !showLanguageSettings && !showTabBehavior && !showHttpDnsSettings && !showPrivacySettings && !showBackupSettings && !showBackgroundRuntime && !showUpdateSettings ? (
           <div className="settings-empty">{t("settings.noMatches")}</div>
         ) : null}
         {showToolbarPosition && (
@@ -578,6 +596,59 @@ function SettingsPage() {
                 >
                   <span>{t("settings.dynamicBottom")}</span>
                   <span>{t("settings.toolbarDynamicBottomHelp")}</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {showWebsiteDisplayMode && (
+          <div className="settings-card settings-card-spaced">
+            <button
+              className="settings-row settings-row-button"
+              type="button"
+              aria-expanded={websiteDisplayModeVisibleExpanded}
+              onClick={() => setWebsiteDisplayModeExpanded((expanded) => !expanded)}
+            >
+              <span className="settings-row-title">{t("settings.websiteDisplayMode")}</span>
+              <span className="settings-row-value">{websiteDisplayModeLabel(settings?.websiteDisplayMode)}</span>
+            </button>
+            {websiteDisplayModeVisibleExpanded && (
+              <div className="settings-options">
+                <button
+                  className={!settings || settings.websiteDisplayMode === "default" ? "settings-option selected" : "settings-option"}
+                  type="button"
+                  disabled={!settings}
+                  onClick={() => updateWebsiteDisplayMode("default")}
+                >
+                  <span>{t("settings.websiteDisplayDefault")}</span>
+                  <span>{t("settings.websiteDisplayDefaultHelp")}</span>
+                </button>
+                <button
+                  className={settings?.websiteDisplayMode === "mobile" ? "settings-option selected" : "settings-option"}
+                  type="button"
+                  disabled={!settings}
+                  onClick={() => updateWebsiteDisplayMode("mobile")}
+                >
+                  <span>{t("settings.websiteDisplayMobile")}</span>
+                  <span>{t("settings.websiteDisplayMobileHelp")}</span>
+                </button>
+                <button
+                  className={settings?.websiteDisplayMode === "tablet" ? "settings-option selected" : "settings-option"}
+                  type="button"
+                  disabled={!settings}
+                  onClick={() => updateWebsiteDisplayMode("tablet")}
+                >
+                  <span>{t("settings.websiteDisplayTablet")}</span>
+                  <span>{t("settings.websiteDisplayTabletHelp")}</span>
+                </button>
+                <button
+                  className={settings?.websiteDisplayMode === "desktop" ? "settings-option selected" : "settings-option"}
+                  type="button"
+                  disabled={!settings}
+                  onClick={() => updateWebsiteDisplayMode("desktop")}
+                >
+                  <span>{t("settings.websiteDisplayDesktop")}</span>
+                  <span>{t("settings.websiteDisplayDesktopHelp")}</span>
                 </button>
               </div>
             )}

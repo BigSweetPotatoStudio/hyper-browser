@@ -23,6 +23,7 @@ const internalPageMessageTypes = new Set([
   "search.submit",
   "settings.searchEngine.update",
   "settings.toolbarPosition.update",
+  "settings.websiteDisplayMode.update",
   "settings.backgroundVideoEnhancement.update",
   "settings.openNewTabsInCurrentTab.update",
   "settings.locale.update",

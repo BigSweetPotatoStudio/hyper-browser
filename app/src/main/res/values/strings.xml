@@ -54,6 +54,12 @@
     <string name="common_action_edit">Edit</string>
     <string name="common_action_share">Share</string>
     <string name="browser_placeholder_search_or_url">Search or enter address</string>
+    <string name="browser_site_settings_current_site">Current site</string>
+    <string name="browser_website_display_default">Default</string>
+    <string name="browser_website_display_mobile">Mobile</string>
+    <string name="browser_website_display_tablet">Tablet</string>
+    <string name="browser_website_display_desktop">Desktop</string>
+    <string name="browser_temporary_display_mode_reloaded">Display mode changed. Page reloaded.</string>
     <string name="browser_search_source_bookmark">Bookmark</string>
     <string name="browser_search_source_webapp">WebApp</string>
     <string name="browser_search_source_history">History</string>
@@ -122,6 +128,9 @@
     <string name="menu_remove_bookmark">Remove bookmark</string>
     <string name="menu_install_webapp">Install as WebApp</string>
     <string name="menu_uninstall_webapp">Uninstall WebApp</string>
+    <string name="menu_display_mode">Display mode</string>
+    <string name="menu_display_mode_temporary">Temporary: %1$s</string>
+    <string name="menu_display_mode_default_help">Follow the default website display mode</string>
     <string name="menu_discover_more_extensions">Discover more extensions</string>
     <string name="menu_search_android_addons">Search Android add-ons</string>
     <string name="menu_extension_settings">Settings</string>

@@ -35,6 +35,7 @@ internal fun BrowserSettings.toJson(): JSONObject =
         .put("searchEngineName", searchEngineName)
         .put("customSearchUrl", customSearchUrl)
         .put("toolbarPosition", toolbarPosition)
+        .put("websiteDisplayMode", BrowserSettings.normalizedWebsiteDisplayMode(websiteDisplayMode))
         .put("backgroundVideoEnhancementEnabled", backgroundVideoEnhancementEnabled)
         .put("openNewTabsInCurrentTab", openNewTabsInCurrentTab)
         .put("dohEnabled", dohEnabled)

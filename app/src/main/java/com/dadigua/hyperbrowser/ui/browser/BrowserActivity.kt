@@ -612,6 +612,10 @@ private fun BrowserScreen(
                 profileStore.updateToolbarPosition(payload.optString("toolbarPosition"))
                 okData(profileStore.observeSettings().value.toJson())
             }
+            "settings.websiteDisplayMode.update" -> {
+                profileStore.updateWebsiteDisplayMode(payload.optString("websiteDisplayMode"))
+                okData(profileStore.observeSettings().value.toJson())
+            }
             "settings.backgroundVideoEnhancement.update" -> {
                 profileStore.updateBackgroundVideoEnhancement(payload.optString("enabled") == "true")
                 okData(profileStore.observeSettings().value.toJson())
@@ -1040,6 +1044,7 @@ private fun BrowserScreen(
             onEngineSessionStateChange = { state ->
                 state?.let { profileStore.saveTabSessionState(tabId, it) }
             },
+            defaultWebsiteDisplayMode = { profileStore.observeSettings().value.websiteDisplayMode },
             onPageStop = { success ->
                 if (success) {
                     thumbnailRefreshRequests.tryEmit(tabId)
@@ -1405,6 +1410,7 @@ private fun BrowserScreen(
                     profileStore.saveTabSessionState(tabId, state)
                 }
             },
+            defaultWebsiteDisplayMode = { profileStore.observeSettings().value.websiteDisplayMode },
             onPageStop = { success ->
                 val tabId = createdTab?.id
                 if (success && tabId != null) {
@@ -1952,6 +1958,9 @@ private fun BrowserScreen(
                         installedExtensions = installedExtensions,
                         extensionActions = extensionActions,
                         toolbarPosition = settings.toolbarPosition,
+                        websiteDisplayModeAvailable = !currentPageIsInternal,
+                        websiteDisplayMode = tab.currentWebsiteDisplayMode(settings.websiteDisplayMode),
+                        temporaryWebsiteDisplayMode = tab.temporaryWebsiteDisplayMode,
                         collapseFraction = animatedToolbarCollapseFraction,
                         downloads = downloads,
                         addressSecurityLevel = addressSecurityLevel(pageState.securityLevel, settings),
@@ -1962,6 +1971,12 @@ private fun BrowserScreen(
                         onBack = controller::goBack,
                         onForward = controller::goForward,
                         onReload = controller::reload,
+                        onTemporaryWebsiteDisplayModeChange = { mode ->
+                            tab.updateTemporaryWebsiteDisplayMode(mode)
+                            controller.applyWebsiteDisplayModeForUrl(currentPageUrl)
+                            controller.reload()
+                            message = context.getString(R.string.browser_temporary_display_mode_reloaded)
+                        },
                         onShowTabs = {
                             refreshTabThumbnail(tab) {
                                 showPanel(BrowserPanel.Tabs)

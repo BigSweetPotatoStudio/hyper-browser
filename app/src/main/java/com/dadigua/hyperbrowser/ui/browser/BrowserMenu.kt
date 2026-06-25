@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dadigua.hyperbrowser.R
+import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.browser.BrowserDownloadEntry
 import com.dadigua.hyperbrowser.browser.DownloadStatus
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
@@ -58,10 +59,16 @@ internal fun BrowserMenuPanel(
     extensionActions: Map<String, ExtensionMenuActionState>,
     extensionsExpanded: Boolean,
     onExtensionsExpandedChange: (Boolean) -> Unit,
+    websiteDisplayModeAvailable: Boolean,
+    websiteDisplayMode: String,
+    temporaryWebsiteDisplayMode: String?,
+    displayModeExpanded: Boolean,
+    onDisplayModeExpandedChange: (Boolean) -> Unit,
     onNewTab: () -> Unit,
     onBack: () -> Unit,
     onForward: () -> Unit,
     onReload: () -> Unit,
+    onTemporaryWebsiteDisplayModeChange: (String) -> Unit,
     onToggleBookmark: () -> Unit,
     onShowBookmarks: () -> Unit,
     onShowHistory: () -> Unit,
@@ -94,6 +101,36 @@ internal fun BrowserMenuPanel(
                 leadingIconVector = if (webAppInstalled) Icons.Outlined.Delete else Icons.AutoMirrored.Outlined.AddToHomeScreen,
                 onClick = onInstall
             )
+            if (websiteDisplayModeAvailable) {
+                DisplayModeMenuRow(
+                    websiteDisplayMode = websiteDisplayMode,
+                    temporaryWebsiteDisplayMode = temporaryWebsiteDisplayMode,
+                    expanded = displayModeExpanded,
+                    onExpandedChange = onDisplayModeExpandedChange
+                )
+                if (displayModeExpanded) {
+                    DisplayModeOptionRow(
+                        mode = BrowserSettings.WEBSITE_DISPLAY_DEFAULT,
+                        selectedMode = temporaryWebsiteDisplayMode ?: BrowserSettings.WEBSITE_DISPLAY_DEFAULT,
+                        onSelect = onTemporaryWebsiteDisplayModeChange
+                    )
+                    DisplayModeOptionRow(
+                        mode = BrowserSettings.WEBSITE_DISPLAY_MOBILE,
+                        selectedMode = temporaryWebsiteDisplayMode ?: BrowserSettings.WEBSITE_DISPLAY_DEFAULT,
+                        onSelect = onTemporaryWebsiteDisplayModeChange
+                    )
+                    DisplayModeOptionRow(
+                        mode = BrowserSettings.WEBSITE_DISPLAY_TABLET,
+                        selectedMode = temporaryWebsiteDisplayMode ?: BrowserSettings.WEBSITE_DISPLAY_DEFAULT,
+                        onSelect = onTemporaryWebsiteDisplayModeChange
+                    )
+                    DisplayModeOptionRow(
+                        mode = BrowserSettings.WEBSITE_DISPLAY_DESKTOP,
+                        selectedMode = temporaryWebsiteDisplayMode ?: BrowserSettings.WEBSITE_DISPLAY_DEFAULT,
+                        onSelect = onTemporaryWebsiteDisplayModeChange
+                    )
+                }
+            }
         }
         MenuGroupBox {
             ExtensionsMenuRow(
@@ -162,6 +199,58 @@ internal fun BrowserMenuPanel(
         }
     }
 }
+
+@Composable
+private fun DisplayModeMenuRow(
+    websiteDisplayMode: String,
+    temporaryWebsiteDisplayMode: String?,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit
+) {
+    val modeLabel = websiteDisplayModeLabel(websiteDisplayMode)
+    BrowserMenuRow(
+        label = stringResource(R.string.menu_display_mode),
+        leadingIconVector = Icons.Outlined.Tune,
+        description = if (temporaryWebsiteDisplayMode == null) {
+            modeLabel
+        } else {
+            stringResource(R.string.menu_display_mode_temporary, modeLabel)
+        },
+        trailing = if (expanded) "⌃" else "˅",
+        onClick = { onExpandedChange(!expanded) }
+    )
+}
+
+@Composable
+private fun DisplayModeOptionRow(
+    mode: String,
+    selectedMode: String,
+    onSelect: (String) -> Unit
+) {
+    val normalizedMode = BrowserSettings.normalizedWebsiteDisplayMode(mode)
+    val selected = BrowserSettings.normalizedWebsiteDisplayMode(selectedMode) == normalizedMode
+    BrowserMenuRow(
+        label = websiteDisplayModeLabel(normalizedMode),
+        leadingIconVector = Icons.Outlined.Tune,
+        description = if (normalizedMode == BrowserSettings.WEBSITE_DISPLAY_DEFAULT) {
+            stringResource(R.string.menu_display_mode_default_help)
+        } else {
+            null
+        },
+        trailing = if (selected) "✓" else null,
+        indent = 28.dp,
+        onClick = { onSelect(normalizedMode) }
+    )
+}
+
+@Composable
+private fun websiteDisplayModeLabel(mode: String): String =
+    when (BrowserSettings.normalizedWebsiteDisplayMode(mode)) {
+        BrowserSettings.WEBSITE_DISPLAY_MOBILE -> stringResource(R.string.browser_website_display_mobile)
+        BrowserSettings.WEBSITE_DISPLAY_TABLET -> stringResource(R.string.browser_website_display_tablet)
+        BrowserSettings.WEBSITE_DISPLAY_DESKTOP -> stringResource(R.string.browser_website_display_desktop)
+        else -> stringResource(R.string.browser_website_display_default)
+    }
 
 @Composable
 private fun MenuGroupBox(content: @Composable () -> Unit) {

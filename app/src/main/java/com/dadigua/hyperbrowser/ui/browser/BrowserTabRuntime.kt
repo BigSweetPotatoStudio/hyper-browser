@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.extensions.ExtensionNewTabRequest
+import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerInfo
 import com.dadigua.hyperbrowser.browser.BrowserMediaOwnerKind
@@ -42,6 +43,7 @@ internal class BrowserTabRuntime private constructor(
     restoredTitle: String?,
     pendingLoadUrl: String?,
     private var pendingRestoredSessionState: GeckoSession.SessionState?,
+    private val temporaryWebsiteDisplayModeState: MutableState<String?>,
     private val engineStateAvailable: MutableState<Boolean>
 ) {
     var controller by mutableStateOf(initialController)
@@ -54,6 +56,11 @@ internal class BrowserTabRuntime private constructor(
         private set
     var restoreUrl by mutableStateOf(pendingLoadUrl ?: input)
         private set
+    var temporaryWebsiteDisplayMode: String?
+        get() = temporaryWebsiteDisplayModeState.value
+        private set(value) {
+            temporaryWebsiteDisplayModeState.value = value
+        }
     val hasController: Boolean
         get() = controller != null
     val hasEngineState: Boolean
@@ -122,6 +129,16 @@ internal class BrowserTabRuntime private constructor(
         controller?.flushSessionState()
     }
 
+    fun currentWebsiteDisplayMode(defaultMode: String): String =
+        BrowserSettings.normalizedWebsiteDisplayMode(temporaryWebsiteDisplayMode ?: defaultMode)
+
+    fun updateTemporaryWebsiteDisplayMode(mode: String) {
+        val normalized = BrowserSettings.normalizedWebsiteDisplayMode(mode)
+        temporaryWebsiteDisplayMode = normalized.takeUnless {
+            it == BrowserSettings.WEBSITE_DISPLAY_DEFAULT
+        }
+    }
+
     fun close(closeActivePlayback: Boolean = true) {
         val result = controller?.close(closeActivePlayback) ?: GeckoSessionCloseResult.Closed
         if (closeActivePlayback) {
@@ -176,9 +193,11 @@ internal class BrowserTabRuntime private constructor(
             onCloseRequest: () -> Unit = {},
             onFocusRequest: () -> Unit = {},
             onEngineSessionStateChange: (String?) -> Unit = {},
+            defaultWebsiteDisplayMode: () -> String = { BrowserSettings.WEBSITE_DISPLAY_DEFAULT },
             onPageStop: (Boolean) -> Unit = {}
         ): BrowserTabRuntime {
             val engineStateAvailable = mutableStateOf(restoredSessionState != null)
+            val temporaryWebsiteDisplayModeState = mutableStateOf<String?>(null)
             val controllerFactory = { initialUrl: String,
                 shouldLoadInitialUrl: Boolean,
                 state: GeckoSession.SessionState? ->
@@ -211,6 +230,11 @@ internal class BrowserTabRuntime private constructor(
                         }
                     },
                     onPageStop = onPageStop,
+                    websiteDisplayModeForSession = {
+                        BrowserSettings.normalizedWebsiteDisplayMode(
+                            temporaryWebsiteDisplayModeState.value ?: defaultWebsiteDisplayMode()
+                        )
+                    },
                     mediaNotificationIntent = mediaLaunchIntent,
                     mediaOwnerInfo = {
                         BrowserMediaOwnerInfo(
@@ -234,6 +258,7 @@ internal class BrowserTabRuntime private constructor(
                 restoredTitle = initialTitle,
                 pendingLoadUrl = url.takeUnless { loadImmediately },
                 pendingRestoredSessionState = restoredSessionState.takeUnless { loadImmediately },
+                temporaryWebsiteDisplayModeState = temporaryWebsiteDisplayModeState,
                 app = app,
                 mediaOwnerInfo = {
                     BrowserMediaOwnerInfo(
@@ -332,6 +357,7 @@ internal class BrowserTabRuntime private constructor(
                 restoredTitle = request.title,
                 pendingLoadUrl = null,
                 pendingRestoredSessionState = null,
+                temporaryWebsiteDisplayModeState = mutableStateOf<String?>(null),
                 engineStateAvailable = mutableStateOf(false)
             )
         }
@@ -357,11 +383,13 @@ internal class BrowserTabRuntime private constructor(
             onCloseRequest: () -> Unit = {},
             onFocusRequest: () -> Unit = {},
             onEngineSessionStateChange: (String?) -> Unit = {},
+            defaultWebsiteDisplayMode: () -> String = { BrowserSettings.WEBSITE_DISPLAY_DEFAULT },
             onPageStop: (Boolean) -> Unit = {}
         ): BrowserTabRuntime {
             val id = UUID.randomUUID().toString()
             val initialUrl = url.ifBlank { GeckoSessionController.ABOUT_BLANK_URL }
             val engineStateAvailable = mutableStateOf(false)
+            val temporaryWebsiteDisplayModeState = mutableStateOf<String?>(null)
             val mediaOwnerInfo = {
                 BrowserMediaOwnerInfo(
                     id = id,
@@ -398,6 +426,11 @@ internal class BrowserTabRuntime private constructor(
                         }
                     },
                     onPageStop = onPageStop,
+                    websiteDisplayModeForSession = {
+                        BrowserSettings.normalizedWebsiteDisplayMode(
+                            temporaryWebsiteDisplayModeState.value ?: defaultWebsiteDisplayMode()
+                        )
+                    },
                     mediaNotificationIntent = mediaLaunchIntent,
                     mediaOwnerInfo = mediaOwnerInfo
                 )
@@ -413,6 +446,7 @@ internal class BrowserTabRuntime private constructor(
                 restoredTitle = null,
                 pendingLoadUrl = null,
                 pendingRestoredSessionState = null,
+                temporaryWebsiteDisplayModeState = temporaryWebsiteDisplayModeState,
                 engineStateAvailable = engineStateAvailable
             )
         }

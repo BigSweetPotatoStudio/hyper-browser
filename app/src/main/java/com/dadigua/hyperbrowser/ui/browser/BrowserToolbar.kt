@@ -78,6 +78,9 @@ internal fun BrowserToolbar(
     installedExtensions: List<InstalledExtensionState>,
     extensionActions: Map<String, ExtensionMenuActionState>,
     toolbarPosition: String,
+    websiteDisplayModeAvailable: Boolean,
+    websiteDisplayMode: String,
+    temporaryWebsiteDisplayMode: String?,
     collapseFraction: Float = 0f,
     downloads: List<BrowserDownloadEntry>,
     addressSecurityLevel: AddressSecurityLevel,
@@ -85,6 +88,7 @@ internal fun BrowserToolbar(
     onBack: () -> Unit,
     onForward: () -> Unit,
     onReload: () -> Unit,
+    onTemporaryWebsiteDisplayModeChange: (String) -> Unit,
     onHome: () -> Unit,
     onShowTabs: () -> Unit,
     onNewTab: () -> Unit,
@@ -99,6 +103,7 @@ internal fun BrowserToolbar(
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var extensionsExpanded by remember { mutableStateOf(false) }
+    var displayModeExpanded by remember { mutableStateOf(false) }
     val placeholder = stringResource(R.string.browser_placeholder_search_or_url)
     val currentAddress = browserAddressText(pageState.url, input, placeholder)
     val hasCurrentAddress = currentAddress.isNotBlank() && currentAddress != placeholder
@@ -199,10 +204,19 @@ internal fun BrowserToolbar(
                         extensionActions = extensionActions,
                         extensionsExpanded = extensionsExpanded,
                         onExtensionsExpandedChange = { extensionsExpanded = it },
+                        websiteDisplayModeAvailable = websiteDisplayModeAvailable,
+                        websiteDisplayMode = websiteDisplayMode,
+                        temporaryWebsiteDisplayMode = temporaryWebsiteDisplayMode,
+                        displayModeExpanded = displayModeExpanded,
+                        onDisplayModeExpandedChange = { displayModeExpanded = it },
                         onNewTab = { showMenu = false; onNewTab() },
                         onBack = { showMenu = false; onBack() },
                         onForward = { showMenu = false; onForward() },
                         onReload = { showMenu = false; onReload() },
+                        onTemporaryWebsiteDisplayModeChange = {
+                            showMenu = false
+                            onTemporaryWebsiteDisplayModeChange(it)
+                        },
                         onToggleBookmark = { showMenu = false; onToggleBookmark() },
                         onShowBookmarks = { showMenu = false; onShowBookmarks() },
                         onShowHistory = { showMenu = false; onShowHistory() },

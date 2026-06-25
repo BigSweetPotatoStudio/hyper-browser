@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.browser.BrowserBookmark
 import com.dadigua.hyperbrowser.browser.BrowserHistoryEntry
+import com.dadigua.hyperbrowser.browser.browserSiteSettingsHost
 import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.gecko.GeckoSessionController
 import kotlinx.coroutines.launch
@@ -292,56 +293,85 @@ private fun CurrentPagePanel(
     val shareLabel = stringResource(R.string.common_action_share)
     val copyLabel = stringResource(R.string.common_action_copy)
     val editLabel = stringResource(R.string.common_action_edit)
+    val currentSiteLabel = stringResource(R.string.browser_site_settings_current_site)
+    val siteHost = browserSiteSettingsHost(url)
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Box(
+        Column {
+            Row(
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFE8EAED)),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text("⌂", fontSize = 20.sp, color = Color(0xFF5F6368))
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title.ifBlank { url },
-                    color = Color(0xFF202124),
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFE8EAED)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("⌂", fontSize = 20.sp, color = Color(0xFF5F6368))
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title.ifBlank { url },
+                        color = Color(0xFF202124),
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = url,
+                        color = Color(0xFF3F51B5),
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                CompactActionButton(
+                    icon = { Icon(Icons.Outlined.Share, contentDescription = shareLabel) },
+                    onClick = onShare
                 )
-                Text(
-                    text = url,
-                    color = Color(0xFF3F51B5),
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                CompactActionButton(
+                    icon = { Icon(Icons.Outlined.ContentCopy, contentDescription = copyLabel) },
+                    onClick = onCopy
+                )
+                CompactActionButton(
+                    icon = { Icon(Icons.Outlined.Edit, contentDescription = editLabel) },
+                    onClick = onEdit
                 )
             }
-            CompactActionButton(
-                icon = { Icon(Icons.Outlined.Share, contentDescription = shareLabel) },
-                onClick = onShare
-            )
-            CompactActionButton(
-                icon = { Icon(Icons.Outlined.ContentCopy, contentDescription = copyLabel) },
-                onClick = onCopy
-            )
-            CompactActionButton(
-                icon = { Icon(Icons.Outlined.Edit, contentDescription = editLabel) },
-                onClick = onEdit
-            )
+            if (siteHost.isNotBlank()) {
+                HorizontalDivider(color = Color(0xFFE8EAED))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = currentSiteLabel,
+                            color = Color(0xFF5F6368),
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Text(
+                            text = siteHost,
+                            color = Color(0xFF202124),
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
         }
     }
 }
