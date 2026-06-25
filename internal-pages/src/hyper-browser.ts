@@ -97,6 +97,7 @@ type WebDavLocalSyncData = {
   bookmarkTombstones?: Record<string, unknown>;
   webApps: WebAppRecord[] | Record<string, WebAppRecord>;
   appTombstones?: Record<string, unknown>;
+  layout?: object | null;
   settings?: BrowserSettings;
 };
 

@@ -100,12 +100,14 @@ export type LauncherLayoutLike = {
   folders?: Array<{ id: string; title?: string; childIds?: string[] }>;
 };
 
+export type LauncherLayoutSnapshot = LauncherLayoutLike | LauncherJson;
+
 type SnapshotRecordCollection<T> = Array<T> | Record<string, T>;
 
 export type SyncV2LocalSnapshot = {
   bookmarks?: SnapshotRecordCollection<BookmarkRecord & { rev?: Partial<Revision> }>;
   webApps?: SnapshotRecordCollection<WebAppRecord & { rev?: Partial<Revision> }>;
-  layout?: LauncherLayoutLike | null;
+  layout?: LauncherLayoutSnapshot | null;
 };
 
 export type SyncV2Result = {
@@ -401,9 +403,38 @@ function snapshotCanOverrideRevision(snapshot: { rev?: Partial<Revision> }, targ
   return compareRevision(normalizeRevision(snapshot.rev), normalizeRevision(target.rev)) >= 0;
 }
 
-export function appendLayoutSnapshotOperations(store: SyncV2Store, layout: LauncherLayoutLike): SyncV2Store {
-  if (!layoutDocumentChanged(layoutFromState(store.state), layout)) return store;
-  return appendOperation(store, { type: "layout.replace", layout });
+export function appendLayoutSnapshotOperations(store: SyncV2Store, layout: LauncherLayoutSnapshot): SyncV2Store {
+  const snapshot = launcherLayoutSnapshot(layout);
+  if (!layoutDocumentChanged(layoutFromState(store.state), snapshot.layout)) return store;
+  if (snapshot.rev.counter > 0 && compareRevision(snapshot.rev, store.state.layout.rev) <= 0) return store;
+  return appendOperation(store, { type: "layout.replace", layout: snapshot.layout });
+}
+
+function launcherLayoutSnapshot(layout: LauncherLayoutSnapshot): { layout: LauncherLayoutLike; rev: Revision } {
+  if (isLauncherJsonInput(layout)) {
+    const clean = normalizeLauncherJson(layout);
+    return {
+      layout: launcherJsonToUiLayout(clean),
+      rev: clean.rev,
+    };
+  }
+  return {
+    layout,
+    rev: { counter: 0, deviceId: "" },
+  };
+}
+
+function isLauncherJsonInput(value: unknown): value is LauncherJson {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const source = value as Partial<LauncherJson>;
+  return !!source.rev ||
+    Array.isArray(source.pages) ||
+    (Array.isArray(source.dock) && source.dock.some((item) => !!item && typeof item === "object")) ||
+    (Array.isArray(source.folders) && source.folders.some((item) =>
+      !!item &&
+      typeof item === "object" &&
+      Array.isArray((item as { cells?: unknown }).cells)
+    ));
 }
 
 export function activeBookmarksFromState(state: SyncV2State): BookmarkRecord[] {

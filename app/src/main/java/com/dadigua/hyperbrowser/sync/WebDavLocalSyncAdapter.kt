@@ -32,6 +32,7 @@ class WebDavLocalSyncAdapter(
             .put("bookmarkTombstones", bookmarks.optJSONObject("bookmarkTombstones") ?: JSONObject())
             .put("webApps", webApps.optJSONObject("apps") ?: JSONObject())
             .put("appTombstones", webApps.optJSONObject("appTombstones") ?: JSONObject())
+            .put("layout", profileStore.launcherSyncJson() ?: JSONObject.NULL)
     }
 
     suspend fun applyRecords(

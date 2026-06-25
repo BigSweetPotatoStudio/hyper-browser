@@ -231,6 +231,9 @@ class BrowserProfileStore(context: Context) {
         return null
     }
 
+    fun launcherSyncJson(): JSONObject? =
+        readJSONObject(launcherLayoutFile)?.let { normalizeLauncherJson(it) }
+
     fun saveLauncherLayout(layout: JSONObject) {
         val stored = if (isLauncherJson(layout)) {
             normalizeLauncherJson(layout)

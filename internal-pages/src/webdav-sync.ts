@@ -55,11 +55,10 @@ export async function runAndroidWebDavSyncIfEnabled(): Promise<WebDavSyncResult 
 
 async function loadLocalSnapshot(): Promise<SyncV2LocalSnapshot> {
   const localData = await requestWebDavLocalData();
-  const layout = await requestLauncherLayout();
   return {
     bookmarks: localData.bookmarks || [],
     webApps: localData.webApps || [],
-    layout,
+    layout: localData.layout || null,
   };
 }
 

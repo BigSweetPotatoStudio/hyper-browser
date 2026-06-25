@@ -25,10 +25,9 @@ export function createLauncherLayoutStorage(): LauncherLayoutStorage {
     },
     save(layout: LauncherLayout, options) {
       const run = launcherLayoutSaveQueue.then(async () => {
+        if ((options?.reason || "user") !== "user") return;
         await window.hyperBrowser.saveLauncherLayout(layout);
-        if ((options?.reason || "user") === "user") {
-          await recordAndroidLauncherLayoutEdit(layout);
-        }
+        await recordAndroidLauncherLayoutEdit(layout);
       });
       launcherLayoutSaveQueue = run.catch(() => undefined);
       return run;
