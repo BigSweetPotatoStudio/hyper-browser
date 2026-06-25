@@ -551,9 +551,9 @@ class BrowserProfileStore(context: Context) {
             .put("bookmarks", JSONObject())
             .put("bookmarkTombstones", JSONObject())
 
-    private fun syncRevisionJson(counter: Long, deviceId: String): JSONObject =
+    private fun syncRevisionJson(updatedAt: Long, deviceId: String): JSONObject =
         JSONObject()
-            .put("counter", counter.coerceAtLeast(0L))
+            .put("updatedAt", updatedAt.coerceAtLeast(0L))
             .put("deviceId", deviceId.trim())
 
     private fun normalizeLauncherJson(layout: JSONObject): JSONObject {

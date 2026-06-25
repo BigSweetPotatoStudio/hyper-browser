@@ -1,6 +1,7 @@
 package com.dadigua.hyperbrowser.backup
 
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
+import com.dadigua.hyperbrowser.sync.WebDavLocalSyncAdapter
 import com.dadigua.hyperbrowser.webapp.WebAppRepository
 import org.json.JSONObject
 
@@ -8,6 +9,8 @@ class BrowserBackupManager(
     private val profileStore: BrowserProfileStore,
     private val webAppRepository: WebAppRepository
 ) {
+    private val syncFileAdapter = WebDavLocalSyncAdapter(profileStore, webAppRepository)
+
     fun exportJson(): String =
         JSONObject()
             .put("type", BACKUP_TYPE)
@@ -22,7 +25,7 @@ class BrowserBackupManager(
             )
             .toString(2)
 
-    fun importJson(raw: String): BrowserBackupImportResult {
+    suspend fun importJson(raw: String): BrowserBackupImportResult {
         val root = JSONObject(raw)
         if (root.optString("type") != BACKUP_TYPE || root.optInt("version") != BACKUP_VERSION) {
             error("Unsupported backup format.")
@@ -34,9 +37,9 @@ class BrowserBackupManager(
         val webApps = bumpWebAppsJson(files.requireJSONObject(WEBAPPS_FILE), now, deviceId)
         val launcher = bumpLauncherJson(files.requireJSONObject(LAUNCHER_FILE), now, deviceId)
 
-        profileStore.saveBookmarksSyncJson(bookmarks)
-        webAppRepository.saveSyncJson(webApps)
-        profileStore.saveLauncherSyncJson(launcher)
+        syncFileAdapter.saveSyncFile(BOOKMARKS_FILE, bookmarks.toString())
+        syncFileAdapter.saveSyncFile(WEBAPPS_FILE, webApps.toString())
+        syncFileAdapter.saveSyncFile(LAUNCHER_FILE, launcher.toString())
 
         return BrowserBackupImportResult(
             bookmarks = bookmarks.optJSONObject("bookmarks")?.length() ?: 0,
@@ -44,32 +47,32 @@ class BrowserBackupManager(
         )
     }
 
-    private fun bumpBookmarksJson(json: JSONObject, counter: Long, deviceId: String): JSONObject {
+    private fun bumpBookmarksJson(json: JSONObject, updatedAt: Long, deviceId: String): JSONObject {
         val next = json.deepCopy()
         requireSchema(next)
-        bumpRecordMap(next.requireJSONObject("bookmarks"), counter, deviceId)
-        bumpRecordMap(next.requireJSONObject("bookmarkTombstones"), counter, deviceId)
+        bumpRecordMap(next.requireJSONObject("bookmarks"), updatedAt, deviceId)
+        bumpRecordMap(next.requireJSONObject("bookmarkTombstones"), updatedAt, deviceId)
         return next
     }
 
-    private fun bumpWebAppsJson(json: JSONObject, counter: Long, deviceId: String): JSONObject {
+    private fun bumpWebAppsJson(json: JSONObject, updatedAt: Long, deviceId: String): JSONObject {
         val next = json.deepCopy()
         requireSchema(next)
-        bumpRecordMap(next.requireJSONObject("apps"), counter, deviceId)
-        bumpRecordMap(next.requireJSONObject("appTombstones"), counter, deviceId)
+        bumpRecordMap(next.requireJSONObject("apps"), updatedAt, deviceId)
+        bumpRecordMap(next.requireJSONObject("appTombstones"), updatedAt, deviceId)
         return next
     }
 
-    private fun bumpLauncherJson(json: JSONObject, counter: Long, deviceId: String): JSONObject {
+    private fun bumpLauncherJson(json: JSONObject, updatedAt: Long, deviceId: String): JSONObject {
         val next = json.deepCopy()
-        next.put("rev", syncRevisionJson(counter, deviceId))
+        next.put("rev", syncRevisionJson(updatedAt, deviceId))
         return next
     }
 
-    private fun bumpRecordMap(records: JSONObject, counter: Long, deviceId: String) {
+    private fun bumpRecordMap(records: JSONObject, updatedAt: Long, deviceId: String) {
         val keys = records.keys().asSequence().toList()
         keys.forEach { key ->
-            records.optJSONObject(key)?.put("rev", syncRevisionJson(counter, deviceId))
+            records.optJSONObject(key)?.put("rev", syncRevisionJson(updatedAt, deviceId))
         }
     }
 
@@ -88,9 +91,9 @@ class BrowserBackupManager(
     private fun emptyLauncherJson(): JSONObject =
         JSONObject().put("rev", syncRevisionJson(0L, ""))
 
-    private fun syncRevisionJson(counter: Long, deviceId: String): JSONObject =
+    private fun syncRevisionJson(updatedAt: Long, deviceId: String): JSONObject =
         JSONObject()
-            .put("counter", counter.coerceAtLeast(0L))
+            .put("updatedAt", updatedAt.coerceAtLeast(0L))
             .put("deviceId", deviceId.trim())
 
     private companion object {

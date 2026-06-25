@@ -32,7 +32,6 @@ const hyperCommands = createHyperBackgroundCommandHandler<SyncResult>({
   saveBookmark: (input) => browserSyncService.addBookmarkToSyncFolder({
     title: input.title || input.url || "",
     url: input.url || "",
-    iconDataUrl: input.iconDataUrl ?? null,
   }),
   deleteBookmark: browserSyncService.deleteRemoteBookmark,
   listWebApps: browserSyncService.loadRemoteWebApps,

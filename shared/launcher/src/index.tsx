@@ -1992,13 +1992,13 @@ function normalizeStoredLayout(
 function emptyLauncherLayout(defaultDockEntryIds: string[]): LauncherJson {
   return {
     dock: launcherCellsFromIds(defaultDockEntryIds.slice(0, MAX_DOCK_ITEMS)),
-    rev: { counter: 0, deviceId: "" },
+    rev: { updatedAt: 0, deviceId: "" },
   };
 }
 
 function normalizeLauncherLayout(value: unknown): LauncherJson {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { rev: { counter: 0, deviceId: "" } };
+    return { rev: { updatedAt: 0, deviceId: "" } };
   }
   const source = value as Partial<LauncherJson>;
   const firstPage = Array.isArray(source.pages) ? source.pages[0] : undefined;
@@ -2016,10 +2016,11 @@ function normalizeLauncherLayout(value: unknown): LauncherJson {
 }
 
 function normalizeLauncherRevision(value: unknown): LauncherJson["rev"] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return { counter: 0, deviceId: "" };
-  const source = value as Partial<LauncherJson["rev"]>;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { updatedAt: 0, deviceId: "" };
+  const source = value as Partial<LauncherJson["rev"]> & { counter?: unknown };
+  const rawUpdatedAt = Number.isSafeInteger(source.updatedAt) ? source.updatedAt : source.counter;
   return {
-    counter: Number.isSafeInteger(source.counter) ? Number(source.counter) : 0,
+    updatedAt: Number.isSafeInteger(rawUpdatedAt) ? Number(rawUpdatedAt) : 0,
     deviceId: typeof source.deviceId === "string" ? source.deviceId : "",
   };
 }

@@ -116,6 +116,10 @@ type BookmarkDeleteInput = {
   title?: string;
 };
 
+type SanitizeStateOptions = {
+  pruneLauncherAppRefs?: boolean;
+};
+
 const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 export function createEmptyState(): SyncV2State {
@@ -126,7 +130,7 @@ export function createEmptyState(): SyncV2State {
     apps: {},
     appTombstones: {},
     layout: {
-      rev: { counter: 0, deviceId: "" },
+      rev: { updatedAt: 0, deviceId: "" },
     },
   };
 }
@@ -166,6 +170,21 @@ export function ensureState(value: unknown): SyncV2State {
   });
 }
 
+function ensureMergeInputState(value: unknown): SyncV2State {
+  if (!value || typeof value !== "object" || (value as Partial<SyncV2State>).schemaVersion !== SYNC_V2_SCHEMA_VERSION) {
+    return createEmptyState();
+  }
+  const state = value as Partial<SyncV2State>;
+  return sanitizeState({
+    schemaVersion: SYNC_V2_SCHEMA_VERSION,
+    bookmarks: state.bookmarks || {},
+    bookmarkTombstones: state.bookmarkTombstones || {},
+    apps: state.apps || {},
+    appTombstones: state.appTombstones || {},
+    layout: normalizeLauncherJson(state.layout),
+  }, { pruneLauncherAppRefs: false });
+}
+
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(canonicalize(value));
 }
@@ -201,7 +220,8 @@ export function stateToSyncJsonFiles(state: SyncV2State): SyncJsonByFileName {
   };
 }
 
-function sanitizeState(state: SyncV2State): SyncV2State {
+function sanitizeState(state: SyncV2State, options: SanitizeStateOptions = {}): SyncV2State {
+  const pruneLauncherAppRefs = options.pruneLauncherAppRefs !== false;
   const clean = cloneJson(state);
 
   const bookmarks: Record<string, BookmarkSyncRecord> = {};
@@ -226,7 +246,9 @@ function sanitizeState(state: SyncV2State): SyncV2State {
   });
 
   compactStateTombstones(clean);
-  clean.layout = sanitizeLauncherJson(clean.layout, clean.apps, clean.appTombstones);
+  clean.layout = pruneLauncherAppRefs
+    ? sanitizeLauncherJson(clean.layout, clean.apps, clean.appTombstones)
+    : normalizeLauncherJson(clean.layout);
 
   return clean;
 }
@@ -255,8 +277,8 @@ function parseJsonFileValue(value: unknown): unknown {
 }
 
 export function compareRevision(a: Partial<SyncRevision> = {}, b: Partial<SyncRevision> = {}): number {
-  const ac = Number.isSafeInteger(a.counter) ? Number(a.counter) : 0;
-  const bc = Number.isSafeInteger(b.counter) ? Number(b.counter) : 0;
+  const ac = Number.isSafeInteger(a.updatedAt) ? Number(a.updatedAt) : 0;
+  const bc = Number.isSafeInteger(b.updatedAt) ? Number(b.updatedAt) : 0;
   return ac === bc ? 0 : (ac < bc ? -1 : 1);
 }
 
@@ -395,7 +417,7 @@ export function appendLayoutSnapshotOperations(
   const currentState = ensureState(state);
   const snapshot = normalizeLauncherJson(layout);
   if (!layoutDocumentChanged(currentState.layout, snapshot)) return { store: cloneJson(store), state: currentState };
-  if (!options.force && snapshot.rev.counter > 0 && compareRevision(snapshot.rev, currentState.layout.rev) <= 0) {
+  if (!options.force && snapshot.rev.updatedAt > 0 && compareRevision(snapshot.rev, currentState.layout.rev) <= 0) {
     return { store: cloneJson(store), state: currentState };
   }
   return appendOperation(store, currentState, { type: "layout.replace", layout: snapshot });
@@ -465,14 +487,14 @@ export async function syncV2(options: {
     await options.withLocalLock(async () => {
       let store = ensureStore(await options.loadStore(), options.settings.deviceId);
       const previousState = await options.loadState();
-      let workingState = mergeState(previousState, remote.state);
+      let workingState = mergeSyncStates(previousState, remote.state);
       if (options.loadLocalSnapshot) {
         const next = appendLocalSnapshotOperations(store, workingState, await options.loadLocalSnapshot());
         store = next.store;
         workingState = next.state;
       }
       uploadedOperationCount = 0;
-      mergedState = mergeState(workingState, remote.state);
+      mergedState = mergeSyncStates(workingState, remote.state);
       stateChanged = canonicalJson(previousState) !== canonicalJson(mergedState);
       launcherChanged = launcherStateSignature(previousState) !== launcherStateSignature(mergedState);
       pendingOperationCount = 0;
@@ -549,9 +571,9 @@ function launcherStateSignature(state: SyncV2State): string {
   });
 }
 
-function mergeState(leftState: SyncV2State, rightState: SyncV2State): SyncV2State {
-  const left = ensureState(leftState);
-  const right = ensureState(rightState);
+export function mergeSyncStates(leftState: SyncV2State, rightState: SyncV2State): SyncV2State {
+  const left = ensureMergeInputState(leftState);
+  const right = ensureMergeInputState(rightState);
   const bookmarkTombstones = mergeLwwMap(left.bookmarkTombstones, right.bookmarkTombstones);
   const bookmarks = mergeLwwMap(left.bookmarks, right.bookmarks);
   applyBookmarkTombstones(bookmarks, bookmarkTombstones);
@@ -624,7 +646,7 @@ function layoutDocumentSignature(layout: LauncherJson): unknown {
 
 function normalizeLauncherJson(value: unknown): LauncherJson {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { rev: { counter: 0, deviceId: "" } };
+    return { rev: { updatedAt: 0, deviceId: "" } };
   }
   const source = value as Partial<LauncherJson>;
   const firstPage = Array.isArray(source.pages) ? source.pages[0] : undefined;
@@ -764,10 +786,11 @@ function launcherCellCount(layout: LauncherJson): number {
 
 function normalizeRevision(value: unknown, fallbackDeviceId: unknown = ""): SyncRevision {
   const fallback = cleanOptionalString(fallbackDeviceId);
-  if (!value || typeof value !== "object" || Array.isArray(value)) return { counter: 0, deviceId: fallback };
-  const source = value as Partial<SyncRevision>;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { updatedAt: 0, deviceId: fallback };
+  const source = value as Partial<SyncRevision> & { counter?: unknown };
+  const rawUpdatedAt = Number.isSafeInteger(source.updatedAt) ? source.updatedAt : source.counter;
   return {
-    counter: Number.isSafeInteger(source.counter) ? Math.max(0, Number(source.counter)) : 0,
+    updatedAt: Number.isSafeInteger(rawUpdatedAt) ? Math.max(0, Number(rawUpdatedAt)) : 0,
     deviceId: cleanOptionalString(source.deviceId) || fallback,
   };
 }
@@ -874,8 +897,8 @@ function stateToRemoteFiles(state: SyncV2State): Record<string, unknown> {
     [LAUNCHER_FILE]: clean.layout,
     [MANIFEST_FILE]: {
       schemaVersion: SYNC_V2_SCHEMA_VERSION,
-      updatedAt: maxStateCounter(clean),
-      stateCounter: maxStateCounter(clean),
+      updatedAt: maxStateUpdatedAt(clean),
+      stateUpdatedAt: maxStateUpdatedAt(clean),
       files: {
         bookmarks: BOOKMARKS_FILE,
         webApps: WEBAPPS_FILE,
@@ -970,7 +993,7 @@ function mergeLauncherFileIntoState(state: SyncV2State, value: unknown): void {
 function readLauncherLayoutState(value: unknown): LauncherJson | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const layout = normalizeLauncherJson(value);
-  return layout.rev.counter > 0 || layout.rev.deviceId ? layout : null;
+  return layout.rev.updatedAt > 0 || layout.rev.deviceId ? layout : null;
 }
 
 function mergeLwwMapInto<T extends { rev?: SyncRevision }>(target: Record<string, T>, source: Record<string, T>): void {
@@ -1119,12 +1142,12 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
 }
 
 function operationRevision(operation: SyncV2Operation): SyncRevision {
-  return { counter: operation.createdAt, deviceId: operation.deviceId };
+  return { updatedAt: operation.createdAt, deviceId: operation.deviceId };
 }
 
 function revisionWithDevice(rev: SyncRevision, deviceId: unknown): SyncRevision {
   return {
-    counter: rev.counter,
+    updatedAt: rev.updatedAt,
     deviceId: cleanOptionalString(deviceId) || rev.deviceId,
   };
 }
@@ -1154,10 +1177,10 @@ function isOperation(value: unknown): value is SyncV2Operation {
     typeof operation.type === "string";
 }
 
-function maxStateCounter(state: SyncV2State): number {
+function maxStateUpdatedAt(state: SyncV2State): number {
   let max = 0;
   const visit = (record: { rev?: SyncRevision }) => {
-    if (Number.isSafeInteger(record.rev?.counter)) max = Math.max(max, Number(record.rev?.counter));
+    if (Number.isSafeInteger(record.rev?.updatedAt)) max = Math.max(max, Number(record.rev?.updatedAt));
   };
   Object.values(state.bookmarks).forEach(visit);
   Object.values(state.bookmarkTombstones).forEach(visit);

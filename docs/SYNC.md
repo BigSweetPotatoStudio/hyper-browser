@@ -48,8 +48,9 @@ Android 本地也保留同形态业务文件：
 
 - `BookmarkRecord` / `WebAppRecord` 是业务记录本体。
 - `BookmarkSyncRecord` / `WebAppSyncRecord` 在业务记录基础上增加必填 `rev`。
-- `rev.counter` 是本记录最后一次业务修改时间，用于 LWW 比较；不是操作次数。
-- `rev.deviceId` 用于排查来源和 counter 相同时的稳定排序，不作为主要新旧判断。
+- `rev.updatedAt` 是本记录最后一次业务修改时间，用于 LWW 比较。
+- `rev.deviceId` 用于排查来源和 updatedAt 相同时的稳定排序，不作为主要新旧判断。
+- 读取层兼容早期写出的 `rev.counter`，但新写出的同步 JSON 只使用 `rev.updatedAt`。
 - 书签以规范化 URL 为 key。
 - WebApp 以 `id` 为 key，允许多个 WebApp 使用相同 URL。
 - `launcher.json` 作为整体布局合并，`rev` 在布局根节点，不给每个 item 单独做版本。
@@ -61,7 +62,7 @@ Android 本地也保留同形态业务文件：
 - `readSyncStateFromFiles()` 从 `bookmarks.json`、`webapps.json`、`launcher.json` 读出本地合并态。
 - `saveSyncStateToFiles()` 把合并态写回三份业务文件。
 - `syncV2()` 负责读取远端、合并本地、上传远端。
-- 书签和 WebApp 记录按 `rev.counter` 做 LWW 合并。
+- 书签和 WebApp 记录按 `rev.updatedAt` 做 LWW 合并。
 - 书签删除使用 `bookmarkTombstones`，WebApp 删除使用 `appTombstones`，避免旧设备把删除数据同步回来。
 - 布局按 `launcher.json` 根 `rev` 整体合并。
 - 书签展示顺序按 `createdAt` 降序，新添加的在前；标题修改不改变添加顺序。
@@ -114,6 +115,8 @@ Kotlin 侧由 `WebDavLocalSyncAdapter` 映射到本地文件：
 
 这些 native API 是文件读写适配层，不承载业务合并策略。业务新旧判断、墓碑、布局版本和自动同步调度都在 background/shared sync 层完成。
 
+备份导入也应复用 `WebDavLocalSyncAdapter` 写入这三份文件，避免绕过本地同步文件边界。
+
 ## 自动同步
 
 `shared/sync/src/background.ts` 提供通用 background 同步控制器：
@@ -140,4 +143,4 @@ WebApp 同步记录允许保存自定义图标 `iconDataUrl` 和 `iconSource`，
 - 为同步状态再引入本地/远端不同格式的 sidecar 文件。
 - 在同步读路径里 fallback 读取旧格式；旧格式迁移应单独做迁移功能。
 - 用 URL 作为 WebApp 唯一身份。
-- 让 `updatedAt`、`createdAt`、`deletedAt` 代替 `rev.counter` 参与同步新旧判断。
+- 让业务字段 `createdAt`、`updatedAt`、`deletedAt` 代替 `rev.updatedAt` 参与同步新旧判断。

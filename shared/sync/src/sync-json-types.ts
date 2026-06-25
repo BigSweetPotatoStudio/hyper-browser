@@ -4,10 +4,10 @@
 export type SyncSchemaVersion = 2;
 
 export type SyncRevision = {
-  // 唯一冲突判断依据：谁的 counter 更大，谁更新。
-  // 它表示本条记录最后一次业务修改时间，不表示操作次数。
-  counter: number;
-  // 产生这次修改的设备。只用于排查来源和 counter 相同场景的稳定排序，不作为新旧判断主依据。
+  // 唯一冲突判断依据：谁的 updatedAt 更大，谁更新。
+  // 它表示本条记录最后一次业务修改时间。
+  updatedAt: number;
+  // 产生这次修改的设备。只用于排查来源和 updatedAt 相同场景的稳定排序，不作为新旧判断主依据。
   deviceId: string;
 };
 

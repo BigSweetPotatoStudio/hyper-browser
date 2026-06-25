@@ -276,7 +276,7 @@ function removeWebAppFromLauncherLayout(layout: unknown, itemId: string): Launch
 }
 
 function normalizeLauncherLayout(layout: unknown): LauncherJson {
-  if (!isPlainObject(layout)) return { rev: { counter: 0, deviceId: "" } };
+  if (!isPlainObject(layout)) return { rev: { updatedAt: 0, deviceId: "" } };
   const firstPage = Array.isArray(layout.pages) ? layout.pages[0] : undefined;
   const pageCells = normalizeLauncherCells(isPlainObject(firstPage) ? firstPage.cells : undefined);
   const dock = normalizeLauncherCells(layout.dock).slice(0, 4);
@@ -292,9 +292,10 @@ function normalizeLauncherLayout(layout: unknown): LauncherJson {
 }
 
 function normalizeLauncherRevision(value: unknown): LauncherJson["rev"] {
-  if (!isPlainObject(value)) return { counter: 0, deviceId: "" };
+  if (!isPlainObject(value)) return { updatedAt: 0, deviceId: "" };
+  const rawUpdatedAt = Number.isSafeInteger(value.updatedAt) ? value.updatedAt : value.counter;
   return {
-    counter: Number.isSafeInteger(value.counter) ? Number(value.counter) : 0,
+    updatedAt: Number.isSafeInteger(rawUpdatedAt) ? Number(rawUpdatedAt) : 0,
     deviceId: typeof value.deviceId === "string" ? value.deviceId : "",
   };
 }

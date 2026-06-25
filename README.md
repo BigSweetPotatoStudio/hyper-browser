@@ -320,7 +320,7 @@ WebDAV 同步的详细设计见 [WebDAV 同步架构](docs/SYNC.md)。
 - `manifest.json` 只是远端摘要和调试索引，不参与业务合并。
 - Android 本地也保存同形态 `bookmarks.json`、`webapps.json`、`launcher.json`。
 - `BookmarkRecord` / `WebAppRecord` 等同步 JSON 类型定义在 `shared/sync/src/sync-json-types.ts`。
-- 书签和 WebApp 记录通过 `rev.counter` 做 LWW 合并；`rev.counter` 表示本记录最后一次业务修改时间，不是操作次数。
+- 书签和 WebApp 记录通过 `rev.updatedAt` 做 LWW 合并；`rev.updatedAt` 表示本记录最后一次业务修改时间。
 - 书签和 WebApp 删除用 tombstone 防止旧设备把删除项同步回来。
 - `launcher.json` 作为整体布局文件，按根节点 `rev` 合并。
 - 书签图标不进同步数据，显示图标来自本地 favicon cache；WebApp 自定义图标属于业务数据，可以进入 `webapps.json`。
