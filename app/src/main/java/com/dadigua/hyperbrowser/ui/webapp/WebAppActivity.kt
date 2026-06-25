@@ -276,10 +276,7 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
     LaunchedEffect(webAppId) {
         webApp = app.webApps.get(webAppId)
         webApp?.let {
-            app.webApps.markOpened(it.id)
-            val updated = app.webApps.get(it.id) ?: it
-            webApp = updated
-            app.webApps.applyTaskDescription(activity, updated)
+            app.webApps.applyTaskDescription(activity, it)
         }
     }
 

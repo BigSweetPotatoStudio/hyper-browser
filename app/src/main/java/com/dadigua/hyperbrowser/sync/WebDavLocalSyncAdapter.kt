@@ -23,7 +23,7 @@ class WebDavLocalSyncAdapter(
         when (path.trim()) {
             BOOKMARKS_FILE -> profileStore.saveBookmarksSyncJson(json)
             WEBAPPS_FILE -> webAppRepository.saveSyncJson(json)
-            LAUNCHER_FILE -> profileStore.saveLauncherLayout(json)
+            LAUNCHER_FILE -> profileStore.saveLauncherSyncJson(json)
             else -> throw IllegalArgumentException("Unsupported sync file: $path")
         }
     }

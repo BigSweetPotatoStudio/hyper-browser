@@ -191,7 +191,7 @@
     <string name="backup_write_failed">无法写入备份文件。</string>
     <string name="backup_import_canceled">已取消导入。</string>
     <string name="backup_importing">正在导入备份...</string>
-    <string name="backup_import_result">已导入 %1$d 个书签和 %2$d 个 WebApp。</string>
+    <string name="backup_import_result">已恢复 %1$d 个书签和 %2$d 个 WebApp。</string>
     <string name="backup_import_failed">备份导入失败。</string>
     <string name="backup_read_failed">无法读取备份文件。</string>
     <string name="backup_choose_save_location">请选择 JSON 备份保存位置。</string>

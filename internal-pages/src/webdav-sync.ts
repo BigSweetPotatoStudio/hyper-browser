@@ -111,7 +111,6 @@ export async function saveAndroidBookmarkToSync(input: AndroidBookmarkSaveInput)
         title: (input.title || existing?.title || url).trim() || url,
         createdAt: existing?.createdAt || input.createdAt || now,
         updatedAt: now,
-        deletedAt: null,
         iconDataUrl: input.iconDataUrl ?? existing?.iconDataUrl ?? null,
       },
     });

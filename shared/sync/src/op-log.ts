@@ -300,7 +300,6 @@ export function appendWebAppUpsert(store: SyncV2Store, state: SyncV2State, input
     createdAt: existing?.createdAt || input.createdAt || now,
     lastOpenedAt: input.lastOpenedAt || existing?.lastOpenedAt || now,
     updatedAt: now,
-    deletedAt: null,
     iconDataUrl: hasIconDataUrl ? input.iconDataUrl ?? null : existing?.iconDataUrl ?? null,
     iconSource: input.iconSource || (hasIconDataUrl ? (input.iconDataUrl ? "custom" : "title") : existing?.iconSource) || "title",
   };
@@ -336,10 +335,6 @@ function appendBookmarkSnapshotOperations(
   snapshotRecordValues(bookmarks).forEach((bookmark) => {
     const record = normalizeBookmarkRecordInput(bookmark, next.state);
     if (!record) return;
-    if (record.deletedAt != null) {
-      next = appendOperation(next.store, next.state, { type: "bookmark.delete", ...bookmarkDeleteInput(record) });
-      return;
-    }
     local.set(bookmarkRecordKey(record), record);
   });
   local.forEach((bookmark, key) => {
@@ -370,21 +365,12 @@ function appendWebAppSnapshotOperations(
   local.forEach((app, id) => {
     const current = next.state.apps[id];
     const tombstone = next.state.appTombstones[id];
-    if (app.deletedAt != null) {
-      if (current && snapshotCanOverrideRevision(app, current)) {
-        next = appendWebAppDelete(next.store, next.state, id);
-      }
-      return;
-    }
     if (current && !snapshotCanOverrideRevision(app, current)) return;
     if (!current && tombstone && !snapshotCanOverrideRevision(app, tombstone)) return;
     if (!current || appFieldsChanged(current, app)) {
       next = appendOperation(next.store, next.state, {
         type: "app.upsert",
-        app: {
-          ...app,
-          deletedAt: null,
-        },
+        app,
       });
     }
   });
@@ -419,7 +405,7 @@ export function activeBookmarksFromState(state: SyncV2State): BookmarkRecord[] {
     .sort(compareBookmarkRecords)
     .map((raw) => {
       const { rev: _rev, ...bookmark } = raw;
-      return { ...bookmark, deletedAt: null };
+      return bookmark;
     });
 }
 
@@ -432,14 +418,14 @@ export function findBookmarkByUrlInState(state: SyncV2State, url: string): Bookm
     .sort((left, right) => compareRevision(right.rev, left.rev))[0];
   if (!match) return null;
   const { rev: _rev, ...bookmark } = match;
-  return { ...bookmark, deletedAt: null };
+  return bookmark;
 }
 
 export function activeWebAppsFromState(state: SyncV2State): WebAppRecord[] {
   return Object.values(ensureState(state).apps)
     .map((raw) => {
       const { rev: _rev, ...app } = raw;
-      return { ...app, deletedAt: null };
+      return app;
     });
 }
 
@@ -1237,7 +1223,6 @@ function normalizeBookmarkRecordInput(input: Partial<BookmarkRecord>, _state?: S
     title,
     createdAt: Number(input.createdAt) || Number(input.updatedAt) || Date.now(),
     updatedAt: Number(input.updatedAt) || Number(input.createdAt) || Date.now(),
-    deletedAt: input.deletedAt == null ? null : Number(input.deletedAt) || Date.parse(String(input.deletedAt)) || 0,
     iconDataUrl: cleanOptionalString(input.iconDataUrl) || null,
   };
 }

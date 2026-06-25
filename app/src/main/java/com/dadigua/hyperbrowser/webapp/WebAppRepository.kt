@@ -24,7 +24,6 @@ import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONObject
 import java.io.File
 import java.io.ByteArrayOutputStream
-import java.util.UUID
 
 class WebAppRepository(
     private val context: Context
@@ -36,12 +35,11 @@ class WebAppRepository(
     fun observeAll(): StateFlow<List<WebAppDefinition>> = state
 
     fun syncJson(): JSONObject =
-        readJSONObject(storeFile) ?: webAppsSyncJson(state.value)
+        readJSONObject(storeFile) ?: emptyWebAppsJson()
 
     fun saveSyncJson(json: JSONObject) {
         val previousById = state.value.associateBy { it.id }
-        val normalized = normalizeWebAppsSyncJson(json)
-        storeFile.writeText(normalized.toString())
+        storeFile.writeText(json.deepCopy().toString())
         val next = loadFromSyncFile(storeFile).sortedByDescending { it.lastOpenedAt }
         val nextIds = next.map { it.id }.toSet()
         previousById.values
@@ -53,50 +51,6 @@ class WebAppRepository(
     }
 
     suspend fun get(id: String): WebAppDefinition? = state.value.firstOrNull { it.id == id }
-
-    fun mergeImported(items: List<WebAppDefinition>): Int {
-        val current = state.value
-        val currentById = current.associateBy { it.id }
-        val usedIds = current.map { it.id }.toMutableSet()
-        val importedIds = mutableSetOf<String>()
-        val accepted = mutableListOf<WebAppDefinition>()
-        val shortcutUpdates = mutableListOf<WebAppDefinition>()
-        items.forEach { item ->
-            val startUrl = item.startUrl.trim()
-            if (startUrl.isBlank()) return@forEach
-            val requestedId = item.id.trim()
-            val existing = currentById[requestedId]
-            val id = existing?.id
-                ?: requestedId.takeIf { it.isNotBlank() && (it !in usedIds || importedIds.contains(it)) }
-                ?: UUID.randomUUID().toString()
-            if (!importedIds.add(id)) return@forEach
-            usedIds.add(id)
-            val iconPath = faviconStore.existingIconPath(siteModeIconPath(item.iconPath))
-                ?: faviconStore.cachedIconPath(startUrl)
-                ?: siteModeIconPath(existing?.iconPath)
-            val webApp = WebAppDefinition(
-                id = id,
-                name = item.name.trim().ifBlank { existing?.name ?: Uri.parse(startUrl).host ?: "WebApp" },
-                startUrl = startUrl,
-                iconPath = iconPath,
-                themeColor = item.themeColor,
-                displayMode = item.displayMode.ifBlank { existing?.displayMode ?: "standalone" },
-                createdAt = item.createdAt.takeIf { it > 0 }
-                    ?: existing?.createdAt
-                    ?: System.currentTimeMillis(),
-                lastOpenedAt = item.lastOpenedAt.takeIf { it > 0 }
-                    ?: existing?.lastOpenedAt
-                    ?: System.currentTimeMillis()
-            )
-            accepted.add(webApp)
-            if (existing != null) shortcutUpdates.add(webApp)
-        }
-        if (accepted.isEmpty()) return 0
-        val importedIdSet = accepted.map { it.id }.toSet()
-        save((accepted + current.filterNot { it.id in importedIdSet }).sortedByDescending { it.lastOpenedAt })
-        shortcutUpdates.forEach { updateShortcut(it) }
-        return accepted.size
-    }
 
     fun iconDataUrl(webApp: WebAppDefinition): String? {
         val icon = rawWebAppIconBitmap(webApp, 128) ?: return null
@@ -122,129 +76,9 @@ class WebAppRepository(
         }
     }
 
-    suspend fun installFromPage(
-        name: String,
-        url: String,
-        themeColor: Int = Color.rgb(18, 109, 106),
-        iconPath: String? = null
-    ): WebAppInstallResult {
-        val now = System.currentTimeMillis()
-        val resolvedIconPath = resolveWebAppIconPath(url, iconPath)
-        val webApp = WebAppDefinition(
-            id = UUID.randomUUID().toString(),
-            name = name.ifBlank { Uri.parse(url).host ?: "WebApp" },
-            startUrl = url,
-            iconPath = resolvedIconPath,
-            themeColor = themeColor,
-            displayMode = "standalone",
-            createdAt = now,
-            lastOpenedAt = now
-        )
-        upsert(webApp)
-        return WebAppInstallResult(webApp = webApp)
-    }
-
     suspend fun pinToHome(id: String): PinnedShortcutRequestResult {
         val webApp = state.value.firstOrNull { it.id == id } ?: return PinnedShortcutRequestResult.WebAppNotFound
         return requestPinnedShortcut(webApp)
-    }
-
-    suspend fun update(id: String, name: String, startUrl: String): WebAppDefinition? {
-        val current = state.value.firstOrNull { it.id == id } ?: return null
-        val cleanUrl = startUrl.trim()
-        if (cleanUrl.isBlank()) return null
-        val currentIconPath = siteModeIconPath(current.iconPath)
-        val iconPath = resolveWebAppIconPath(cleanUrl, currentIconPath)
-        val updated = current.copy(
-            name = name.trim().ifBlank { Uri.parse(cleanUrl).host ?: current.name },
-            startUrl = cleanUrl,
-            iconPath = iconPath ?: currentIconPath
-        )
-        upsert(updated)
-        updateShortcut(updated)
-        return updated
-    }
-
-    suspend fun updateIcon(id: String, iconPath: String): WebAppDefinition? {
-        val current = state.value.firstOrNull { it.id == id } ?: return null
-        val updated = if (isLegacyNoIconPath(iconPath)) {
-            current.copy(iconPath = null)
-        } else {
-            val validIconPath = faviconStore.existingIconPath(iconPath) ?: return null
-            current.copy(iconPath = validIconPath)
-        }
-        upsert(updated)
-        updateShortcut(updated)
-        return updated
-    }
-
-    suspend fun resetIconToSite(id: String): WebAppDefinition? {
-        val current = state.value.firstOrNull { it.id == id } ?: return null
-        val resolvedIconPath = resolveWebAppIconPath(current.startUrl, null)
-        val updated = current.copy(iconPath = resolvedIconPath)
-        upsert(updated)
-        updateShortcut(updated)
-        return updated
-    }
-
-    suspend fun delete(id: String): Boolean {
-        val current = state.value.firstOrNull { it.id == id } ?: return false
-        save(state.value.filterNot { it.id == id })
-        disableShortcut(current)
-        return true
-    }
-
-    suspend fun markOpened(id: String) {
-        val now = System.currentTimeMillis()
-        val updated = state.value.map {
-            if (it.id == id) {
-                val iconPath = resolveWebAppIconPath(it.startUrl, it.iconPath)
-                it.copy(lastOpenedAt = now, iconPath = iconPath)
-            } else {
-                it
-            }
-        }
-        save(updated)
-        updated.firstOrNull { it.id == id }?.let { updateShortcut(it) }
-    }
-
-    suspend fun refreshMissingIcons() {
-        val shortcutUpdates = mutableListOf<WebAppDefinition>()
-        val updated = state.value.map { webApp ->
-            if (!isLegacyNoIconPath(webApp.iconPath) && faviconStore.existingIconPath(webApp.iconPath) != null) {
-                webApp
-            } else {
-                val iconPath = resolveWebAppIconPath(webApp.startUrl, webApp.iconPath)
-                if (iconPath != webApp.iconPath) {
-                    webApp.copy(iconPath = iconPath).also { shortcutUpdates.add(it) }
-                } else {
-                    webApp
-                }
-            }
-        }
-        if (shortcutUpdates.isEmpty()) return
-        save(updated)
-        shortcutUpdates.forEach { updateShortcut(it) }
-    }
-
-    suspend fun updateIconForUrl(url: String, iconPath: String): Boolean {
-        val validIconPath = faviconStore.existingIconPath(iconPath) ?: return false
-        val shortcutUpdates = mutableListOf<WebAppDefinition>()
-        val updated = state.value.map { webApp ->
-            if (
-                sameOrigin(webApp.startUrl, url) &&
-                !faviconStore.isCustomIconPath(webApp.iconPath) &&
-                webApp.iconPath != validIconPath
-            ) {
-                webApp.copy(iconPath = validIconPath).also { shortcutUpdates.add(it) }
-            } else {
-                webApp
-            }
-        }
-        if (shortcutUpdates.isEmpty()) return false
-        save(updated)
-        shortcutUpdates.forEach { updateShortcut(it) }
-        return true
     }
 
     fun applyTaskDescription(activity: Activity, webApp: WebAppDefinition) {
@@ -307,31 +141,6 @@ class WebAppRepository(
         faviconStore.existingIconPath(siteModeIconPath(webApp.iconPath))
             ?: faviconStore.cachedIconPath(webApp.startUrl)
 
-    private suspend fun resolveWebAppIconPath(startUrl: String, currentIconPath: String?): String? {
-        val existing = faviconStore.existingIconPath(siteModeIconPath(currentIconPath))
-        if (faviconStore.isCustomIconPath(existing)) return existing
-        val cached = faviconStore.cachedIconPath(startUrl)
-        val resolved = runCatching { faviconStore.resolveIconPath(startUrl) }.getOrNull()
-        return resolved ?: cached ?: existing
-    }
-
-    private fun sameOrigin(left: String, right: String): Boolean {
-        val leftUri = runCatching { Uri.parse(left) }.getOrNull() ?: return false
-        val rightUri = runCatching { Uri.parse(right) }.getOrNull() ?: return false
-        val leftPort = if (leftUri.port > 0) leftUri.port else defaultPort(leftUri.scheme)
-        val rightPort = if (rightUri.port > 0) rightUri.port else defaultPort(rightUri.scheme)
-        return leftUri.scheme.equals(rightUri.scheme, ignoreCase = true) &&
-            leftUri.host.equals(rightUri.host, ignoreCase = true) &&
-            leftPort == rightPort
-    }
-
-    private fun defaultPort(scheme: String?): Int =
-        when (scheme?.lowercase()) {
-            "http" -> 80
-            "https" -> 443
-            else -> -1
-        }
-
     private fun shortcutId(id: String): String = "webapp-$id"
 
     private fun rawWebAppIconBitmap(webApp: WebAppDefinition, size: Int): Bitmap? {
@@ -361,26 +170,12 @@ class WebAppRepository(
         return "data:image/png;base64,${Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)}"
     }
 
-    private fun upsert(webApp: WebAppDefinition) {
-        val updated = state.value.filterNot { it.id == webApp.id } + webApp
-        save(updated.sortedByDescending { it.lastOpenedAt })
-    }
-
-    private fun save(items: List<WebAppDefinition>) {
-        state.value = items
-        storeFile.writeText(webAppsSyncJson(items).toString())
-    }
-
-    private fun load(): List<WebAppDefinition> {
-        val items = when {
-            storeFile.exists() -> loadFromSyncFile(storeFile)
-            else -> emptyList()
-        }.sortedByDescending { it.lastOpenedAt }
-        if (!storeFile.exists() && items.isNotEmpty()) {
-            storeFile.writeText(webAppsSyncJson(items).toString())
+    private fun load(): List<WebAppDefinition> =
+        if (storeFile.exists()) {
+            loadFromSyncFile(storeFile).sortedByDescending { it.lastOpenedAt }
+        } else {
+            emptyList()
         }
-        return items
-    }
 
     private fun loadFromSyncFile(file: File): List<WebAppDefinition> =
         runCatching {
@@ -416,85 +211,6 @@ class WebAppRepository(
             }
         }.getOrDefault(emptyList())
 
-    private fun webAppsSyncJson(items: List<WebAppDefinition>): JSONObject {
-        val now = System.currentTimeMillis()
-        val existing = readJSONObject(storeFile)
-        val existingApps = existing?.optJSONObject("apps") ?: JSONObject()
-        val tombstones = existing?.optJSONObject("appTombstones")?.deepCopy() ?: JSONObject()
-        val activeIds = items.map { it.id.trim() }.filter { it.isNotBlank() }.toSet()
-        val nextApps = JSONObject()
-        val existingIds = existingApps.keys().asSequence().toList()
-
-        existingIds.forEach { id ->
-            if (id !in activeIds && !tombstones.has(id)) {
-                val rev = existingApps.optJSONObject(id)?.optJSONObject("rev")
-                tombstones.put(
-                    id,
-                    JSONObject()
-                        .put("deletedAt", java.time.Instant.ofEpochMilli(now).toString())
-                        .put("rev", syncRevisionJson(now, rev?.optString("deviceId").orEmpty()))
-                )
-            }
-        }
-
-        items.forEach { item ->
-            val id = item.id.trim()
-            val startUrl = item.startUrl.trim()
-            if (id.isBlank() || startUrl.isBlank()) return@forEach
-            val existingRecord = existingApps.optJSONObject(id)
-            val iconDataUrl = iconDataUrl(item)
-            val iconSource = iconSource(item)
-            val name = item.name.trim().ifBlank { startUrl }
-            val displayMode = item.displayMode.ifBlank { "standalone" }
-            val createdAt = item.createdAt.takeIf { it > 0 }
-                ?: existingRecord?.optLong("createdAt")?.takeIf { it > 0 }
-                ?: now
-            val changed = existingRecord == null ||
-                existingRecord.optString("name") != name ||
-                existingRecord.optString("startUrl") != startUrl ||
-                existingRecord.optInt("themeColor", Color.rgb(18, 109, 106)) != item.themeColor ||
-                existingRecord.optString("displayMode", "standalone") != displayMode ||
-                existingRecord.optCleanString("iconDataUrl") != iconDataUrl ||
-                existingRecord.optCleanString("iconSource") != iconSource
-            val existingRev = existingRecord?.optJSONObject("rev")
-            val rev = if (changed) {
-                syncRevisionJson(now, existingRev?.optString("deviceId").orEmpty())
-            } else {
-                existingRev?.deepCopy() ?: syncRevisionJson(createdAt, "")
-            }
-            nextApps.put(
-                id,
-                JSONObject()
-                    .put("id", id)
-                    .put("name", name)
-                    .put("startUrl", startUrl)
-                    .put("themeColor", item.themeColor)
-                    .put("displayMode", displayMode)
-                    .put("createdAt", createdAt)
-                    .put("lastOpenedAt", item.lastOpenedAt.takeIf { it > 0 } ?: now)
-                    .put("updatedAt", if (changed) now else existingRecord.optLong("updatedAt").takeIf { it > 0 } ?: createdAt)
-                    .putJsonNullable("iconDataUrl", iconDataUrl)
-                    .putJsonNullable("iconSource", iconSource)
-                    .put("rev", rev)
-            )
-            tombstones.remove(id)
-        }
-
-        return JSONObject()
-            .put("schemaVersion", 2)
-            .put("apps", nextApps)
-            .put("appTombstones", tombstones)
-    }
-
-    private fun normalizeWebAppsSyncJson(json: JSONObject): JSONObject {
-        val apps = json.optJSONObject("apps") ?: JSONObject()
-        val tombstones = json.optJSONObject("appTombstones")?.deepCopy() ?: JSONObject()
-        return JSONObject()
-            .put("schemaVersion", 2)
-            .put("apps", apps)
-            .put("appTombstones", tombstones)
-    }
-
     private fun iconPathFromSyncRecord(id: String, startUrl: String, item: JSONObject): String? {
         val iconDataUrl = item.optCleanString("iconDataUrl")
         return when (item.optCleanString("iconSource")) {
@@ -512,19 +228,17 @@ class WebAppRepository(
     private fun JSONObject.deepCopy(): JSONObject =
         JSONObject(toString())
 
-    private fun syncRevisionJson(counter: Long, deviceId: String): JSONObject =
-        JSONObject()
-            .put("counter", counter.coerceAtLeast(0L))
-            .put("deviceId", deviceId.trim())
-
     private fun JSONObject.optCleanString(name: String): String? {
         if (!has(name) || isNull(name)) return null
         val value = optString(name).trim()
         return value.takeIf { it.isNotBlank() && it != "null" && it != "undefined" }
     }
 
-    private fun JSONObject.putJsonNullable(name: String, value: Any?): JSONObject =
-        put(name, value ?: JSONObject.NULL)
+    private fun emptyWebAppsJson(): JSONObject =
+        JSONObject()
+            .put("schemaVersion", 2)
+            .put("apps", JSONObject())
+            .put("appTombstones", JSONObject())
 
     private fun siteModeIconPath(iconPath: String?): String? =
         iconPath?.takeUnless { isLegacyNoIconPath(it) }
@@ -535,10 +249,6 @@ class WebAppRepository(
         fun isLegacyNoIconPath(iconPath: String?): Boolean = iconPath == LEGACY_NO_ICON_PATH
     }
 }
-
-data class WebAppInstallResult(
-    val webApp: WebAppDefinition
-)
 
 enum class PinnedShortcutRequestResult {
     Requested,

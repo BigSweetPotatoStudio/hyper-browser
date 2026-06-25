@@ -150,9 +150,6 @@ private fun JSONObject.optCleanString(name: String): String? {
     return value.takeIf { it.isNotBlank() && it != "null" && it != "undefined" }
 }
 
-private fun JSONObject.putCleanNullable(name: String, value: Any?): JSONObject =
-    put(name, value ?: JSONObject.NULL)
-
 data class SavedBrowserTab(
     val id: String,
     val title: String,
@@ -186,41 +183,12 @@ class BrowserProfileStore(context: Context) {
 
     fun bookmarksSyncJson(): JSONObject {
         readJSONObject(bookmarksFile)?.let { return it }
-        saveBookmarks(bookmarksState.value)
-        return readJSONObject(bookmarksFile)
-            ?: JSONObject()
-                .put("schemaVersion", 2)
-                .put("bookmarks", JSONObject())
-                .put("bookmarkTombstones", JSONObject())
+        return emptyBookmarksJson()
     }
 
     fun saveBookmarksSyncJson(json: JSONObject) {
-        val normalized = normalizeBookmarksSyncJson(json)
-        bookmarksFile.writeText(normalized.toString())
+        bookmarksFile.writeText(json.deepCopy().toString())
         bookmarksState.value = loadBookmarksFromSyncFile(bookmarksFile).distinctBy { it.url }
-    }
-
-    fun mergeBookmarks(imported: List<BrowserBookmark>): Int {
-        val current = bookmarksState.value.associateBy { normalizeBookmarkUrl(it.url) }
-        val accepted = imported.mapNotNull { bookmark ->
-            val url = normalizeBookmarkUrl(bookmark.url)
-            if (url.isBlank()) return@mapNotNull null
-            val existing = current[url]
-            BrowserBookmark(
-                url = url,
-                title = bookmark.title.trim().ifBlank { existing?.title ?: url },
-                createdAt = bookmark.createdAt.takeIf { it > 0 }
-                    ?: existing?.createdAt
-                    ?: System.currentTimeMillis(),
-                iconPath = bookmark.iconPath ?: existing?.iconPath
-            )
-        }.distinctBy { it.url }
-        if (accepted.isEmpty()) return 0
-        val importedUrls = accepted.map { it.url }.toSet()
-        val next = accepted + bookmarksState.value.filterNot { normalizeBookmarkUrl(it.url) in importedUrls }
-        bookmarksState.value = next
-        saveBookmarks(next)
-        return accepted.size
     }
 
     fun loadSavedTabs(): SavedBrowserTabs {
@@ -242,6 +210,10 @@ class BrowserProfileStore(context: Context) {
 
     fun saveLauncherLayout(layout: JSONObject) {
         launcherLayoutFile.writeText(normalizeLauncherJson(layout).toString())
+    }
+
+    fun saveLauncherSyncJson(json: JSONObject) {
+        launcherLayoutFile.writeText(json.deepCopy().toString())
     }
 
     fun loadTabSessionState(tabId: String): String? {
@@ -338,89 +310,9 @@ class BrowserProfileStore(context: Context) {
         saveHistory(next)
     }
 
-    fun toggleBookmark(url: String, title: String, iconPath: String? = null) {
-        val cleanUrl = normalizeBookmarkUrl(url)
-        if (cleanUrl.isBlank()) return
-        val current = bookmarksState.value
-        val existing = current.firstOrNull { normalizeBookmarkUrl(it.url) == cleanUrl }
-        val next = if (existing != null) {
-            current.filterNot { normalizeBookmarkUrl(it.url) == cleanUrl }
-        } else {
-            listOf(
-                BrowserBookmark(
-                    url = cleanUrl,
-                    title = title.ifBlank { cleanUrl },
-                    createdAt = System.currentTimeMillis(),
-                    iconPath = iconPath
-                )
-            ) + current
-        }
-        bookmarksState.value = next
-        saveBookmarks(next)
-    }
-
     fun isBookmarked(url: String): Boolean {
         val cleanUrl = normalizeBookmarkUrl(url)
         return cleanUrl.isNotBlank() && bookmarksState.value.any { normalizeBookmarkUrl(it.url) == cleanUrl }
-    }
-
-    fun updateBookmarkIcon(url: String, iconPath: String) {
-        if (url.isBlank() || iconPath.isBlank()) return
-        val cleanUrl = normalizeBookmarkUrl(url)
-        val next = bookmarksState.value.map { bookmark ->
-            if (normalizeBookmarkUrl(bookmark.url) == cleanUrl && bookmark.iconPath != iconPath) {
-                bookmark.copy(iconPath = iconPath)
-            } else {
-                bookmark
-            }
-        }
-        if (next != bookmarksState.value) {
-            bookmarksState.value = next
-            saveBookmarks(next)
-        }
-    }
-
-    fun removeBookmark(url: String) {
-        val cleanUrl = normalizeBookmarkUrl(url)
-        if (cleanUrl.isBlank()) return
-        val next = bookmarksState.value.filterNot { normalizeBookmarkUrl(it.url) == cleanUrl }
-        if (next == bookmarksState.value) return
-        bookmarksState.value = next
-        saveBookmarks(next)
-    }
-
-    fun editBookmark(oldUrl: String, title: String, url: String) {
-        saveBookmark(oldUrl = oldUrl, title = title, url = url)
-    }
-
-    fun saveBookmark(
-        oldUrl: String?,
-        title: String,
-        url: String,
-        iconPath: String? = null
-    ): List<BrowserBookmark> {
-        val cleanUrl = normalizeBookmarkUrl(url)
-        if (cleanUrl.isBlank()) return bookmarksState.value
-        val current = bookmarksState.value
-        val oldCleanUrl = normalizeBookmarkUrl(oldUrl.orEmpty())
-        val existing = current.firstOrNull { oldCleanUrl.isNotBlank() && normalizeBookmarkUrl(it.url) == oldCleanUrl }
-            ?: current.firstOrNull { normalizeBookmarkUrl(it.url) == cleanUrl }
-        val resolvedTitle = title.trim().ifBlank {
-            existing?.title ?: cleanUrl
-        }
-        val saved = BrowserBookmark(
-            url = cleanUrl,
-            title = resolvedTitle,
-            createdAt = existing?.createdAt ?: System.currentTimeMillis(),
-            iconPath = iconPath ?: existing?.iconPath
-        )
-        val duplicateUrls = setOfNotNull(cleanUrl, oldCleanUrl.takeIf { it.isNotBlank() })
-        val insertAt = current.indexOfFirst { normalizeBookmarkUrl(it.url) in duplicateUrls }.takeIf { it >= 0 } ?: 0
-        val next = current.filterNot { normalizeBookmarkUrl(it.url) in duplicateUrls }.toMutableList()
-        next.add(insertAt.coerceIn(0, next.size), saved)
-        bookmarksState.value = next
-        saveBookmarks(next)
-        return next
     }
 
     fun removeHistoryEntry(url: String) {
@@ -551,9 +443,7 @@ class BrowserProfileStore(context: Context) {
             bookmarksFile.exists() -> loadBookmarksFromSyncFile(bookmarksFile)
             else -> emptyList()
         }
-        val deduped = loaded.distinctBy { it.url }
-        if (deduped != loaded || (!bookmarksFile.exists() && deduped.isNotEmpty())) saveBookmarks(deduped)
-        return deduped
+        return loaded.distinctBy { it.url }
     }
 
     private fun loadBookmarksFromSyncFile(file: File): List<BrowserBookmark> =
@@ -601,77 +491,6 @@ class BrowserProfileStore(context: Context) {
         historyFile.writeText(array.toString())
     }
 
-    private fun saveBookmarks(items: List<BrowserBookmark>) {
-        val now = System.currentTimeMillis()
-        val existing = readJSONObject(bookmarksFile)
-        val existingBookmarks = existing?.optJSONObject("bookmarks") ?: JSONObject()
-        val tombstones = existing?.optJSONObject("bookmarkTombstones")?.deepCopy() ?: JSONObject()
-        val nextBookmarks = JSONObject()
-        val activeKeys = items.mapNotNull { normalizeBookmarkUrl(it.url).takeIf { url -> url.isNotBlank() } }.toSet()
-        val existingKeys = existingBookmarks.keys().asSequence().toList()
-
-        existingKeys.forEach { key ->
-            if (key !in activeKeys && !tombstones.has(key)) {
-                val rev = existingBookmarks.optJSONObject(key)?.optJSONObject("rev")
-                tombstones.put(
-                    key,
-                    JSONObject()
-                        .put("deletedAt", java.time.Instant.ofEpochMilli(now).toString())
-                        .put("rev", syncRevisionJson(now, rev?.optString("deviceId").orEmpty()))
-                )
-            }
-        }
-
-        items.forEach { bookmark ->
-            val url = normalizeBookmarkUrl(bookmark.url)
-            if (url.isBlank()) return@forEach
-            val existingRecord = existingBookmarks.optJSONObject(url)
-            val iconDataUrl = faviconStore.iconDataUrl(bookmark.iconPath, url)
-            val title = bookmark.title.trim().ifBlank { url }
-            val createdAt = bookmark.createdAt.takeIf { it > 0 }
-                ?: existingRecord?.optLong("createdAt")?.takeIf { it > 0 }
-                ?: now
-            val changed = existingRecord == null ||
-                existingRecord.optString("url") != url ||
-                existingRecord.optString("title") != title ||
-                existingRecord.optCleanString("iconDataUrl") != iconDataUrl
-            val existingRev = existingRecord?.optJSONObject("rev")
-            val rev = if (changed) {
-                syncRevisionJson(now, existingRev?.optString("deviceId").orEmpty())
-            } else {
-                existingRev?.deepCopy() ?: syncRevisionJson(createdAt, "")
-            }
-            nextBookmarks.put(
-                url,
-                JSONObject()
-                    .put("url", url)
-                    .put("title", title)
-                    .put("createdAt", createdAt)
-                    .put("updatedAt", if (changed) now else existingRecord.optLong("updatedAt").takeIf { it > 0 } ?: createdAt)
-                    .putCleanNullable("iconDataUrl", iconDataUrl)
-                    .put("rev", rev)
-            )
-            tombstones.remove(url)
-        }
-
-        bookmarksFile.writeText(
-            JSONObject()
-                .put("schemaVersion", 2)
-                .put("bookmarks", nextBookmarks)
-                .put("bookmarkTombstones", tombstones)
-                .toString()
-        )
-    }
-
-    private fun normalizeBookmarksSyncJson(json: JSONObject): JSONObject {
-        val bookmarks = json.optJSONObject("bookmarks") ?: JSONObject()
-        val tombstones = json.optJSONObject("bookmarkTombstones")?.deepCopy() ?: JSONObject()
-        return JSONObject()
-            .put("schemaVersion", 2)
-            .put("bookmarks", bookmarks)
-            .put("bookmarkTombstones", tombstones)
-    }
-
     private fun saveSettings(settings: BrowserSettings) {
         settingsFile.writeText(
             JSONObject()
@@ -704,6 +523,12 @@ class BrowserProfileStore(context: Context) {
 
     private fun JSONObject.deepCopy(): JSONObject =
         JSONObject(toString())
+
+    private fun emptyBookmarksJson(): JSONObject =
+        JSONObject()
+            .put("schemaVersion", 2)
+            .put("bookmarks", JSONObject())
+            .put("bookmarkTombstones", JSONObject())
 
     private fun syncRevisionJson(counter: Long, deviceId: String): JSONObject =
         JSONObject()

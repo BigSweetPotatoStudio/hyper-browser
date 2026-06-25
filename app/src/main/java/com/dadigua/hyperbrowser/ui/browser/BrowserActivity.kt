@@ -218,7 +218,7 @@ private fun BrowserScreen(
     val imageCopiedText = stringResource(R.string.browser_toast_image_url_copied)
     val linkCopiedText = stringResource(R.string.browser_toast_link_copied)
     val faviconStore = remember { FaviconRepository(app) }
-    val backupManager = remember { BrowserBackupManager(profileStore, app.webApps, faviconStore) }
+    val backupManager = remember { BrowserBackupManager(profileStore, app.webApps) }
     val webDavLocalSyncAdapter = remember { WebDavLocalSyncAdapter(profileStore, app.webApps) }
     val downloadStore = remember { DownloadStore(app) }
     val downloadHandler = remember { DownloadHandler(app, downloadStore) }
@@ -1171,7 +1171,6 @@ private fun BrowserScreen(
 
     LaunchedEffect(Unit) {
         runCatching { app.extensions.refreshInstalledFromRuntime() }
-        runCatching { app.webApps.refreshMissingIcons() }
     }
 
     fun showPanel(panel: BrowserPanel) {
@@ -1439,8 +1438,6 @@ private fun BrowserScreen(
             if (iconPath != null) {
                 tab.iconPath = iconPath
                 profileStore.recordVisit(pageState.url, controller.state.value.title, iconPath)
-                profileStore.updateBookmarkIcon(pageState.url, iconPath)
-                runCatching { app.webApps.updateIconForUrl(pageState.url, iconPath) }
             }
         }
     }

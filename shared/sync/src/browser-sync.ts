@@ -239,7 +239,6 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
         title,
         createdAt: existing?.createdAt || now,
         updatedAt: now,
-        deletedAt: null,
         iconDataUrl: input.iconDataUrl ?? existing?.iconDataUrl ?? null,
       };
       const next = appendOperation(current, currentState, { type: "bookmark.upsert", bookmark });
@@ -413,7 +412,6 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
         title: node.title?.trim() || existing?.title || hostLabel(url),
         createdAt: existing?.createdAt || now,
         updatedAt: now,
-        deletedAt: null,
         iconDataUrl: existing?.iconDataUrl ?? null,
       });
     }
@@ -525,7 +523,7 @@ function bookmarkRecordsTreeSignature(records: BookmarkRecord[]): string {
 function canonicalizeFlatBookmarkRecords(records: BookmarkRecord[]): BookmarkRecord[] {
   const selected = new Map<string, BookmarkRecord>();
   records
-    .filter((record) => record.deletedAt == null && record.url)
+    .filter((record) => record.url)
     .forEach((record) => {
       const url = identityKeyForUrl(record.url);
       if (!url) return;

@@ -15,7 +15,6 @@ export type BookmarkRecord = {
   title: string;
   createdAt: number;
   updatedAt: number;
-  deletedAt: number | null;
   iconDataUrl?: string | null;
 };
 
@@ -28,7 +27,6 @@ export type WebAppRecord = {
   createdAt: number;
   lastOpenedAt: number;
   updatedAt: number;
-  deletedAt: number | null;
   iconDataUrl?: string | null;
   iconSource?: "custom" | "site" | "title";
 };
