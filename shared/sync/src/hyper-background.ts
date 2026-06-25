@@ -41,7 +41,7 @@ export type HyperBackgroundAdapter<TSyncResult extends SyncBackgroundSignal> = {
   findBookmarkByUrl?: (input: { url: string }) => Promise<unknown>;
   addBookmark?: (input: BookmarkSaveInput) => Promise<unknown>;
   saveBookmark?: (input: BookmarkUpdateInput) => Promise<unknown>;
-  deleteBookmark?: (input: { id?: string; url?: string }) => Promise<unknown>;
+  deleteBookmark?: (input: { url: string }) => Promise<unknown>;
   listWebApps?: () => Promise<unknown>;
   saveWebApp?: (input: WebAppSaveInput) => Promise<unknown>;
   deleteWebApp?: (input: unknown) => Promise<unknown>;
@@ -191,12 +191,11 @@ function bookmarkUrlInput(payload: unknown): { url: string } {
   throw new Error("Invalid bookmark URL payload.");
 }
 
-function bookmarkDeleteInput(payload: unknown): { id?: string; url?: string } {
-  if (typeof payload === "string") return { id: payload };
+function bookmarkDeleteInput(payload: unknown): { url: string } {
+  if (typeof payload === "string") return { url: payload };
   if (isPlainObject(payload)) {
-    const id = stringValue(payload.id);
     const url = stringValue(payload.url);
-    if (id || url) return { ...(id ? { id } : {}), ...(url ? { url } : {}) };
+    if (url) return { url };
   }
   throw new Error("Invalid bookmark delete payload.");
 }

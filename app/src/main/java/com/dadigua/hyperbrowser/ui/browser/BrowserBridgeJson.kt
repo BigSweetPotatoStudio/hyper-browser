@@ -89,11 +89,6 @@ internal fun List<BrowserBookmark>.toBookmarksJsonString(faviconStore: FaviconRe
     forEach { bookmark ->
         array.put(
             JSONObject()
-                .put("id", bookmark.id)
-                .put("kind", bookmark.kind)
-                .put("identityKey", bookmark.identityKey)
-                .putJsonNullable("parentId", bookmark.parentId)
-                .putJsonNullable("index", bookmark.index)
                 .put("title", bookmark.title)
                 .put("url", bookmark.url)
                 .put("createdAt", bookmark.createdAt)
@@ -146,7 +141,7 @@ internal fun searchSuggestionsJsonString(
 ): String {
     val seen = mutableSetOf<String>()
     val array = JSONArray()
-    bookmarks.filterNot { it.isFolder }.forEach { bookmark ->
+    bookmarks.forEach { bookmark ->
         if (seen.add(bookmark.url)) {
             array.put(
                 JSONObject()

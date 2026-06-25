@@ -1,6 +1,7 @@
 import { createSyncBackgroundController } from "@hyper-sync/background";
 import { createHyperBackgroundCommandHandler } from "@hyper-sync/hyper-background";
-import { runAndroidWebDavSync, runAndroidWebDavSyncIfEnabled } from "./webdav-sync";
+import { recordAndroidBookmarkDeletes, recordAndroidBookmarkUpserts, runAndroidWebDavSync, runAndroidWebDavSyncIfEnabled } from "./webdav-sync";
+import type { BookmarkRecord } from "@hyper-sync";
 import type { WebDavSyncResult } from "./hyper-browser";
 
 const NATIVE_APP = "hyperBrowser";
@@ -64,6 +65,7 @@ const contentScriptMessageTypes = new Set([
 ]);
 
 let fallbackRemoteCheckTimer: ReturnType<typeof setInterval> | null = null;
+let commandQueue: Promise<unknown> = Promise.resolve();
 
 const syncBackground = createSyncBackgroundController<WebDavSyncResult>({
   debounceMs: AUTO_SYNC_DEBOUNCE_MS,
@@ -97,7 +99,7 @@ function startBackground(): void {
       if (!isInternalPageSender(sender)) {
         return Promise.resolve({ ok: false, error: "Rejected Hyper background message." });
       }
-      return handleBackgroundCommand({ type: message.type, payload: message.payload })
+      return enqueueBackgroundCommand({ type: message.type, payload: message.payload })
         .then((data) => ({ ok: true, data }))
         .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     }
@@ -114,6 +116,14 @@ async function handleBackgroundCommand(message: { type: string; payload?: unknow
   const shared = await hyperCommands.handle(message);
   if (shared.handled) return shared.data;
   throw new Error("Unknown background command.");
+}
+
+function enqueueBackgroundCommand(message: { type: string; payload?: unknown }): Promise<unknown> {
+  const task = commandQueue
+    .catch(() => undefined)
+    .then(() => handleBackgroundCommand(message));
+  commandQueue = task.catch(() => undefined);
+  return task;
 }
 
 function handleNativeBridgeMessage(message: Record<string, unknown>, sender: unknown): Promise<unknown> {
@@ -146,7 +156,7 @@ function ensureNativeCommandPort(): void {
     const requestId = typeof message.requestId === "string" ? message.requestId : "";
     const type = typeof message.type === "string" ? message.type : "";
     if (!requestId || !type) return;
-    handleBackgroundCommand({ type, payload: message.payload })
+    enqueueBackgroundCommand({ type, payload: message.payload })
       .then((data) => port.postMessage({ target: NATIVE_COMMAND_PORT_TARGET, requestId, ok: true, data }))
       .catch((error) => port.postMessage({
         target: NATIVE_COMMAND_PORT_TARGET,
@@ -169,34 +179,63 @@ async function saveLauncherLayout(layout: unknown): Promise<void> {
   await requestNativeObject("launcher.layout.save", { layout: JSON.stringify(layout || {}) });
 }
 
-async function listBookmarks(): Promise<unknown[]> {
-  return requestNativeItems("data.bookmarks");
+async function listBookmarks(): Promise<BookmarkRecord[]> {
+  return (await requestNativeItems("data.bookmarks")).filter(isBookmarkRecord);
 }
 
 async function findBookmarkByUrl(input: { url: string }): Promise<unknown | null> {
-  const identityKey = normalizeBookmarkIdentityKey(input.url);
-  if (!identityKey) return null;
+  const targetUrl = normalizeBookmarkUrlKey(input.url);
+  if (!targetUrl) return null;
   const bookmarks = await listBookmarks();
   return bookmarks.find((bookmark) => {
-    if (!isPlainObject(bookmark) || bookmark.kind === "folder") return false;
-    const candidate = typeof bookmark.identityKey === "string" && bookmark.identityKey.trim()
-      ? normalizeBookmarkIdentityKey(bookmark.identityKey)
-      : normalizeBookmarkIdentityKey(typeof bookmark.url === "string" ? bookmark.url : "");
-    return candidate === identityKey;
+    const candidate = normalizeBookmarkUrlKey(typeof bookmark.url === "string" ? bookmark.url : "");
+    return candidate === targetUrl;
   }) || null;
 }
 
 async function saveBookmark(input: unknown): Promise<unknown[]> {
   if (!isPlainObject(input)) throw new Error("Invalid bookmark payload.");
   const payload = normalizeBookmarkPayload(input);
-  return requestNativeItems("bookmarks.save", payload);
+  const bookmarks = await requestNativeItems("bookmarks.save", payload);
+  const targets = bookmarkSaveTargets(bookmarks, payload);
+  if (targets.length > 0) await recordAndroidBookmarkUpserts(targets);
+  return bookmarks;
 }
 
-async function deleteBookmark(input: { id?: string; url?: string }): Promise<unknown[]> {
+async function deleteBookmark(input: { url?: string }): Promise<unknown[]> {
+  const bookmarks = await listBookmarks();
+  const targets = bookmarkDeleteTargets(bookmarks, input);
+  if (targets.length > 0) await recordAndroidBookmarkDeletes(targets);
   return requestNativeItems("bookmarks.delete", {
-    ...(input.id ? { id: input.id } : {}),
     ...(input.url ? { url: input.url } : {}),
   });
+}
+
+function bookmarkDeleteTargets(bookmarks: unknown[], input: { url?: string }): BookmarkRecord[] {
+  const items = bookmarks.filter(isBookmarkRecord);
+  const urlKey = normalizeBookmarkUrlKey(stringFromUnknown(input.url));
+  if (!urlKey) return [];
+  return items.filter((bookmark) => {
+    const candidate = normalizeBookmarkUrlKey(bookmark.url);
+    return candidate === urlKey || normalizeBookmarkUrlKey(bookmark.url) === urlKey;
+  });
+}
+
+function bookmarkSaveTargets(bookmarks: unknown[], input: Record<string, unknown>): BookmarkRecord[] {
+  const items = bookmarks.filter(isBookmarkRecord);
+  const urlKey = normalizeBookmarkUrlKey(stringFromUnknown(input.url));
+  if (!urlKey) return [];
+  const match = items.find((bookmark) => {
+    const candidate = normalizeBookmarkUrlKey(bookmark.url);
+    return candidate === urlKey || normalizeBookmarkUrlKey(bookmark.url) === urlKey;
+  });
+  return match ? [match] : [];
+}
+
+function isBookmarkRecord(value: unknown): value is BookmarkRecord {
+  if (!isPlainObject(value)) return false;
+  const url = stringFromUnknown(value.url);
+  return !!url;
 }
 
 async function requestNativeObject<T = unknown>(type: string, payload: Record<string, unknown> = {}): Promise<T> {
@@ -223,24 +262,18 @@ async function requestNativeItems<T = unknown>(type: string, payload: Record<str
 
 function normalizeBookmarkPayload(input: Record<string, unknown>): Record<string, string> {
   const payload: Record<string, string> = {};
-  const id = stringFromUnknown(input.id);
   const oldUrl = stringFromUnknown(input.oldUrl);
   const title = stringFromUnknown(input.title);
   const url = stringFromUnknown(input.url);
-  const kind = stringFromUnknown(input.kind) === "folder" ? "folder" : "bookmark";
-  const parentId = stringFromUnknown(input.parentId);
-  const index = numberFromUnknown(input.index);
-  if (id) payload.id = id;
+  const iconPath = stringFromUnknown(input.iconPath);
   if (oldUrl) payload.oldUrl = oldUrl;
   if (title) payload.title = title;
   if (url) payload.url = url;
-  if (kind) payload.kind = kind;
-  if (parentId) payload.parentId = parentId;
-  if (index !== null) payload.index = String(index);
+  if (iconPath) payload.iconPath = iconPath;
   return payload;
 }
 
-function normalizeBookmarkIdentityKey(value: string): string {
+function normalizeBookmarkUrlKey(value: string): string {
   try {
     const url = new URL(value.trim());
     url.hash = "";
@@ -252,11 +285,6 @@ function normalizeBookmarkIdentityKey(value: string): string {
 
 function stringFromUnknown(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function numberFromUnknown(value: unknown): number | null {
-  const number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : null;
 }
 
 function parseBridgeResponse(response: unknown): { ok?: boolean; error?: unknown; data?: unknown; itemsJson?: string } {

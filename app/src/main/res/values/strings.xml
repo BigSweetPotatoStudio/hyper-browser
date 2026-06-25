@@ -73,6 +73,8 @@
     <string name="library_bookmarks_empty_title">No bookmarks</string>
     <string name="library_bookmarks_empty_body">Open a page and choose Bookmark from the menu to save it here.</string>
     <string name="library_bookmarks_saved">Saved</string>
+    <string name="bookmark_save_failed">Unable to save bookmark.</string>
+    <string name="bookmark_remove_failed">Unable to remove bookmark.</string>
     <string name="library_history_title">History</string>
     <string name="library_history_empty_title">No history</string>
     <string name="library_history_empty_body">Pages you visit appear here and in address bar suggestions.</string>

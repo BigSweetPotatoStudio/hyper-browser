@@ -73,6 +73,8 @@
     <string name="library_bookmarks_empty_title">没有书签</string>
     <string name="library_bookmarks_empty_body">打开网页后，从菜单里点 Bookmark，就会保存到这里。</string>
     <string name="library_bookmarks_saved">已保存</string>
+    <string name="bookmark_save_failed">无法保存书签。</string>
+    <string name="bookmark_remove_failed">无法移除书签。</string>
     <string name="library_history_title">历史记录</string>
     <string name="library_history_empty_title">没有历史记录</string>
     <string name="library_history_empty_body">你访问过的页面会显示在这里，也会出现在地址栏建议里。</string>

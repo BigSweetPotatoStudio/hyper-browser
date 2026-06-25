@@ -13,7 +13,7 @@ export default defineConfig({
   imports: false,
   manifest: ({ browser }) => ({
     name: "Hyper Browser Companion",
-    version: "0.1.0",
+    version: "0.1.1",
     description: "Desktop launcher and WebDAV companion for Hyper Browser WebApps and bookmarks.",
     permissions: ["activeTab", "alarms", "bookmarks", "scripting", "storage"],
     host_permissions: ["http://*/*", "https://*/*"],

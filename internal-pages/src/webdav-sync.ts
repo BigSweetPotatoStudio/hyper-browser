@@ -1,6 +1,7 @@
 import {
   activeBookmarksFromState,
   activeWebAppsFromState,
+  appendOperation,
   canonicalJson,
   createEmptyStore,
   ensureStore,
@@ -17,6 +18,7 @@ import { waitForLauncherLayoutSaves } from "./launcher-layout-storage";
 
 const ANDROID_SYNC_V2_STORAGE_KEY = "hyper-browser-sync-v2-store";
 const NATIVE_APP = "hyperBrowser";
+const ANDROID_SYNC_CLIENT_VERSION = "3";
 
 type BridgePayload = Record<string, string>;
 
@@ -56,11 +58,50 @@ async function loadLocalSnapshot(): Promise<SyncV2LocalSnapshot> {
   await waitForLauncherLayoutSaves();
   const layout = await requestLauncherLayout();
   return {
-    bookmarks: activeLocalBookmarks(localData),
-    bookmarkSnapshotMode: "tree",
     webApps: activeLocalWebApps(localData),
     layout,
   };
+}
+
+export async function recordAndroidBookmarkUpserts(bookmarks: BookmarkRecord[]): Promise<void> {
+  const targets = bookmarks.filter((bookmark) => bookmark?.url && bookmark.deletedAt == null);
+  if (targets.length === 0) return;
+  const initialSettings = await requestSettingsData();
+  if (!initialSettings.webDavSyncEnabled || !initialSettings.webDavSyncUrl.trim()) return;
+  const settings = await ensureAndroidDeviceId(initialSettings);
+  await withLocalLock(async () => {
+    let store = await readStoredStore(settings.webDavSyncDeviceId);
+    targets.forEach((bookmark) => {
+      store = appendOperation(store, {
+        type: "bookmark.upsert",
+        bookmark: {
+          ...bookmark,
+          sourceDeviceId: settings.webDavSyncDeviceId,
+          deletedAt: null,
+        },
+      });
+    });
+    await writeStoredStore(store, settings.webDavSyncDeviceId);
+  });
+}
+
+export async function recordAndroidBookmarkDeletes(bookmarks: BookmarkRecord[]): Promise<void> {
+  const targets = bookmarks.filter((bookmark) => bookmark?.url);
+  if (targets.length === 0) return;
+  const initialSettings = await requestSettingsData();
+  if (!initialSettings.webDavSyncEnabled || !initialSettings.webDavSyncUrl.trim()) return;
+  const settings = await ensureAndroidDeviceId(initialSettings);
+  await withLocalLock(async () => {
+    let store = await readStoredStore(settings.webDavSyncDeviceId);
+    targets.forEach((bookmark) => {
+      store = appendOperation(store, {
+        type: "bookmark.delete",
+        url: bookmark.url,
+        title: bookmark.title,
+      });
+    });
+    await writeStoredStore(store, settings.webDavSyncDeviceId);
+  });
 }
 
 async function applyAndroidState(state: SyncV2State): Promise<void> {
@@ -181,10 +222,6 @@ function webDavSettings(settings: BrowserSettings) {
   };
 }
 
-function activeLocalBookmarks(localData: WebDavLocalSyncData) {
-  return (localData.bookmarks || []).filter((bookmark) => bookmark.deletedAt == null);
-}
-
 function activeLocalWebApps(localData: WebDavLocalSyncData) {
   return (localData.webApps || []).filter((app) => app.deletedAt == null);
 }
@@ -195,9 +232,9 @@ function syncResultFromState(
   settings: BrowserSettings,
   sync: SyncV2Result,
 ): WebDavSyncResult {
-  const bookmarks = activeBookmarksFromState(state).filter((bookmark) => bookmark.kind !== "folder");
+  const bookmarks = activeBookmarksFromState(state);
   const webApps = activeWebAppsFromState(state);
-  const previousBookmarks = new Set(activeBookmarksFromState(previous).filter((bookmark) => bookmark.kind !== "folder").map((bookmark) => bookmark.id));
+  const previousBookmarks = new Set(activeBookmarksFromState(previous).map((bookmark) => bookmark.url));
   const previousWebApps = new Set(activeWebAppsFromState(previous).map((app) => app.id));
   return {
     stateChanged: sync.stateChanged,
@@ -206,7 +243,7 @@ function syncResultFromState(
     webAppCount: webApps.length,
     deletedBookmarkCount: Object.keys(state.bookmarkTombstones).length,
     deletedWebAppCount: Object.keys(state.appTombstones).length,
-    importedBookmarkCount: bookmarks.filter((bookmark) => !previousBookmarks.has(bookmark.id)).length,
+    importedBookmarkCount: bookmarks.filter((bookmark) => !previousBookmarks.has(bookmark.url)).length,
     removedBookmarkCount: [...previousBookmarks].filter((id) => !state.bookmarks[id]).length,
     importedWebAppCount: webApps.filter((app) => !previousWebApps.has(app.id)).length,
     removedWebAppCount: [...previousWebApps].filter((id) => !state.apps[id]).length,
@@ -243,11 +280,14 @@ async function updateWebDavSyncSettings(settings: WebDavSyncSettings): Promise<B
 }
 
 async function requestWebDavLocalData(): Promise<WebDavLocalSyncData> {
-  return requestObject<WebDavLocalSyncData>("sync.webdav.localData");
+  return requestObject<WebDavLocalSyncData>("sync.webdav.localData", {
+    syncClientVersion: ANDROID_SYNC_CLIENT_VERSION,
+  });
 }
 
 async function applyWebDavSyncRecords(records: { bookmarks: BookmarkRecord[] | object; webApps: WebAppRecord[] | object }): Promise<WebDavSyncResult> {
   return requestObject<WebDavSyncResult>("sync.webdav.applyRecords", {
+    syncClientVersion: ANDROID_SYNC_CLIENT_VERSION,
     bookmarks: JSON.stringify(records.bookmarks),
     webApps: JSON.stringify(records.webApps),
   });

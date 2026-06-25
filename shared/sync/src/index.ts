@@ -11,11 +11,6 @@ export type SyncSettings = {
 };
 
 export type BookmarkRecord = {
-  id: string;
-  kind: "bookmark" | "folder";
-  identityKey?: string;
-  parentId?: string | null;
-  index?: number;
   url: string;
   title: string;
   createdAt: number;

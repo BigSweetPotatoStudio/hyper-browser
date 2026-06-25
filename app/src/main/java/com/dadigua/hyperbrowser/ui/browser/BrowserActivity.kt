@@ -103,6 +103,7 @@ import org.mozilla.geckoview.GeckoSession
 import java.util.UUID
 
 private const val BROWSER_ACTIVITY_TAG = "BrowserActivity"
+private const val WEB_DAV_SYNC_CLIENT_VERSION = "3"
 
 class BrowserActivity : ComponentActivity() {
     private val externalIntents = MutableSharedFlow<ExternalBrowserIntent>(extraBufferCapacity = 1)
@@ -278,14 +279,65 @@ private fun BrowserScreen(
             )
     }
 
+    fun saveBookmarkThroughBackground(
+        url: String,
+        title: String,
+        iconPath: String? = null,
+        onFailure: (() -> Unit)? = null
+    ) {
+        val cleanUrl = url.trim()
+        if (cleanUrl.isBlank()) return
+        val payload = JSONObject()
+            .put("title", title.ifBlank { cleanUrl })
+            .put("url", cleanUrl)
+        iconPath?.takeIf { it.isNotBlank() }?.let { payload.put("iconPath", it) }
+        HyperBridge.sendBackgroundCommand(context, "bookmarks.save", payload)
+            .accept(
+                { },
+                { throwable ->
+                    Log.w(BROWSER_ACTIVITY_TAG, "Failed to save bookmark through background", throwable)
+                    onFailure?.invoke()
+                    message = throwable?.message ?: context.getString(R.string.bookmark_save_failed)
+                }
+            )
+    }
+
+    fun removeBookmarkThroughBackground(url: String, onFailure: (() -> Unit)? = null) {
+        val cleanUrl = url.trim()
+        if (cleanUrl.isBlank()) return
+        HyperBridge.sendBackgroundCommand(context, "bookmarks.delete", JSONObject().put("url", cleanUrl))
+            .accept(
+                { },
+                { throwable ->
+                    Log.w(BROWSER_ACTIVITY_TAG, "Failed to remove bookmark through background", throwable)
+                    onFailure?.invoke()
+                    message = throwable?.message ?: context.getString(R.string.bookmark_remove_failed)
+                }
+            )
+    }
+
     fun removeBookmarkAndSync(url: String) {
-        profileStore.removeBookmark(url)
-        markWebDavDirty()
+        removeBookmarkThroughBackground(url)
     }
 
     fun editBookmarkAndSync(oldUrl: String, title: String, url: String) {
-        profileStore.editBookmark(oldUrl, title, url)
-        markWebDavDirty()
+        val cleanUrl = url.trim()
+        if (cleanUrl.isBlank()) return
+        HyperBridge.sendBackgroundCommand(
+            context,
+            "bookmarks.save",
+            JSONObject()
+                .put("oldUrl", oldUrl)
+                .put("title", title.ifBlank { cleanUrl })
+                .put("url", cleanUrl)
+        )
+            .accept(
+                { },
+                { throwable ->
+                    Log.w(BROWSER_ACTIVITY_TAG, "Failed to edit bookmark through background", throwable)
+                    message = throwable?.message ?: context.getString(R.string.bookmark_save_failed)
+                }
+            )
     }
 
     fun retryDownload(entry: BrowserDownloadEntry) {
@@ -607,6 +659,11 @@ private fun BrowserScreen(
                 okData(nextSettings.toJson())
             }
             "sync.webdav.localData" -> {
+                if (payload.optString("syncClientVersion") != WEB_DAV_SYNC_CLIENT_VERSION) {
+                    JSONObject()
+                        .put("ok", false)
+                        .put("error", "Unsupported WebDAV sync client. Restart Hyper Browser and try again.")
+                } else {
                 val currentSettings = profileStore.observeSettings().value
                 val syncSettings = if (currentSettings.webDavSyncDeviceId.isBlank()) {
                     profileStore.updateWebDavSyncSettings(
@@ -631,8 +688,12 @@ private fun BrowserScreen(
                             .put("error", throwable.message ?: context.getString(R.string.webdav_sync_failed))
                     }
                 )
+                }
             }
             "sync.webdav.applyRecords" -> {
+                if (payload.optString("syncClientVersion") != WEB_DAV_SYNC_CLIENT_VERSION) {
+                    return bridgeError("Unsupported WebDAV sync client. Restart Hyper Browser and try again.")
+                }
                 val result = GeckoResult<Any>()
                 val bookmarksJson = payload.optString("bookmarks")
                 val webAppsJson = payload.optString("webApps")
@@ -709,24 +770,16 @@ private fun BrowserScreen(
                 ok()
             }
             "bookmarks.delete" -> {
-                profileStore.removeBookmarkByIdOrUrl(
-                    id = payload.optString("id").ifBlank { null },
-                    url = payload.optString("url").ifBlank { null }
-                )
-                markWebDavDirty()
+                profileStore.removeBookmark(payload.optString("url"))
                 bookmarksItemsResponse()
             }
             "bookmarks.save" -> {
                 profileStore.saveBookmark(
-                    id = payload.optString("id").ifBlank { null },
                     oldUrl = payload.optString("oldUrl").ifBlank { null },
                     title = payload.optString("title"),
                     url = payload.optString("url"),
-                    kind = payload.optString("kind", "bookmark"),
-                    parentId = payload.optString("parentId").ifBlank { null },
-                    index = payload.optString("index").toIntOrNull()
+                    iconPath = payload.optString("iconPath").ifBlank { null }
                 )
-                markWebDavDirty()
                 bookmarksItemsResponse()
             }
             "history.open" -> {
@@ -1929,8 +1982,15 @@ private fun BrowserScreen(
                         onToggleBookmark = toggleBookmark@{
                             if (currentPageUrl.isBlank() || currentPageIsInternal) return@toggleBookmark
                             optimisticBookmarkState = currentPageUrl to !currentPageBookmarked
-                            profileStore.toggleBookmark(currentPageUrl, pageState.title, currentIconPath)
-                            markWebDavDirty()
+                            if (currentPageBookmarked) {
+                                removeBookmarkThroughBackground(currentPageUrl) {
+                                    optimisticBookmarkState = currentPageUrl to currentPageBookmarked
+                                }
+                            } else {
+                                saveBookmarkThroughBackground(currentPageUrl, pageState.title, currentIconPath) {
+                                    optimisticBookmarkState = currentPageUrl to currentPageBookmarked
+                                }
+                            }
                         },
                         onShowBookmarks = {
                             tab.input = GeckoSessionController.BOOKMARKS_URL

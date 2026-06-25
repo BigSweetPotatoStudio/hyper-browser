@@ -49,7 +49,7 @@ function Popup() {
     if (!bookmark) return;
     setBusyAction("bookmark");
     setMessage("Removing bookmark...");
-    sendCommand<SyncResult>("bookmarks.delete", { id: bookmark.id })
+    sendCommand<SyncResult>("bookmarks.delete", { url: bookmark.url })
       .then((result) => {
         setBookmark(null);
         setMessage(`Bookmark removed and synced ${result.bookmarkCount} bookmarks.`);

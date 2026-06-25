@@ -36,7 +36,8 @@ export class WebDavClient {
   async getJson<T>(path: string, options: { requireStrongEtag?: boolean } = {}): Promise<RemoteJson<T> | null> {
     const response = await fetch(this.urlFor(path), {
       method: "GET",
-      headers: this.headers(),
+      headers: this.headers(noCacheHeaders()),
+      cache: "no-store",
     });
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`WebDAV GET failed: HTTP ${response.status}`);
@@ -65,6 +66,7 @@ export class WebDavClient {
     const response = await fetch(this.urlFor(path), {
       method: "PUT",
       headers,
+      cache: "no-store",
       body: options.bodyText ?? JSON.stringify(body, null, 2),
     });
     if (response.status === 409 || response.status === 412) {
@@ -76,7 +78,8 @@ export class WebDavClient {
   async list(path = ""): Promise<WebDavEntry[]> {
     const response = await fetch(this.urlFor(path), {
       method: "PROPFIND",
-      headers: this.headers({ Depth: "1" }),
+      headers: this.headers({ ...noCacheHeaders(), Depth: "1" }),
+      cache: "no-store",
       body: "<?xml version=\"1.0\" encoding=\"utf-8\" ?><propfind xmlns=\"DAV:\"><prop><resourcetype /></prop></propfind>",
     });
     if (response.status === 404) return [];
@@ -87,7 +90,8 @@ export class WebDavClient {
   private async mkcol(path: string): Promise<void> {
     const response = await fetch(this.urlFor(path), {
       method: "MKCOL",
-      headers: this.headers(),
+      headers: this.headers(noCacheHeaders()),
+      cache: "no-store",
     });
     if (response.ok || response.status === 405) return;
     throw new Error(`WebDAV MKCOL failed: HTTP ${response.status}`);
@@ -109,6 +113,13 @@ export class WebDavClient {
       .join("/");
     return `${this.rootUrl}${encoded}${path.endsWith("/") ? "/" : ""}`;
   }
+}
+
+function noCacheHeaders(): Record<string, string> {
+  return {
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
+  };
 }
 
 export class WebDavConflictError extends Error {

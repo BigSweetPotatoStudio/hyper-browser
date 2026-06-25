@@ -11,11 +11,6 @@ const AUTO_SYNC_DEBOUNCE_MS = 1800;
 const REMOTE_SYNC_ALARM = "hyper-browser-remote-sync";
 const REMOTE_SYNC_ALARM_MINUTES = 1;
 
-let bookmarkSyncTimer: ReturnType<typeof setTimeout> | null = null;
-let bookmarkSyncRunning = false;
-let bookmarkSyncPending = false;
-let bookmarkEventMuteDepth = 0;
-
 const syncBackground = createSyncBackgroundController<SyncResult>({
   debounceMs: AUTO_SYNC_DEBOUNCE_MS,
   syncNow: runBookmarkSyncNow,
@@ -31,8 +26,8 @@ const hyperCommands = createHyperBackgroundCommandHandler<SyncResult>({
   getCurrentPage: getCurrentPageInfo,
   listBookmarks: browserSyncService.loadRemoteBookmarks,
   findBookmarkByUrl: ({ url }) => browserSyncService.findBookmarkByUrl(url),
-  addBookmark: (page) => withBookmarkEventsMuted(() => browserSyncService.addBookmarkToSyncFolder(page)),
-  deleteBookmark: (input) => withBookmarkEventsMuted(() => browserSyncService.deleteRemoteBookmark(input)),
+  addBookmark: browserSyncService.addBookmarkToSyncFolder,
+  deleteBookmark: browserSyncService.deleteRemoteBookmark,
   listWebApps: browserSyncService.loadRemoteWebApps,
   saveWebApp: browserSyncService.saveRemoteWebApp,
   deleteWebApp: (input) => browserSyncService.deleteRemoteWebApp(input as string | Partial<WebAppRecord>),
@@ -56,11 +51,6 @@ export function startBackground(): void {
       syncBackground.checkRemoteChanges({ notifyPages: true }).catch(console.error);
     }
   });
-
-  browser.bookmarks.onCreated.addListener(() => scheduleBookmarkAutoSync());
-  browser.bookmarks.onChanged.addListener(() => scheduleBookmarkAutoSync());
-  browser.bookmarks.onMoved.addListener(() => scheduleBookmarkAutoSync());
-  browser.bookmarks.onRemoved.addListener(() => scheduleBookmarkAutoSync());
 
   browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || typeof message.type !== "string") return false;
@@ -107,48 +97,8 @@ function ensureRemoteSyncAlarm() {
   });
 }
 
-function scheduleBookmarkAutoSync() {
-  if (bookmarkEventMuteDepth > 0) return;
-  if (bookmarkSyncTimer) clearTimeout(bookmarkSyncTimer);
-  bookmarkSyncTimer = setTimeout(() => {
-    bookmarkSyncTimer = null;
-    runBookmarkAutoSync().catch(console.error);
-  }, AUTO_SYNC_DEBOUNCE_MS);
-}
-
-async function runBookmarkAutoSync(): Promise<void> {
-  if (bookmarkSyncRunning) {
-    bookmarkSyncPending = true;
-    return;
-  }
-  bookmarkSyncRunning = true;
-  try {
-    do {
-      bookmarkSyncPending = false;
-      const settings = await loadSettings();
-      if (!settings.webDavUrl.trim()) return;
-      await withBookmarkEventsMuted(() => browserSyncService.syncNow());
-    } while (bookmarkSyncPending);
-  } finally {
-    bookmarkSyncRunning = false;
-  }
-}
-
 async function runBookmarkSyncNow() {
-  if (bookmarkSyncTimer) {
-    clearTimeout(bookmarkSyncTimer);
-    bookmarkSyncTimer = null;
-  }
-  return withBookmarkEventsMuted(() => browserSyncService.syncNow());
-}
-
-async function withBookmarkEventsMuted<T>(operation: () => Promise<T>): Promise<T> {
-  bookmarkEventMuteDepth += 1;
-  try {
-    return await operation();
-  } finally {
-    bookmarkEventMuteDepth = Math.max(0, bookmarkEventMuteDepth - 1);
-  }
+  return browserSyncService.syncNow();
 }
 
 async function syncIfConfigured(): Promise<SyncResult | null> {

@@ -8,11 +8,6 @@ type BridgeResponse = {
 };
 
 type BookmarkItem = {
-  id?: string;
-  kind?: "bookmark" | "folder";
-  identityKey?: string;
-  parentId?: string | null;
-  index?: number;
   title?: string;
   url: string;
   createdAt?: number;
