@@ -104,7 +104,7 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
 
 async function getCurrentPageInfo() {
   const page = await getCurrentHttpPage();
-  const iconDataUrl = await capturePageIcon(await getPageIconCandidates(page)).catch(() => null);
+  const iconDataUrl = await capturePageIcon(page.tabId, await getPageIconCandidates(page)).catch(() => null);
   return {
     title: page.title,
     url: page.url,
@@ -235,17 +235,17 @@ async function readPageIconUrls(tabId: number): Promise<string[]> {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
 }
 
-async function capturePageIcon(candidates: string[]): Promise<string | null> {
+async function capturePageIcon(tabId: number, candidates: string[]): Promise<string | null> {
   for (const candidate of candidates) {
-    const icon = await captureIconCandidate(candidate).catch(() => null);
+    const icon = await captureIconCandidate(tabId, candidate).catch(() => null);
     if (icon) return icon;
   }
   return null;
 }
 
-async function captureIconCandidate(iconUrl: string): Promise<string | null> {
+async function captureIconCandidate(tabId: number, iconUrl: string): Promise<string | null> {
   if (iconUrl.startsWith("data:image/")) {
-    return normalizeIconDataUrl(iconUrl);
+    return normalizeIconDataUrl(tabId, iconUrl);
   }
   if (!/^https?:\/\//i.test(iconUrl)) return null;
   const response = await fetch(iconUrl, { cache: "force-cache" });
@@ -253,17 +253,24 @@ async function captureIconCandidate(iconUrl: string): Promise<string | null> {
   const blob = await response.blob();
   if (blob.size > MAX_CAPTURED_ICON_BYTES) return null;
   if (blob.type && !blob.type.toLowerCase().startsWith("image/")) return null;
-  return normalizeIconBlob(blob);
+  return normalizeIconBlob(tabId, blob);
 }
 
-async function normalizeIconDataUrl(dataUrl: string): Promise<string | null> {
+async function normalizeIconDataUrl(tabId: number, dataUrl: string): Promise<string | null> {
   const response = await fetch(dataUrl);
   const blob = await response.blob();
   if (!blob.type.toLowerCase().startsWith("image/") || blob.size > MAX_CAPTURED_ICON_BYTES) return null;
-  return normalizeIconBlob(blob);
+  return normalizeIconBlob(tabId, blob);
 }
 
-async function normalizeIconBlob(blob: Blob): Promise<string | null> {
+async function normalizeIconBlob(tabId: number, blob: Blob): Promise<string | null> {
+  const bitmapIcon = await normalizeBitmapIconBlob(blob);
+  if (bitmapIcon) return bitmapIcon;
+  if (!blob.type.toLowerCase().includes("svg")) return null;
+  return normalizeSvgIconBlob(tabId, blob);
+}
+
+async function normalizeBitmapIconBlob(blob: Blob): Promise<string | null> {
   const bitmap = await createImageBitmap(blob).catch(() => null);
   if (!bitmap) return null;
   const sourceSize = Math.max(bitmap.width, bitmap.height);
@@ -287,6 +294,59 @@ async function normalizeIconBlob(blob: Blob): Promise<string | null> {
   bitmap.close();
   const pngBlob = await canvas.convertToBlob({ type: "image/png" });
   return blobToDataUrl(pngBlob);
+}
+
+async function normalizeSvgIconBlob(tabId: number, blob: Blob): Promise<string | null> {
+  const text = await blob.text().catch(() => "");
+  if (!/<svg[\s>]/i.test(text)) return null;
+  const svgDataUrl = await blobToDataUrl(new Blob([text], { type: "image/svg+xml" }));
+  return rasterizeIconInPage(tabId, svgDataUrl);
+}
+
+async function rasterizeIconInPage(tabId: number, imageUrl: string): Promise<string | null> {
+  const results = await browser.scripting.executeScript({
+    target: { tabId },
+    args: [imageUrl, CAPTURED_ICON_SIZE],
+    func: (src: string, size: number) => new Promise<string | null>((resolve) => {
+      const image = new Image();
+      const timeout = window.setTimeout(() => {
+        image.onload = null;
+        image.onerror = null;
+        resolve(null);
+      }, 5000);
+      image.onload = () => {
+        window.clearTimeout(timeout);
+        const sourceSize = Math.max(image.naturalWidth, image.naturalHeight);
+        if (sourceSize <= 0) {
+          resolve(null);
+          return;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const context = canvas.getContext("2d");
+        if (!context) {
+          resolve(null);
+          return;
+        }
+        context.clearRect(0, 0, size, size);
+        const scale = size / sourceSize;
+        const width = Math.max(1, Math.round(image.naturalWidth * scale));
+        const height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const left = Math.round((size - width) / 2);
+        const top = Math.round((size - height) / 2);
+        context.drawImage(image, left, top, width, height);
+        resolve(canvas.toDataURL("image/png"));
+      };
+      image.onerror = () => {
+        window.clearTimeout(timeout);
+        resolve(null);
+      };
+      image.src = src;
+    }),
+  }).catch(() => []);
+  const value = results?.[0]?.result;
+  return typeof value === "string" && value.startsWith("data:image/png;base64,") ? value : null;
 }
 
 async function blobToDataUrl(blob: Blob): Promise<string> {

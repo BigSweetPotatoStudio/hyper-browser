@@ -84,7 +84,7 @@ class WebAppRepository(
     }
 
     fun iconDataUrl(webApp: WebAppDefinition): String? {
-        val icon = rawWebAppIconBitmap(webApp, 192) ?: return null
+        val icon = rawWebAppIconBitmap(webApp, 128) ?: return null
         return bitmapDataUrl(icon)
     }
 

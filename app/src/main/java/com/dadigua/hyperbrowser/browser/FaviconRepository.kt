@@ -13,6 +13,7 @@ import android.net.Uri
 import android.os.Build
 import android.util.Base64
 import androidx.core.content.ContextCompat
+import com.caverock.androidsvg.SVG
 import com.dadigua.hyperbrowser.webapp.WebAppIconPreset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -45,7 +46,7 @@ class FaviconRepository(private val context: Context) {
         val candidates = (findIconCandidates(pageUrl) + defaultFaviconUrl(pageUri)).distinct()
         for (candidate in candidates.distinct()) {
             val bytes = downloadBytes(candidate, 1_500_000) ?: continue
-            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
+            val bitmap = decodeDownloadedIcon(bytes) ?: continue
             targetFile.outputStream().use { out -> bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out) }
             return@withContext targetFile.absolutePath
         }
@@ -134,6 +135,47 @@ class FaviconRepository(private val context: Context) {
         val bytes = runCatching { Base64.decode(encoded, Base64.DEFAULT) }.getOrNull() ?: return null
         if (bytes.isEmpty() || bytes.size > MAX_CUSTOM_ICON_INPUT_BYTES) return null
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    }
+
+    private fun decodeDownloadedIcon(bytes: ByteArray): Bitmap? =
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            ?: decodeSvgIcon(bytes)
+
+    private fun decodeSvgIcon(bytes: ByteArray): Bitmap? {
+        val svgText = bytes.toString(Charsets.UTF_8).trimStart('\uFEFF', ' ', '\n', '\r', '\t')
+        if (!svgText.contains("<svg", ignoreCase = true)) return null
+        return runCatching {
+            val svg = SVG.getFromString(svgText)
+            val viewBox = svg.documentViewBox
+            val documentWidth = when {
+                svg.documentWidth > 0f -> svg.documentWidth
+                viewBox != null && viewBox.width() > 0f -> viewBox.width()
+                else -> CUSTOM_ICON_SIZE.toFloat()
+            }
+            val documentHeight = when {
+                svg.documentHeight > 0f -> svg.documentHeight
+                viewBox != null && viewBox.height() > 0f -> viewBox.height()
+                else -> CUSTOM_ICON_SIZE.toFloat()
+            }
+            if (documentWidth <= 0f || documentHeight <= 0f) return null
+            svg.documentWidth = documentWidth
+            svg.documentHeight = documentHeight
+
+            val output = Bitmap.createBitmap(CUSTOM_ICON_SIZE, CUSTOM_ICON_SIZE, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(output)
+            canvas.drawColor(Color.TRANSPARENT)
+            val scale = CUSTOM_ICON_SIZE.toFloat() / maxOf(documentWidth, documentHeight)
+            val width = documentWidth * scale
+            val height = documentHeight * scale
+            val left = (CUSTOM_ICON_SIZE - width) / 2f
+            val top = (CUSTOM_ICON_SIZE - height) / 2f
+            canvas.save()
+            canvas.translate(left, top)
+            canvas.scale(scale, scale)
+            svg.renderToCanvas(canvas)
+            canvas.restore()
+            output
+        }.getOrNull()
     }
 
     private fun saveCustomIconBitmap(key: String, bitmap: Bitmap): String? {
