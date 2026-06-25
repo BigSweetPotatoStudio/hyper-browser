@@ -45,7 +45,7 @@ data class BrowserSettings(
     val searchEngineId: String = SEARCH_ENGINE_GOOGLE,
     val customSearchUrl: String = "",
     val toolbarPosition: String = TOOLBAR_POSITION_DYNAMIC_BOTTOM,
-    val websiteDisplayMode: String = WEBSITE_DISPLAY_DEFAULT,
+    val websiteDisplayMode: String = WEBSITE_DISPLAY_MOBILE,
     val backgroundVideoEnhancementEnabled: Boolean = false,
     val openNewTabsInCurrentTab: Boolean = false,
     val dohEnabled: Boolean = false,
@@ -96,7 +96,6 @@ data class BrowserSettings(
         const val LOCALE_DEFAULT = "default"
         const val LOCALE_CHINESE = "zh"
         const val LOCALE_ENGLISH = "en"
-        const val WEBSITE_DISPLAY_DEFAULT = "default"
         const val WEBSITE_DISPLAY_MOBILE = "mobile"
         const val WEBSITE_DISPLAY_TABLET = "tablet"
         const val WEBSITE_DISPLAY_DESKTOP = "desktop"
@@ -127,7 +126,7 @@ data class BrowserSettings(
                 WEBSITE_DISPLAY_MOBILE -> WEBSITE_DISPLAY_MOBILE
                 WEBSITE_DISPLAY_TABLET -> WEBSITE_DISPLAY_TABLET
                 WEBSITE_DISPLAY_DESKTOP -> WEBSITE_DISPLAY_DESKTOP
-                else -> WEBSITE_DISPLAY_DEFAULT
+                else -> WEBSITE_DISPLAY_MOBILE
             }
     }
 }
@@ -684,7 +683,7 @@ class BrowserProfileStore(context: Context) {
                         item.optString("toolbarPosition", BrowserSettings.TOOLBAR_POSITION_DYNAMIC_BOTTOM)
                     ),
                     websiteDisplayMode = BrowserSettings.normalizedWebsiteDisplayMode(
-                        item.optString("websiteDisplayMode", BrowserSettings.WEBSITE_DISPLAY_DEFAULT)
+                        item.optString("websiteDisplayMode", BrowserSettings.WEBSITE_DISPLAY_MOBILE)
                     ),
                     backgroundVideoEnhancementEnabled = item.optBoolean("backgroundVideoEnhancementEnabled", false),
                     openNewTabsInCurrentTab = item.optBoolean("openNewTabsInCurrentTab", false),

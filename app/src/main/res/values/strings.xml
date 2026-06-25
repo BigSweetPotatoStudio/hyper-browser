@@ -55,7 +55,6 @@
     <string name="common_action_share">Share</string>
     <string name="browser_placeholder_search_or_url">Search or enter address</string>
     <string name="browser_site_settings_current_site">Current site</string>
-    <string name="browser_website_display_default">Default</string>
     <string name="browser_website_display_mobile">Mobile</string>
     <string name="browser_website_display_tablet">Tablet</string>
     <string name="browser_website_display_desktop">Desktop</string>
@@ -130,7 +129,6 @@
     <string name="menu_uninstall_webapp">Uninstall WebApp</string>
     <string name="menu_display_mode">Display mode</string>
     <string name="menu_display_mode_temporary">Temporary: %1$s</string>
-    <string name="menu_display_mode_default_help">Follow the default website display mode</string>
     <string name="menu_discover_more_extensions">Discover more extensions</string>
     <string name="menu_search_android_addons">Search Android add-ons</string>
     <string name="menu_extension_settings">Settings</string>

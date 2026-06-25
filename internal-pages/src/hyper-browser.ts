@@ -48,7 +48,7 @@ type BrowserSettings = {
   searchEngineName: string;
   customSearchUrl: string;
   toolbarPosition: "top" | "bottom" | "dynamic_bottom";
-  websiteDisplayMode: "default" | "mobile" | "tablet" | "desktop";
+  websiteDisplayMode: "mobile" | "tablet" | "desktop";
   backgroundVideoEnhancementEnabled: boolean;
   openNewTabsInCurrentTab: boolean;
   dohEnabled: boolean;

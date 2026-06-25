@@ -287,10 +287,9 @@ function SettingsPage() {
   }
 
   function websiteDisplayModeLabel(websiteDisplayMode?: BrowserSettings["websiteDisplayMode"]) {
-    if (websiteDisplayMode === "mobile") return t("settings.websiteDisplayMobile");
     if (websiteDisplayMode === "tablet") return t("settings.websiteDisplayTablet");
     if (websiteDisplayMode === "desktop") return t("settings.websiteDisplayDesktop");
-    return t("settings.websiteDisplayDefault");
+    return t("settings.websiteDisplayMobile");
   }
 
   function languagePreferenceLabel(value: LocalePreference = languagePreference) {
@@ -615,16 +614,7 @@ function SettingsPage() {
             {websiteDisplayModeVisibleExpanded && (
               <div className="settings-options">
                 <button
-                  className={!settings || settings.websiteDisplayMode === "default" ? "settings-option selected" : "settings-option"}
-                  type="button"
-                  disabled={!settings}
-                  onClick={() => updateWebsiteDisplayMode("default")}
-                >
-                  <span>{t("settings.websiteDisplayDefault")}</span>
-                  <span>{t("settings.websiteDisplayDefaultHelp")}</span>
-                </button>
-                <button
-                  className={settings?.websiteDisplayMode === "mobile" ? "settings-option selected" : "settings-option"}
+                  className={!settings || settings.websiteDisplayMode === "mobile" ? "settings-option selected" : "settings-option"}
                   type="button"
                   disabled={!settings}
                   onClick={() => updateWebsiteDisplayMode("mobile")}

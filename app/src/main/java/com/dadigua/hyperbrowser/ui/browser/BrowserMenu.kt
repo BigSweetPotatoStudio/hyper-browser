@@ -110,23 +110,18 @@ internal fun BrowserMenuPanel(
                 )
                 if (displayModeExpanded) {
                     DisplayModeOptionRow(
-                        mode = BrowserSettings.WEBSITE_DISPLAY_DEFAULT,
-                        selectedMode = temporaryWebsiteDisplayMode ?: BrowserSettings.WEBSITE_DISPLAY_DEFAULT,
-                        onSelect = onTemporaryWebsiteDisplayModeChange
-                    )
-                    DisplayModeOptionRow(
                         mode = BrowserSettings.WEBSITE_DISPLAY_MOBILE,
-                        selectedMode = temporaryWebsiteDisplayMode ?: BrowserSettings.WEBSITE_DISPLAY_DEFAULT,
+                        selectedMode = websiteDisplayMode,
                         onSelect = onTemporaryWebsiteDisplayModeChange
                     )
                     DisplayModeOptionRow(
                         mode = BrowserSettings.WEBSITE_DISPLAY_TABLET,
-                        selectedMode = temporaryWebsiteDisplayMode ?: BrowserSettings.WEBSITE_DISPLAY_DEFAULT,
+                        selectedMode = websiteDisplayMode,
                         onSelect = onTemporaryWebsiteDisplayModeChange
                     )
                     DisplayModeOptionRow(
                         mode = BrowserSettings.WEBSITE_DISPLAY_DESKTOP,
-                        selectedMode = temporaryWebsiteDisplayMode ?: BrowserSettings.WEBSITE_DISPLAY_DEFAULT,
+                        selectedMode = websiteDisplayMode,
                         onSelect = onTemporaryWebsiteDisplayModeChange
                     )
                 }
@@ -232,11 +227,6 @@ private fun DisplayModeOptionRow(
     BrowserMenuRow(
         label = websiteDisplayModeLabel(normalizedMode),
         leadingIconVector = Icons.Outlined.Tune,
-        description = if (normalizedMode == BrowserSettings.WEBSITE_DISPLAY_DEFAULT) {
-            stringResource(R.string.menu_display_mode_default_help)
-        } else {
-            null
-        },
         trailing = if (selected) "✓" else null,
         indent = 28.dp,
         onClick = { onSelect(normalizedMode) }
@@ -249,7 +239,7 @@ private fun websiteDisplayModeLabel(mode: String): String =
         BrowserSettings.WEBSITE_DISPLAY_MOBILE -> stringResource(R.string.browser_website_display_mobile)
         BrowserSettings.WEBSITE_DISPLAY_TABLET -> stringResource(R.string.browser_website_display_tablet)
         BrowserSettings.WEBSITE_DISPLAY_DESKTOP -> stringResource(R.string.browser_website_display_desktop)
-        else -> stringResource(R.string.browser_website_display_default)
+        else -> stringResource(R.string.browser_website_display_mobile)
     }
 
 @Composable

@@ -134,9 +134,7 @@ internal class BrowserTabRuntime private constructor(
 
     fun updateTemporaryWebsiteDisplayMode(mode: String) {
         val normalized = BrowserSettings.normalizedWebsiteDisplayMode(mode)
-        temporaryWebsiteDisplayMode = normalized.takeUnless {
-            it == BrowserSettings.WEBSITE_DISPLAY_DEFAULT
-        }
+        temporaryWebsiteDisplayMode = normalized
     }
 
     fun close(closeActivePlayback: Boolean = true) {
@@ -193,7 +191,7 @@ internal class BrowserTabRuntime private constructor(
             onCloseRequest: () -> Unit = {},
             onFocusRequest: () -> Unit = {},
             onEngineSessionStateChange: (String?) -> Unit = {},
-            defaultWebsiteDisplayMode: () -> String = { BrowserSettings.WEBSITE_DISPLAY_DEFAULT },
+            defaultWebsiteDisplayMode: () -> String = { BrowserSettings.WEBSITE_DISPLAY_MOBILE },
             onPageStop: (Boolean) -> Unit = {}
         ): BrowserTabRuntime {
             val engineStateAvailable = mutableStateOf(restoredSessionState != null)
@@ -383,7 +381,7 @@ internal class BrowserTabRuntime private constructor(
             onCloseRequest: () -> Unit = {},
             onFocusRequest: () -> Unit = {},
             onEngineSessionStateChange: (String?) -> Unit = {},
-            defaultWebsiteDisplayMode: () -> String = { BrowserSettings.WEBSITE_DISPLAY_DEFAULT },
+            defaultWebsiteDisplayMode: () -> String = { BrowserSettings.WEBSITE_DISPLAY_MOBILE },
             onPageStop: (Boolean) -> Unit = {}
         ): BrowserTabRuntime {
             val id = UUID.randomUUID().toString()

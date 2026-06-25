@@ -362,7 +362,7 @@ class GeckoSessionController(
     private val onFocusRequest: () -> Unit = {},
     private val onSessionStateChange: (GeckoSession.SessionState) -> Unit = {},
     private val onPageStop: (Boolean) -> Unit = {},
-    private val websiteDisplayModeForSession: () -> String = { BrowserSettings.WEBSITE_DISPLAY_DEFAULT },
+    private val websiteDisplayModeForSession: () -> String = { BrowserSettings.WEBSITE_DISPLAY_MOBILE },
     private val mediaNotificationIntent: Intent? = null,
     private val mediaOwnerInfo: () -> BrowserMediaOwnerInfo? = { null }
 ) {
@@ -1041,13 +1041,13 @@ class GeckoSessionController(
 
     fun loadHome(historyJson: String? = null) {
         lastLoadTarget = HOME_URL
-        applyWebsiteDisplayMode(BrowserSettings.WEBSITE_DISPLAY_DEFAULT)
+        applyWebsiteDisplayMode(BrowserSettings.WEBSITE_DISPLAY_MOBILE)
         loadInternalPage(HOME_URL, "Hyper Browser", "home.html", historyJson)
     }
 
     fun loadSearch(query: String = "") {
         lastLoadTarget = SEARCH_URL
-        applyWebsiteDisplayMode(BrowserSettings.WEBSITE_DISPLAY_DEFAULT)
+        applyWebsiteDisplayMode(BrowserSettings.WEBSITE_DISPLAY_MOBILE)
         _state.value = pageStateForUrl(SEARCH_URL).copy(title = appContext.getString(R.string.internal_title_search))
         val loadPage = {
             HyperBridge.pageUrl("search.html")?.let { url ->
@@ -1206,7 +1206,7 @@ class GeckoSessionController(
 
     fun applyWebsiteDisplayModeForUrl(url: String) {
         if (isInternalUrl(url) || url.startsWith("moz-extension://")) {
-            applyWebsiteDisplayMode(BrowserSettings.WEBSITE_DISPLAY_DEFAULT)
+            applyWebsiteDisplayMode(BrowserSettings.WEBSITE_DISPLAY_MOBILE)
             return
         }
         applyWebsiteDisplayMode(websiteDisplayModeForSession())
@@ -1384,7 +1384,7 @@ class GeckoSessionController(
     private fun loadInternalPage(semanticUrl: String, title: String, page: String, bootstrapJson: String?) {
         lastLoadTarget = semanticUrl
         sessionCrashed = false
-        applyWebsiteDisplayMode(BrowserSettings.WEBSITE_DISPLAY_DEFAULT)
+        applyWebsiteDisplayMode(BrowserSettings.WEBSITE_DISPLAY_MOBILE)
         _state.value = pageStateForUrl(semanticUrl).copy(title = title)
         val loadPage = {
             HyperBridge.pageUrl(page)?.let { url ->
