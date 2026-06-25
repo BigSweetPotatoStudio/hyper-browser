@@ -45,13 +45,19 @@ function WebAppsPage() {
     event.preventDefault();
     setBusy(true);
     setError("");
+    const isNew = !draft.id;
+    const id = draft.id || crypto.randomUUID();
     sendCommand<WebAppRecord[]>("webapps.save", {
-      id: draft.id,
+      id,
       name: draft.name,
       startUrl: draft.startUrl,
       displayMode: draft.displayMode,
       themeColor: colorToInt(draft.themeColor),
     })
+      .then((next) => {
+        if (!isNew) return next;
+        return sendCommand("launcher.layout.addWebApp", { id }).then(() => next);
+      })
       .then((next) => {
         setItems(next);
         setDraft(emptyDraft);

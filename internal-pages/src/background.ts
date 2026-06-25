@@ -86,6 +86,7 @@ const hyperCommands = createHyperBackgroundCommandHandler<WebDavSyncResult>({
   saveBookmark,
   deleteBookmark,
   listWebApps,
+  findWebAppsByUrl,
   saveWebApp,
   deleteWebApp,
   loadLauncherLayout: requestLauncherLayout,
@@ -217,8 +218,23 @@ function isBookmarkRecord(value: unknown): value is BookmarkRecord {
   return !!url;
 }
 
+function isWebAppRecord(value: unknown): value is WebAppRecord {
+  if (!isPlainObject(value)) return false;
+  return !!stringFromUnknown(value.id) && !!stringFromUnknown(value.startUrl);
+}
+
 async function listWebApps(): Promise<unknown[]> {
   return requestNativeItems("data.apps");
+}
+
+async function findWebAppsByUrl(input: { url: string }): Promise<WebAppRecord[]> {
+  const targetUrl = normalizeBookmarkUrlKey(input.url);
+  if (!targetUrl) return [];
+  const webApps = await listWebApps();
+  return webApps.filter((app): app is WebAppRecord => {
+    if (!isWebAppRecord(app)) return false;
+    return normalizeBookmarkUrlKey(app.startUrl) === targetUrl;
+  });
 }
 
 async function saveWebApp(input: Partial<WebAppRecord> & { name: string; startUrl: string }): Promise<unknown[]> {

@@ -36,13 +36,13 @@ const hyperCommands = createHyperBackgroundCommandHandler<SyncResult>({
   }),
   deleteBookmark: browserSyncService.deleteRemoteBookmark,
   listWebApps: browserSyncService.loadRemoteWebApps,
+  findWebAppsByUrl: ({ url }) => browserSyncService.findWebAppsByUrl(url),
   saveWebApp: browserSyncService.saveRemoteWebApp,
   deleteWebApp: (input) => browserSyncService.deleteRemoteWebApp(input as string | Partial<WebAppRecord>),
   loadLauncherLayout: browserSyncService.loadLauncherLayout,
   saveLauncherLayout: (layout) => browserSyncService.saveLauncherLayout(layout as Parameters<typeof browserSyncService.saveLauncherLayout>[0]),
   notifyLauncherChanged,
   shouldScheduleAfterMutation: (type) =>
-    type === "webapps.addFromCurrentPage" ||
     type.startsWith("webapps.") ||
     type.startsWith("launcher.layout."),
 });

@@ -467,6 +467,14 @@ export function activeWebAppsFromState(state: SyncV2State): WebAppRecord[] {
     });
 }
 
+export function findWebAppsByUrlInState(state: SyncV2State, url: string): WebAppRecord[] {
+  const key = identityKeyForUrl(url.trim());
+  if (!key) return [];
+  return activeWebAppsFromState(state).filter((app) =>
+    identityKeyForUrl(app.startUrl || "") === key
+  );
+}
+
 export function layoutFromState(state: SyncV2State): LauncherLayoutLike {
   return launcherJsonToUiLayout(ensureState(state).layout);
 }

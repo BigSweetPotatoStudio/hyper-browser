@@ -8,6 +8,7 @@ import {
   appendWebAppUpsert,
   canonicalJson,
   findBookmarkByUrlInState,
+  findWebAppsByUrlInState,
   identityKeyForUrl,
   layoutFromState,
   syncV2,
@@ -67,6 +68,7 @@ export type BrowserSyncService = {
   findBookmarkByUrl: (url: string) => Promise<BookmarkRecord | null>;
   deleteRemoteBookmark: (input: string | { url?: string } | null | undefined) => Promise<BrowserSyncResult>;
   loadRemoteWebApps: () => Promise<WebAppRecord[]>;
+  findWebAppsByUrl: (url: string) => Promise<WebAppRecord[]>;
   saveRemoteWebApp: (input: Partial<WebAppRecord> & { name: string; startUrl: string }) => Promise<WebAppRecord[]>;
   deleteRemoteWebApp: (input: string | Partial<WebAppRecord> | null | undefined) => Promise<WebAppRecord[]>;
   loadLauncherLayout: () => Promise<SyncV2LocalSnapshot["layout"]>;
@@ -186,11 +188,17 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     return findBookmarkByUrlInState((await options.loadSyncV2Store()).state, normalizedUrl);
   }
 
+  async function findWebAppsByUrl(url: string): Promise<WebAppRecord[]> {
+    const normalizedUrl = url.trim();
+    if (!isHttpUrl(normalizedUrl)) return [];
+    return findWebAppsByUrlInState((await options.loadSyncV2Store()).state, normalizedUrl);
+  }
+
   async function saveRemoteWebApp(input: Partial<WebAppRecord> & { name: string; startUrl: string }): Promise<WebAppRecord[]> {
     const settings = await options.loadSettings();
     await withLocalLock(async () => {
       const current = await options.loadSyncV2Store();
-      const { store } = appendWebAppUpsert(current, input, { container: "desktop:0", index: nextDesktopIndex(current.state) });
+      const { store } = appendWebAppUpsert(current, input);
       await options.saveSyncV2Store(store);
     });
     if (settings.webDavUrl.trim()) await syncNow();
@@ -276,11 +284,6 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     } finally {
       release();
     }
-  }
-
-  function nextDesktopIndex(state: SyncV2State): number {
-    return (state.layout.pages?.[0]?.cells || [])
-      .reduce((max, cell) => Math.max(max, cell.index), -1) + 1;
   }
 
   async function ensureBookmarkFolder(settings: SyncSettings): Promise<SyncSettings> {
@@ -453,6 +456,7 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     findBookmarkByUrl,
     deleteRemoteBookmark,
     loadRemoteWebApps,
+    findWebAppsByUrl,
     saveRemoteWebApp,
     deleteRemoteWebApp,
     loadLauncherLayout,

@@ -37,6 +37,7 @@ export type HyperBackgroundAdapter<TSyncResult extends SyncBackgroundSignal> = {
   saveBookmark?: (input: BookmarkUpdateInput) => Promise<unknown>;
   deleteBookmark?: (input: { url: string }) => Promise<unknown>;
   listWebApps?: () => Promise<unknown>;
+  findWebAppsByUrl?: (input: { url: string }) => Promise<unknown>;
   saveWebApp?: (input: WebAppSaveInput) => Promise<unknown>;
   deleteWebApp?: (input: unknown) => Promise<unknown>;
   loadLauncherLayout?: () => Promise<unknown>;
@@ -87,18 +88,16 @@ export function createHyperBackgroundCommandHandler<TSyncResult extends SyncBack
         return handled(await requireCapability(adapter.listBookmarks, command.type)());
       case "bookmarks.getByUrl":
         return handled(await requireCapability(adapter.findBookmarkByUrl, command.type)(bookmarkUrlInput(command.payload)));
-      case "bookmarks.getFromCurrentPage":
-        return handled(await findBookmarkFromCurrentPage(command.type));
       case "bookmarks.save":
         return handled(await saveBookmark(command.type, command.payload));
       case "bookmarks.delete":
         return handled(await mutate(command.type, () => requireCapability(adapter.deleteBookmark, command.type)(bookmarkDeleteInput(command.payload))));
       case "webapps.list":
         return handled(await requireCapability(adapter.listWebApps, command.type)());
-      case "webapps.addFromCurrentPage":
-        return handled(await addWebAppFromCurrentPage(command.type));
+      case "webapps.getByUrl":
+        return handled(await requireCapability(adapter.findWebAppsByUrl, command.type)(bookmarkUrlInput(command.payload)));
       case "webapps.save":
-        return handled(await mutate(command.type, () => requireCapability(adapter.saveWebApp, command.type)(webAppSaveInput(command.payload)), true));
+        return handled(await saveWebApp(command.type, command.payload));
       case "webapps.delete":
         return handled(await mutate(command.type, () => requireCapability(adapter.deleteWebApp, command.type)(command.payload), true));
       case "launcher.layout.addWebApp":
@@ -128,18 +127,34 @@ export function createHyperBackgroundCommandHandler<TSyncResult extends SyncBack
     };
   }
 
-  async function findBookmarkFromCurrentPage(type: string): Promise<unknown> {
-    const page = await requireCapability(adapter.getCurrentPage, type)();
-    return requireCapability(adapter.findBookmarkByUrl, type)({ url: page.url });
+  async function saveWebApp(type: string, payload: unknown): Promise<unknown> {
+    const input = payload == null
+      ? await currentPageWebAppInput(type)
+      : await webAppSaveInputOrCurrentPage(type, payload);
+    return mutate(type, () => requireCapability(adapter.saveWebApp, type)(input), true);
   }
 
-  async function addWebAppFromCurrentPage(type: string): Promise<unknown> {
+  async function webAppSaveInputOrCurrentPage(type: string, payload: unknown): Promise<WebAppSaveInput> {
+    if (!isPlainObject(payload)) throw new Error("Invalid WebApp payload.");
+    if (stringValue(payload.startUrl)) return webAppSaveInput(payload);
+    const page = await currentPageWebAppInput(type);
+    const hasIconDataUrl = Object.prototype.hasOwnProperty.call(payload, "iconDataUrl");
+    return {
+      ...payload,
+      name: typeof payload.name === "string" ? payload.name : page.name,
+      startUrl: page.startUrl,
+      iconDataUrl: hasIconDataUrl ? stringValue(payload.iconDataUrl) || null : page.iconDataUrl,
+      iconSource: stringValue(payload.iconSource) || page.iconSource,
+    } as WebAppSaveInput;
+  }
+
+  async function currentPageWebAppInput(type: string): Promise<WebAppSaveInput> {
     const page = await requireCapability(adapter.getCurrentPage, type)();
-    return mutate(type, () => requireCapability(adapter.saveWebApp, type)({
+    return {
       name: page.title,
       startUrl: page.url,
       ...(page.iconDataUrl ? { iconDataUrl: page.iconDataUrl, iconSource: "site" as const } : {}),
-    }), true);
+    };
   }
 
   async function updateLauncherLayout(type: string, operation: (layout: unknown) => LauncherLayoutMutation): Promise<unknown> {
