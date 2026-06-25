@@ -1,4 +1,5 @@
 import type { BookmarkRecord, WebAppRecord } from "@hyper-sync";
+import type { LauncherJson } from "@hyper-sync/sync-json-types";
 import { sendBackgroundCommand } from "./background-command";
 
 type BridgeResponse = {
@@ -236,8 +237,8 @@ type HyperBrowserApi = {
   requestAppsData(): Promise<WebAppItem[]>;
   requestSearchData(): Promise<SearchSuggestionItem[]>;
   requestSettingsData(): Promise<BrowserSettings>;
-  requestLauncherLayout(): Promise<object | null>;
-  saveLauncherLayout(layout: object): Promise<void>;
+  requestLauncherLayout(): Promise<LauncherJson | null>;
+  saveLauncherLayout(layout: LauncherJson): Promise<void>;
   updateSearchEngine(searchEngineId: BrowserSettings["searchEngineId"], customSearchUrl?: string): Promise<BrowserSettings>;
   updateToolbarPosition(toolbarPosition: BrowserSettings["toolbarPosition"]): Promise<BrowserSettings>;
   updateWebsiteDisplayMode(websiteDisplayMode: BrowserSettings["websiteDisplayMode"]): Promise<BrowserSettings>;
@@ -322,6 +323,10 @@ function requestObject<T>(type: HyperBridgeMessageType, payload?: BridgePayload)
   return send(type, payload).then((response) => response.data as T);
 }
 
+function isLauncherJson(value: unknown): value is LauncherJson {
+  return !!value && typeof value === "object" && !Array.isArray(value) && "rev" in value;
+}
+
 window.hyperBrowser = {
   open(input) {
     command("search.submit", { query: input });
@@ -355,7 +360,7 @@ window.hyperBrowser = {
   },
   requestLauncherLayout() {
     return requestObject<{ layout?: object | null }>("data.launcherLayout")
-      .then((result) => result.layout && typeof result.layout === "object" ? result.layout : null);
+      .then((result) => isLauncherJson(result.layout) ? result.layout : null);
   },
   saveLauncherLayout(layout) {
     return sendBackgroundCommand("launcher.layout.save", layout).then(() => undefined);

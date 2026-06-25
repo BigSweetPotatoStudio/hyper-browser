@@ -1,5 +1,6 @@
-import type { LauncherLayout, LauncherLayoutStorage } from "@hyper-launcher";
+import type { LauncherLayoutStorage } from "@hyper-launcher";
 import { layoutFromState } from "@hyper-sync/op-log";
+import type { LauncherJson } from "@hyper-sync/sync-json-types";
 import { browser } from "wxt/browser";
 import { loadSyncV2Store } from "./storage";
 
@@ -10,16 +11,16 @@ let launcherLayoutSaveQueue: Promise<void> = Promise.resolve();
 
 export const launcherLayoutStorage: LauncherLayoutStorage = {
   async load() {
-    return layoutFromState((await loadSyncV2Store()).state) as LauncherLayout;
+    return layoutFromState((await loadSyncV2Store()).state);
   },
-  save(layout: LauncherLayout, options) {
+  save(layout: LauncherJson, options) {
     const run = launcherLayoutSaveQueue.then(() => saveLauncherLayoutIfCurrent(layout, options?.reason || "user"));
     launcherLayoutSaveQueue = run.catch(() => undefined);
     return run;
   },
 };
 
-async function saveLauncherLayoutIfCurrent(layout: LauncherLayout, reason: "user" | "system"): Promise<void> {
+async function saveLauncherLayoutIfCurrent(layout: LauncherJson, reason: "user" | "system"): Promise<void> {
   if (reason !== "user") return;
   const response = await browser.runtime.sendMessage({ type: "launcher.layout.save", payload: layout });
   if (!response?.ok) throw new Error(response?.error || "Unable to save launcher layout.");

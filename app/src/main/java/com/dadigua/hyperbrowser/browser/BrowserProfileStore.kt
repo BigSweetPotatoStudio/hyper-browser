@@ -228,20 +228,14 @@ class BrowserProfileStore(context: Context) {
 
     fun loadLauncherLayout(): JSONObject? {
         val layout = readJSONObject(launcherLayoutFile)
-        if (layout != null) return launcherJsonToUiLayout(layout)
-        return null
+        return layout?.let { normalizeLauncherJson(it) }
     }
 
     fun launcherSyncJson(): JSONObject? =
         readJSONObject(launcherLayoutFile)?.let { normalizeLauncherJson(it) }
 
     fun saveLauncherLayout(layout: JSONObject) {
-        val stored = if (isLauncherJson(layout)) {
-            normalizeLauncherJson(layout)
-        } else {
-            uiLayoutToLauncherJson(layout, System.currentTimeMillis())
-        }
-        launcherLayoutFile.writeText(stored.toString())
+        launcherLayoutFile.writeText(normalizeLauncherJson(layout).toString())
     }
 
     fun loadTabSessionState(tabId: String): String? {
@@ -701,132 +695,12 @@ class BrowserProfileStore(context: Context) {
             .put("counter", counter.coerceAtLeast(0L))
             .put("deviceId", deviceId.trim())
 
-    private fun isLauncherJson(layout: JSONObject): Boolean =
-        layout.has("pages") || layout.has("rev") || launcherDockContainsCells(layout.optJSONArray("dock"))
-
-    private fun launcherDockContainsCells(dock: JSONArray?): Boolean =
-        dock != null && dock.length() > 0 && dock.opt(0) is JSONObject
-
-    private fun launcherJsonToUiLayout(layout: JSONObject): JSONObject {
-        if (!isLauncherJson(layout)) return layout
-        val clean = normalizeLauncherJson(layout)
-        val cells = JSONArray()
-        val pages = clean.optJSONArray("pages") ?: JSONArray()
-        for (pageIndex in 0 until pages.length()) {
-            val page = pages.optJSONObject(pageIndex) ?: continue
-            val pageCells = sortLauncherCells(page.optJSONArray("cells"))
-            for (cellIndex in 0 until pageCells.length()) {
-                val cell = pageCells.optJSONObject(cellIndex) ?: continue
-                val id = cell.optString("id").trim()
-                if (id.isBlank()) continue
-                cells.put(
-                    JSONObject()
-                        .put("id", id)
-                        .put("page", pageIndex)
-                        .put("row", 0)
-                        .put("column", 0)
-                        .put("index", launcherIndex(cell, cellIndex))
-                )
-            }
-        }
-
-        val dock = JSONArray()
-        val dockCells = sortLauncherCells(clean.optJSONArray("dock"))
-        for (index in 0 until dockCells.length()) {
-            val id = dockCells.optJSONObject(index)?.optString("id")?.trim().orEmpty()
-            if (id.isNotBlank()) dock.put(id)
-        }
-
-        val folders = JSONArray()
-        val sourceFolders = clean.optJSONArray("folders") ?: JSONArray()
-        for (index in 0 until sourceFolders.length()) {
-            val folder = sourceFolders.optJSONObject(index) ?: continue
-            val id = folder.optString("id").trim()
-            if (id.isBlank()) continue
-            val childIds = JSONArray()
-            val childCells = sortLauncherCells(folder.optJSONArray("cells"))
-            for (childIndex in 0 until childCells.length()) {
-                val childId = childCells.optJSONObject(childIndex)?.optString("id")?.trim().orEmpty()
-                if (childId.isNotBlank()) childIds.put(childId)
-            }
-            folders.put(
-                JSONObject()
-                    .put("id", id)
-                    .put("title", folder.optString("title").ifBlank { "Folder" })
-                    .put("childIds", childIds)
-            )
-        }
-
-        return JSONObject()
-            .put("version", 4)
-            .put("cells", cells)
-            .put("dock", dock)
-            .put("folders", folders)
-    }
-
-    private fun uiLayoutToLauncherJson(layout: JSONObject, counter: Long): JSONObject {
-        val pagesByIndex = linkedMapOf<Int, MutableList<JSONObject>>()
-        val cells = layout.optJSONArray("cells") ?: JSONArray()
-        for (index in 0 until cells.length()) {
-            val cell = cells.optJSONObject(index) ?: continue
-            val id = cell.optString("id").trim()
-            if (id.isBlank()) continue
-            val page = launcherIndexField(cell, "page", 0)
-            pagesByIndex.getOrPut(page) { mutableListOf() }
-                .add(launcherCellJson(id, launcherIndex(cell, index)))
-        }
-
-        val pages = JSONArray()
-        pagesByIndex.toSortedMap().values.forEach { pageCells ->
-            pages.put(JSONObject().put("cells", JSONArray(pageCells.sortedWith(compareBy<JSONObject> { launcherIndex(it, 0) }.thenBy { it.optString("id") }))))
-        }
-
-        val dock = JSONArray()
-        val uiDock = layout.optJSONArray("dock") ?: JSONArray()
-        for (index in 0 until uiDock.length()) {
-            val id = uiDock.optString(index).trim()
-            if (id.isNotBlank()) dock.put(launcherCellJson(id, index))
-        }
-
-        val folders = JSONArray()
-        val uiFolders = layout.optJSONArray("folders") ?: JSONArray()
-        for (index in 0 until uiFolders.length()) {
-            val folder = uiFolders.optJSONObject(index) ?: continue
-            val id = folder.optString("id").trim()
-            if (id.isBlank()) continue
-            val childCells = JSONArray()
-            val childIds = folder.optJSONArray("childIds") ?: JSONArray()
-            for (childIndex in 0 until childIds.length()) {
-                val childId = childIds.optString(childIndex).trim()
-                if (childId.isNotBlank()) childCells.put(launcherCellJson(childId, childIndex))
-            }
-            folders.put(
-                JSONObject()
-                    .put("id", id)
-                    .put("title", folder.optString("title").ifBlank { "Folder" })
-                    .put("cells", childCells)
-            )
-        }
-
-        val deviceId = readJSONObject(launcherLayoutFile)
-            ?.optJSONObject("rev")
-            ?.optString("deviceId")
-            .orEmpty()
-        return JSONObject()
-            .apply { if (pages.length() > 0) put("pages", pages) }
-            .apply { if (dock.length() > 0) put("dock", dock) }
-            .apply { if (folders.length() > 0) put("folders", folders) }
-            .put("rev", syncRevisionJson(counter, deviceId))
-    }
-
     private fun normalizeLauncherJson(layout: JSONObject): JSONObject {
         val pages = JSONArray()
         val sourcePages = layout.optJSONArray("pages") ?: JSONArray()
-        for (index in 0 until sourcePages.length()) {
-            val page = sourcePages.optJSONObject(index) ?: continue
-            val cells = sortLauncherCells(page.optJSONArray("cells"))
-            if (cells.length() > 0) pages.put(JSONObject().put("cells", cells))
-        }
+        val firstPage = sourcePages.optJSONObject(0)
+        val firstPageCells = sortLauncherCells(firstPage?.optJSONArray("cells"))
+        if (firstPageCells.length() > 0) pages.put(JSONObject().put("cells", firstPageCells))
 
         val dock = sortLauncherCells(layout.optJSONArray("dock"))
         val folders = JSONArray()

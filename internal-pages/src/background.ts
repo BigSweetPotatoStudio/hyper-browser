@@ -10,6 +10,7 @@ import {
   saveAndroidWebAppToSync,
 } from "./webdav-sync";
 import type { BookmarkRecord, WebAppRecord } from "@hyper-sync";
+import type { LauncherJson } from "@hyper-sync/sync-json-types";
 import type { WebDavSyncResult } from "./hyper-browser";
 
 const NATIVE_APP = "hyperBrowser";
@@ -176,14 +177,14 @@ function ensureNativeCommandPort(): void {
   });
 }
 
-async function requestLauncherLayout(): Promise<object | null> {
+async function requestLauncherLayout(): Promise<LauncherJson | null> {
   const response = await requestNativeObject<{ layout?: object | null }>("data.launcherLayout");
-  return response.layout && typeof response.layout === "object" ? response.layout : null;
+  return isLauncherJson(response.layout) ? response.layout : null;
 }
 
 async function saveLauncherLayout(layout: unknown): Promise<void> {
-  if (layout && typeof layout === "object") {
-    await saveAndroidLauncherLayoutToSync(layout as object);
+  if (isLauncherJson(layout)) {
+    await saveAndroidLauncherLayoutToSync(layout);
   }
 }
 
@@ -280,6 +281,10 @@ function normalizeBookmarkUrlKey(value: string): string {
 
 function stringFromUnknown(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function isLauncherJson(value: unknown): value is LauncherJson {
+  return !!value && typeof value === "object" && !Array.isArray(value) && "rev" in value;
 }
 
 function parseBridgeResponse(response: unknown): { ok?: boolean; error?: unknown; data?: unknown; itemsJson?: string } {

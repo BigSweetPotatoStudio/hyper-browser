@@ -1,5 +1,6 @@
 import type { BookmarkRecord, WebAppRecord } from "./index";
 import type { SyncBackgroundController, SyncBackgroundSignal } from "./background";
+import type { LauncherCell, LauncherFolder, LauncherJson } from "./sync-json-types";
 
 export type HyperBackgroundCommand = {
   type: string;
@@ -46,28 +47,9 @@ export type HyperBackgroundAdapter<TSyncResult extends SyncBackgroundSignal> = {
   shouldScheduleAfterMutation?: boolean | ((type: string) => boolean);
 };
 
-type LauncherCell = Record<string, unknown> & {
-  id?: string;
-  page?: number;
-  row?: number;
-  column?: number;
-  index?: number;
-};
-
-type LauncherFolder = Record<string, unknown> & {
-  childIds?: unknown[];
-};
-
-type LauncherLayout = Record<string, unknown> & {
-  version?: number;
-  cells?: LauncherCell[];
-  dock?: unknown[];
-  folders?: LauncherFolder[];
-};
-
 type LauncherLayoutMutation = {
   changed: boolean;
-  layout: LauncherLayout;
+  layout: LauncherJson;
 };
 
 export function createHyperBackgroundCommandHandler<TSyncResult extends SyncBackgroundSignal>(
@@ -220,11 +202,11 @@ function webAppSaveInput(payload: unknown): WebAppSaveInput {
   return { ...payload, name, startUrl } as WebAppSaveInput;
 }
 
-function launcherLayout(payload: unknown): unknown {
+function launcherLayout(payload: unknown): LauncherJson {
   if (isPlainObject(payload) && Object.prototype.hasOwnProperty.call(payload, "layout")) {
-    return payload.layout;
+    return normalizeLauncherLayout(payload.layout);
   }
-  return payload;
+  return normalizeLauncherLayout(payload);
 }
 
 function webAppItemId(payload: unknown): string {
@@ -248,96 +230,127 @@ function addWebAppToLauncherLayout(layout: unknown, itemId: string): LauncherLay
   const current = normalizeLauncherLayout(layout);
   if (launcherLayoutContainsItem(current, itemId)) return { changed: false, layout: current };
 
-  const cells = current.cells || [];
+  const cells = current.pages?.[0]?.cells || [];
   const nextIndex = nextLauncherCellIndex(cells);
-  current.cells = [
-    ...cells,
-    {
-      page: 0,
-      row: 0,
-      column: 0,
-      id: itemId,
-      index: nextIndex,
-    },
-  ];
-  current.version = positiveInteger(current.version) || 4;
-  return { changed: true, layout: current };
+  return {
+    changed: true,
+    layout: normalizeLauncherLayout({
+      ...current,
+      pages: [{ cells: [...cells, { id: itemId, index: nextIndex }] }],
+    }),
+  };
 }
 
 function removeWebAppFromLauncherLayout(layout: unknown, itemId: string): LauncherLayoutMutation {
   const current = normalizeLauncherLayout(layout);
   let changed = false;
 
-  if (current.cells) {
-    const cells = current.cells.filter((cell) => {
-      const keep = stringValue(cell.id) !== itemId;
+  const pageCells = (current.pages?.[0]?.cells || []).filter((cell) => {
+    const keep = cell.id !== itemId;
+    if (!keep) changed = true;
+    return keep;
+  });
+
+  const dock = (current.dock || []).filter((cell) => {
+    const keep = cell.id !== itemId;
+    if (!keep) changed = true;
+    return keep;
+  });
+
+  const folders = (current.folders || []).map((folder) => {
+    const cells = (folder.cells || []).filter((cell) => {
+      const keep = cell.id !== itemId;
       if (!keep) changed = true;
       return keep;
     });
-    current.cells = cells;
-  }
+    return cells.length === (folder.cells || []).length ? folder : { ...folder, cells };
+  });
 
-  if (current.dock) {
-    const dock = current.dock.filter((id) => {
-      const keep = stringValue(id) !== itemId;
-      if (!keep) changed = true;
-      return keep;
-    });
-    current.dock = dock;
-  }
-
-  if (current.folders) {
-    current.folders = current.folders.map((folder) => {
-      if (!Array.isArray(folder.childIds)) return folder;
-      const childIds = folder.childIds.filter((id) => {
-        const keep = stringValue(id) !== itemId;
-        if (!keep) changed = true;
-        return keep;
-      });
-      return childIds.length === folder.childIds.length ? folder : { ...folder, childIds };
-    });
-  }
-
-  return { changed, layout: current };
-}
-
-function normalizeLauncherLayout(layout: unknown): LauncherLayout {
-  const source = isPlainObject(layout) ? layout : {};
-  const cells = Array.isArray(source.cells)
-    ? source.cells.map((cell) => isPlainObject(cell) ? { ...cell } : { id: stringValue(cell) })
-    : undefined;
-  const folders = Array.isArray(source.folders)
-    ? source.folders.map((folder) => isPlainObject(folder) ? {
-      ...folder,
-      childIds: Array.isArray(folder.childIds) ? [...folder.childIds] : folder.childIds,
-    } : {})
-    : undefined;
   return {
-    ...source,
-    ...(cells ? { cells } : {}),
-    ...(Array.isArray(source.dock) ? { dock: [...source.dock] } : {}),
-    ...(folders ? { folders } : {}),
-  } as LauncherLayout;
+    changed,
+    layout: normalizeLauncherLayout({
+      ...current,
+      pages: pageCells.length > 0 ? [{ cells: pageCells }] : [],
+      dock,
+      folders,
+    }),
+  };
 }
 
-function launcherLayoutContainsItem(layout: LauncherLayout, itemId: string): boolean {
-  return (layout.cells || []).some((cell) => stringValue(cell.id) === itemId) ||
-    (layout.dock || []).some((id) => stringValue(id) === itemId) ||
-    (layout.folders || []).some((folder) => Array.isArray(folder.childIds) && folder.childIds.some((id) => stringValue(id) === itemId));
+function normalizeLauncherLayout(layout: unknown): LauncherJson {
+  if (!isPlainObject(layout)) return { rev: { counter: 0, deviceId: "" } };
+  const firstPage = Array.isArray(layout.pages) ? layout.pages[0] : undefined;
+  const pageCells = normalizeLauncherCells(isPlainObject(firstPage) ? firstPage.cells : undefined);
+  const dock = normalizeLauncherCells(layout.dock).slice(0, 4);
+  const folders = Array.isArray(layout.folders)
+    ? layout.folders.map(normalizeLauncherFolder).filter((folder): folder is LauncherFolder => !!folder)
+    : [];
+  return {
+    ...(pageCells.length > 0 ? { pages: [{ cells: pageCells }] } : {}),
+    ...(dock.length > 0 ? { dock } : {}),
+    ...(folders.length > 0 ? { folders } : {}),
+    rev: normalizeLauncherRevision(layout.rev),
+  };
+}
+
+function normalizeLauncherRevision(value: unknown): LauncherJson["rev"] {
+  if (!isPlainObject(value)) return { counter: 0, deviceId: "" };
+  return {
+    counter: Number.isSafeInteger(value.counter) ? Number(value.counter) : 0,
+    deviceId: typeof value.deviceId === "string" ? value.deviceId : "",
+  };
+}
+
+function normalizeLauncherFolder(value: unknown): LauncherFolder | null {
+  if (!isPlainObject(value)) return null;
+  const id = stringValue(value.id);
+  if (!id) return null;
+  const cells = normalizeLauncherCells(value.cells);
+  return {
+    id,
+    ...(typeof value.title === "string" ? { title: value.title } : {}),
+    ...(cells.length > 0 ? { cells } : {}),
+  };
+}
+
+function normalizeLauncherCells(value: unknown): LauncherCell[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value
+    .map((cell, fallbackIndex) => {
+      if (typeof cell === "string") return launcherCell(cell, fallbackIndex);
+      if (!isPlainObject(cell)) return null;
+      return launcherCell(cell.id, cell.index, fallbackIndex);
+    })
+    .filter((cell): cell is LauncherCell => {
+      if (!cell || seen.has(cell.id)) return false;
+      seen.add(cell.id);
+      return true;
+    })
+    .sort((left, right) => left.index - right.index || left.id.localeCompare(right.id));
+}
+
+function launcherCell(idValue: unknown, indexValue: unknown, fallbackIndex = 0): LauncherCell | null {
+  const id = stringValue(idValue);
+  if (!id) return null;
+  const index = Number(indexValue);
+  return {
+    id,
+    index: Number.isFinite(index) && index >= 0 ? Math.floor(index) : fallbackIndex,
+  };
+}
+
+function launcherLayoutContainsItem(layout: LauncherJson, itemId: string): boolean {
+  return (layout.pages?.[0]?.cells || []).some((cell) => cell.id === itemId) ||
+    (layout.dock || []).some((cell) => cell.id === itemId) ||
+    (layout.folders || []).some((folder) => folder.id === itemId || (folder.cells || []).some((cell) => cell.id === itemId));
 }
 
 function nextLauncherCellIndex(cells: LauncherCell[]): number {
   return cells.reduce((maxIndex, cell) => {
-    const explicit = positiveInteger(cell.index);
-    const cellIndex = explicit !== null ? explicit : maxIndex + 1;
+    const cellIndex = Number.isFinite(cell.index) ? Math.max(0, Math.floor(cell.index)) : maxIndex + 1;
     return cellIndex > maxIndex ? cellIndex : maxIndex;
   }, -1) + 1;
-}
-
-function positiveInteger(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? Math.floor(value)
-    : null;
 }
 
 function stringValue(value: unknown): string {

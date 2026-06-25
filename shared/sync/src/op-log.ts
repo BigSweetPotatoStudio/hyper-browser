@@ -38,15 +38,6 @@ export type SyncV2Tombstone = {
   rev: Revision;
 };
 
-export type SyncV2LayoutPlacement = {
-  id: string;
-  kind: "app" | "folder" | "system";
-  appId?: string;
-  title?: string;
-  container: string | null;
-  index: number;
-};
-
 export type SyncV2State = {
   schemaVersion: 2;
   bookmarks: Record<string, SyncV2Bookmark>;
@@ -61,10 +52,7 @@ export type SyncV2Operation =
   | SyncV2BaseOperation<"bookmark.delete"> & BookmarkDeleteInput
   | SyncV2BaseOperation<"app.upsert"> & { app: Partial<WebAppRecord> & { id: string; name: string; startUrl: string } }
   | SyncV2BaseOperation<"app.delete"> & { appId: string }
-  | SyncV2BaseOperation<"layout.replace"> & { layout: LauncherLayoutLike }
-  | SyncV2BaseOperation<"layout.place"> & { item: SyncV2LayoutPlacement }
-  | SyncV2BaseOperation<"layout.hide"> & { itemId: string }
-  | SyncV2BaseOperation<"layout.deleteItem"> & { itemId: string };
+  | SyncV2BaseOperation<"layout.replace"> & { layout: LauncherJson };
 
 type SyncV2BaseOperation<T extends string> = {
   schemaVersion: 2;
@@ -80,10 +68,7 @@ type SyncV2OperationInput =
   | ({ type: "bookmark.delete" } & BookmarkDeleteInput)
   | { type: "app.upsert"; app: Partial<WebAppRecord> & { id: string; name: string; startUrl: string } }
   | { type: "app.delete"; appId: string }
-  | { type: "layout.replace"; layout: LauncherLayoutLike }
-  | { type: "layout.place"; item: SyncV2LayoutPlacement }
-  | { type: "layout.hide"; itemId: string }
-  | { type: "layout.deleteItem"; itemId: string };
+  | { type: "layout.replace"; layout: LauncherJson };
 
 export type SyncV2Store = {
   schemaVersion: 2;
@@ -93,21 +78,16 @@ export type SyncV2Store = {
   outbox: SyncV2Operation[];
 };
 
-export type LauncherLayoutLike = {
-  version?: number;
-  cells?: Array<{ id: string; page?: number; row?: number; column?: number; index?: number }>;
-  dock?: string[];
-  folders?: Array<{ id: string; title?: string; childIds?: string[] }>;
-};
-
-export type LauncherLayoutSnapshot = LauncherLayoutLike | LauncherJson;
-
 type SnapshotRecordCollection<T> = Array<T> | Record<string, T>;
 
 export type SyncV2LocalSnapshot = {
   bookmarks?: SnapshotRecordCollection<BookmarkRecord & { rev?: Partial<Revision> }>;
   webApps?: SnapshotRecordCollection<WebAppRecord & { rev?: Partial<Revision> }>;
-  layout?: LauncherLayoutSnapshot | null;
+  layout?: LauncherJson | null;
+};
+
+type SnapshotAppendOptions = {
+  forceLayout?: boolean;
 };
 
 export type SyncV2Result = {
@@ -281,7 +261,7 @@ export function appendOperation(store: SyncV2Store, operation: SyncV2OperationIn
   return next;
 }
 
-export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput, placement?: { container: string | null; index: number }): { store: SyncV2Store; app: SyncV2App } {
+export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput): { store: SyncV2Store; app: SyncV2App } {
   const inputId = input.id?.trim() || "";
   const existing = inputId ? store.state.apps[inputId] : undefined;
   const id = existing?.id || inputId || crypto.randomUUID();
@@ -301,20 +281,7 @@ export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput, place
     iconDataUrl: hasIconDataUrl ? input.iconDataUrl ?? null : existing?.iconDataUrl ?? null,
     iconSource: input.iconSource || (hasIconDataUrl ? (input.iconDataUrl ? "custom" : "title") : existing?.iconSource) || "title",
   };
-  let next = appendOperation(store, { type: "app.upsert", app });
-  const itemId = `app:${id}`;
-  if (placement && !launcherContainsItem(next.state.layout, itemId)) {
-    next = appendOperation(next, {
-      type: "layout.place",
-      item: {
-        id: itemId,
-        kind: "app",
-        appId: id,
-        container: placement.container,
-        index: placement.index,
-      },
-    });
-  }
+  const next = appendOperation(store, { type: "app.upsert", app });
   return { store: next, app: next.state.apps[id] };
 }
 
@@ -324,11 +291,15 @@ export function appendWebAppDelete(store: SyncV2Store, appId: string): SyncV2Sto
   return appendOperation(store, { type: "app.delete", appId: id });
 }
 
-export function appendLocalSnapshotOperations(store: SyncV2Store, snapshot: SyncV2LocalSnapshot): SyncV2Store {
+export function appendLocalSnapshotOperations(
+  store: SyncV2Store,
+  snapshot: SyncV2LocalSnapshot,
+  options: SnapshotAppendOptions = {},
+): SyncV2Store {
   let next = cloneJson(store);
   if (snapshot.bookmarks) next = appendBookmarkSnapshotOperations(next, snapshot.bookmarks);
   if (snapshot.webApps) next = appendWebAppSnapshotOperations(next, snapshot.webApps);
-  if (snapshot.layout) next = appendLayoutSnapshotOperations(next, snapshot.layout);
+  if (snapshot.layout) next = appendLayoutSnapshotOperations(next, snapshot.layout, { force: options.forceLayout });
   return next;
 }
 
@@ -404,38 +375,15 @@ function snapshotCanOverrideRevision(snapshot: { rev?: Partial<Revision> }, targ
   return compareRevision(normalizeRevision(snapshot.rev), normalizeRevision(target.rev)) >= 0;
 }
 
-export function appendLayoutSnapshotOperations(store: SyncV2Store, layout: LauncherLayoutSnapshot): SyncV2Store {
-  const snapshot = launcherLayoutSnapshot(layout);
-  if (!layoutDocumentChanged(layoutFromState(store.state), snapshot.layout)) return store;
-  if (snapshot.rev.counter > 0 && compareRevision(snapshot.rev, store.state.layout.rev) <= 0) return store;
-  return appendOperation(store, { type: "layout.replace", layout: snapshot.layout });
-}
-
-function launcherLayoutSnapshot(layout: LauncherLayoutSnapshot): { layout: LauncherLayoutLike; rev: Revision } {
-  if (isLauncherJsonInput(layout)) {
-    const clean = normalizeLauncherJson(layout);
-    return {
-      layout: launcherJsonToUiLayout(clean),
-      rev: clean.rev,
-    };
-  }
-  return {
-    layout,
-    rev: { counter: 0, deviceId: "" },
-  };
-}
-
-function isLauncherJsonInput(value: unknown): value is LauncherJson {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const source = value as Partial<LauncherJson>;
-  return !!source.rev ||
-    Array.isArray(source.pages) ||
-    (Array.isArray(source.dock) && source.dock.some((item) => !!item && typeof item === "object")) ||
-    (Array.isArray(source.folders) && source.folders.some((item) =>
-      !!item &&
-      typeof item === "object" &&
-      Array.isArray((item as { cells?: unknown }).cells)
-    ));
+export function appendLayoutSnapshotOperations(
+  store: SyncV2Store,
+  layout: LauncherJson,
+  options: { force?: boolean } = {},
+): SyncV2Store {
+  const snapshot = normalizeLauncherJson(layout);
+  if (!layoutDocumentChanged(store.state.layout, snapshot)) return store;
+  if (!options.force && snapshot.rev.counter > 0 && compareRevision(snapshot.rev, store.state.layout.rev) <= 0) return store;
+  return appendOperation(store, { type: "layout.replace", layout: snapshot });
 }
 
 export function activeBookmarksFromState(state: SyncV2State): BookmarkRecord[] {
@@ -475,8 +423,8 @@ export function findWebAppsByUrlInState(state: SyncV2State, url: string): WebApp
   );
 }
 
-export function layoutFromState(state: SyncV2State): LauncherLayoutLike {
-  return launcherJsonToUiLayout(ensureState(state).layout);
+export function layoutFromState(state: SyncV2State): LauncherJson {
+  return normalizeLauncherJson(ensureState(state).layout);
 }
 
 export async function syncV2(options: {
@@ -665,83 +613,21 @@ function compareLauncherJson(left: LauncherJson, right: LauncherJson): number {
   return compareRevision(left.rev, right.rev);
 }
 
-function layoutDocumentChanged(left: LauncherLayoutLike, right: LauncherLayoutLike): boolean {
+function layoutDocumentChanged(left: LauncherJson, right: LauncherJson): boolean {
   return canonicalJson(layoutDocumentSignature(left)) !== canonicalJson(layoutDocumentSignature(right));
 }
 
-function layoutDocumentSignature(layout: LauncherLayoutLike): unknown {
-  return {
-    cells: (layout.cells || []).map((cell) => ({
-      id: cell.id,
-      page: Number.isInteger(cell.page) && Number(cell.page) >= 0 ? Number(cell.page) : 0,
-      index: Number.isInteger(cell.index) && Number(cell.index) >= 0 ? Number(cell.index) : -1,
-    })),
-    dock: layout.dock || [],
-    folders: layout.folders || [],
-  };
-}
-
-function launcherJsonFromUiLayout(
-  layout: LauncherLayoutLike,
-  rev: Revision,
-): LauncherJson {
-  const pages = pagesFromUiCells(layout.cells || []);
-  const dock = (layout.dock || [])
-    .map((id, index) => launcherCell(id, index))
-    .filter((cell): cell is LauncherCell => !!cell);
-  const folders = (layout.folders || [])
-    .map((folder): LauncherFolder | null => {
-      const id = cleanOptionalString(folder.id);
-      if (!id) return null;
-      return {
-        id,
-        ...(typeof folder.title === "string" ? { title: folder.title } : {}),
-        cells: (folder.childIds || [])
-          .map((childId, index) => launcherCell(childId, index))
-          .filter((cell): cell is LauncherCell => !!cell),
-      };
-    })
-    .filter((folder): folder is LauncherFolder => !!folder);
-  return {
-    ...(pages.length > 0 ? { pages } : {}),
-    ...(dock.length > 0 ? { dock } : {}),
-    ...(folders.length > 0 ? { folders } : {}),
-    rev,
-  };
-}
-
-function pagesFromUiCells(cells: NonNullable<LauncherLayoutLike["cells"]>): LauncherPage[] {
-  const pages = new Map<number, LauncherCell[]>();
-  cells.forEach((cell, fallbackIndex) => {
-    const page = Number.isInteger(cell.page) && Number(cell.page) >= 0 ? Number(cell.page) : 0;
-    const next = launcherCell(cell.id, cell.index, fallbackIndex);
-    if (!next) return;
-    pages.set(page, [...(pages.get(page) || []), next]);
-  });
-  return [...pages.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([, cells]) => ({ cells: sortLauncherCells(cells) }));
-}
-
-function launcherJsonToUiLayout(layout: LauncherJson): LauncherLayoutLike {
+function layoutDocumentSignature(layout: LauncherJson): unknown {
   const clean = normalizeLauncherJson(layout);
-  const cells = (clean.pages || []).flatMap((page, pageIndex) =>
-    sortLauncherCells(page.cells || []).map((cell) => ({
-      id: cell.id,
-      page: pageIndex,
-      row: 0,
-      column: 0,
-      index: cell.index,
-    }))
-  );
   return {
-    version: 4,
-    cells,
-    dock: sortLauncherCells(clean.dock || []).map((cell) => cell.id),
+    pages: (clean.pages || []).slice(0, 1).map((page) => ({
+      cells: sortLauncherCells(page.cells || []).map((cell) => ({ id: cell.id, index: cell.index })),
+    })),
+    dock: sortLauncherCells(clean.dock || []).map((cell) => ({ id: cell.id, index: cell.index })),
     folders: (clean.folders || []).map((folder) => ({
       id: folder.id,
-      title: folder.title || "Folder",
-      childIds: sortLauncherCells(folder.cells || []).map((cell) => cell.id),
+      title: folder.title || "",
+      cells: sortLauncherCells(folder.cells || []).map((cell) => ({ id: cell.id, index: cell.index })),
     })),
   };
 }
@@ -751,8 +637,10 @@ function normalizeLauncherJson(value: unknown): LauncherJson {
     return { rev: { counter: 0, deviceId: "" } };
   }
   const source = value as Partial<LauncherJson>;
+  const firstPage = Array.isArray(source.pages) ? source.pages[0] : undefined;
+  const pageCells = normalizeLauncherCells(firstPage?.cells);
   return {
-    ...(Array.isArray(source.pages) ? { pages: source.pages.map(normalizeLauncherPage).filter((page) => (page.cells || []).length > 0) } : {}),
+    ...(pageCells.length > 0 ? { pages: [{ cells: pageCells }] } : {}),
     ...(Array.isArray(source.dock) ? { dock: normalizeLauncherCells(source.dock).slice(0, 4) } : {}),
     ...(Array.isArray(source.folders) ? { folders: source.folders.map(normalizeLauncherFolder).filter((folder): folder is LauncherFolder => !!folder) } : {}),
     rev: normalizeRevision(source.rev),
@@ -790,11 +678,6 @@ function sanitizeLauncherJson(
     ...(folders.length > 0 ? { folders } : {}),
     rev: layout.rev,
   };
-}
-
-function normalizeLauncherPage(page: unknown): LauncherPage {
-  if (!page || typeof page !== "object" || Array.isArray(page)) return {};
-  return { cells: normalizeLauncherCells((page as Partial<LauncherPage>).cells) };
 }
 
 function normalizeLauncherFolder(folder: unknown): LauncherFolder | null {
@@ -856,54 +739,6 @@ function launcherContainsItem(layout: LauncherJson, idValue: unknown): boolean {
     );
 }
 
-function placeLauncherItem(layout: LauncherJson, item: SyncV2LayoutPlacement, rev: Revision): LauncherJson {
-  const withoutItem = removeLauncherItem(layout, item.id, rev);
-  const next = normalizeLauncherJson(withoutItem);
-  const cell = launcherCell(item.id, item.index);
-  if (!cell) return { ...next, rev };
-
-  const container = cleanOptionalString(item.container);
-  if (container === "dock") {
-    next.dock = sortLauncherCells([...(next.dock || []), cell]).slice(0, 4);
-  } else {
-    const folderId = launcherFolderIdFromContainer(container);
-    if (folderId) {
-      const folder = (next.folders || []).find((candidate) => candidate.id === folderId) || {
-        id: folderId,
-        title: "Folder",
-        cells: [],
-      };
-      folder.cells = sortLauncherCells([...(folder.cells || []), cell]);
-      if (!next.folders?.some((candidate) => candidate.id === folder.id)) {
-        next.folders = [...(next.folders || []), folder];
-      }
-    } else {
-      const pageIndex = launcherPageIndexFromContainer(container);
-      const pages = [...(next.pages || [])];
-      while (pages.length <= pageIndex) pages.push({ cells: [] });
-      pages[pageIndex] = {
-        cells: sortLauncherCells([...(pages[pageIndex].cells || []), cell]),
-      };
-      next.pages = pages;
-    }
-  }
-
-  if (item.kind === "folder") {
-    const folder = (next.folders || []).find((candidate) => candidate.id === item.id);
-    if (folder) {
-      if (item.title) folder.title = item.title;
-    } else {
-      next.folders = [...(next.folders || []), {
-        id: item.id,
-        ...(item.title ? { title: item.title } : {}),
-        cells: [],
-      }];
-    }
-  }
-
-  return normalizeLauncherJson({ ...next, rev });
-}
-
 function removeLauncherItem(layout: LauncherJson, idValue: unknown, rev: Revision): LauncherJson {
   const id = cleanOptionalString(idValue);
   const clean = normalizeLauncherJson(layout);
@@ -928,19 +763,6 @@ function removeLauncherItem(layout: LauncherJson, idValue: unknown, rev: Revisio
 function launcherFolderIsPlaced(layout: LauncherJson, folderId: string): boolean {
   return launcherContainsCell(layout.pages || [], folderId) ||
     (layout.dock || []).some((cell) => cell.id === folderId);
-}
-
-function launcherFolderIdFromContainer(container: string): string {
-  if (!container) return "";
-  if (container.startsWith("folder:")) return container;
-  if (container !== "dock" && !container.startsWith("desktop:") && !container.startsWith("page:")) return container;
-  return "";
-}
-
-function launcherPageIndexFromContainer(container: string): number {
-  const match = /^(?:desktop|page):(\d+)$/i.exec(container);
-  if (!match) return 0;
-  return normalizeLayoutIndex(match[1]);
 }
 
 function launcherCellCount(layout: LauncherJson): number {
@@ -1301,34 +1123,9 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     return;
   }
   if (operation.type === "layout.replace") {
-    const nextLayout = launcherJsonFromUiLayout(
-      operation.layout,
-      rev,
-    );
+    const nextLayout = normalizeLauncherJson({ ...operation.layout, rev });
     if (compareLauncherJson(state.layout, nextLayout) > 0) return;
     state.layout = nextLayout;
-    return;
-  }
-  if (operation.type === "layout.place") {
-    if (compareRevision(state.layout.rev, rev) > 0) return;
-    const item = normalizeLayoutItemInput(operation.item);
-    if (!item) return;
-    if (item.kind === "app" && (!item.appId || !state.apps[item.appId] || state.appTombstones[item.appId])) return;
-    state.layout = placeLauncherItem(state.layout, item, rev);
-    return;
-  }
-  if (operation.type === "layout.hide") {
-    if (compareRevision(state.layout.rev, rev) > 0) return;
-    const itemId = operation.itemId.trim();
-    if (!itemId) return;
-    state.layout = removeLauncherItem(state.layout, itemId, rev);
-    return;
-  }
-  if (operation.type === "layout.deleteItem") {
-    if (compareRevision(state.layout.rev, rev) > 0) return;
-    const itemId = operation.itemId.trim();
-    if (!itemId) return;
-    state.layout = removeLauncherItem(state.layout, itemId, rev);
   }
 }
 
@@ -1383,41 +1180,6 @@ function maxStateCounter(state: SyncV2State): number {
   Object.values(state.appTombstones).forEach(visit);
   visit(state.layout);
   return max;
-}
-
-function normalizeLayoutItemInput(raw: unknown, fallbackId?: string): SyncV2LayoutPlacement | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const source = raw as Record<string, unknown>;
-  const id = String(source.id || fallbackId || "").trim();
-  if (!id) return null;
-  const container = source.container == null ? "" : String(source.container).trim();
-  if (!container) return null;
-  const kind = source.kind === "app" || source.kind === "folder" || source.kind === "system"
-    ? source.kind
-    : layoutItemKind(id);
-  const appId = typeof source.appId === "string" && source.appId.trim()
-    ? source.appId.trim()
-    : (id.startsWith("app:") ? id.slice(4) : undefined);
-  return {
-    id,
-    kind,
-    ...(kind === "app" && appId ? { appId } : {}),
-    ...(typeof source.title === "string" ? { title: source.title } : {}),
-    container,
-    index: normalizeLayoutIndex(source.index),
-  };
-}
-
-function normalizeLayoutIndex(indexValue: unknown, fallback = 0): number {
-  const index = Number(indexValue);
-  if (Number.isFinite(index)) return Math.max(0, Math.floor(index));
-  return fallback;
-}
-
-function layoutItemKind(id: string): "app" | "folder" | "system" {
-  if (id.startsWith("app:")) return "app";
-  if (id.startsWith("folder:")) return "folder";
-  return "system";
 }
 
 function normalizeStoredBookmarkRecord(raw: unknown, fallbackId = ""): SyncV2Bookmark | null {

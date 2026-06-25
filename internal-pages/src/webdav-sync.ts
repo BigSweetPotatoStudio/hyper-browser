@@ -18,6 +18,7 @@ import {
   type SyncV2Store,
 } from "@hyper-sync/op-log";
 import type { BookmarkRecord, WebAppRecord } from "@hyper-sync";
+import type { LauncherJson } from "@hyper-sync/sync-json-types";
 import type { BrowserSettings, WebDavLocalSyncData, WebDavSyncResult, WebDavSyncSettings } from "./hyper-browser";
 
 const ANDROID_SYNC_V2_STORAGE_KEY = "hyper-browser-sync-v2-store";
@@ -68,15 +69,15 @@ async function loadLocalSnapshot(): Promise<SyncV2LocalSnapshot> {
   return {
     bookmarks: localData.bookmarks || [],
     webApps: localData.webApps || [],
-    layout: localData.layout || null,
+    layout: launcherLayoutOrNull(localData.layout),
   };
 }
 
-export async function saveAndroidLauncherLayoutToSync(layout: object): Promise<void> {
+export async function saveAndroidLauncherLayoutToSync(layout: LauncherJson): Promise<void> {
   const settings = await ensureAndroidDeviceId(await requestSettingsData());
   await withLocalLock(async () => {
     const current = await readStoreWithLocalSnapshot(settings.webDavSyncDeviceId);
-    const next = appendLocalSnapshotOperations(current, { layout });
+    const next = appendLocalSnapshotOperations(current, { layout }, { forceLayout: true });
     if (canonicalJson(current) !== canonicalJson(next)) {
       await writeStoredStore(next, settings.webDavSyncDeviceId);
       await applyAndroidState(next.state);
@@ -187,7 +188,7 @@ async function applyAndroidState(state: SyncV2State): Promise<void> {
   const nextLayout = layoutFromState(clean);
   const currentLayout = await requestLauncherLayout().catch(() => null);
   if (canonicalLauncherLayout(currentLayout) !== canonicalLauncherLayout(nextLayout)) {
-    await saveLauncherLayout(clean.layout as object);
+    await saveLauncherLayout(clean.layout);
   }
 }
 
@@ -333,13 +334,19 @@ async function requestSettingsData(): Promise<BrowserSettings> {
   return requestObject<BrowserSettings>("data.settings");
 }
 
-async function requestLauncherLayout(): Promise<object | null> {
+async function requestLauncherLayout(): Promise<LauncherJson | null> {
   const result = await requestObject<{ layout?: object | null }>("data.launcherLayout");
-  return result.layout && typeof result.layout === "object" ? result.layout : null;
+  return launcherLayoutOrNull(result.layout);
 }
 
-async function saveLauncherLayout(layout: object): Promise<void> {
+async function saveLauncherLayout(layout: LauncherJson): Promise<void> {
   await sendNativeBridge("launcher.layout.save", { layout: JSON.stringify(layout) });
+}
+
+function launcherLayoutOrNull(value: unknown): LauncherJson | null {
+  return value && typeof value === "object" && !Array.isArray(value) && "rev" in value
+    ? value as LauncherJson
+    : null;
 }
 
 async function updateWebDavSyncSettings(settings: WebDavSyncSettings): Promise<BrowserSettings> {

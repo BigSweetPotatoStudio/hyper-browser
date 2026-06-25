@@ -22,6 +22,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import type { LauncherCell, LauncherFolder, LauncherJson, LauncherPage } from "@hyper-sync/sync-json-types";
 import "./styles.css";
 
 const LAYOUT_VERSION = 4 as const;
@@ -69,12 +70,6 @@ type AppEntry = {
   app: LauncherApp;
 };
 
-export type LauncherFolderLayout = {
-  id: string;
-  title: string;
-  childIds: string[];
-};
-
 type FolderEntry = {
   id: string;
   kind: "folder";
@@ -85,7 +80,7 @@ type FolderEntry = {
 
 type LauncherEntry = LauncherSystemEntry | AppEntry | FolderEntry;
 
-export type LauncherDesktopCell = {
+type DesktopCell = {
   id: string;
   page: number;
   row: number;
@@ -93,25 +88,17 @@ export type LauncherDesktopCell = {
   index?: number;
 };
 
-export type LauncherLayout = {
-  version: typeof LAYOUT_VERSION;
-  cells: LauncherDesktopCell[];
-  dock: string[];
-  folders: LauncherFolderLayout[];
-};
-
-type DesktopCell = LauncherDesktopCell;
-type FolderLayout = LauncherFolderLayout;
-
-type StoredLauncherLayout = Partial<LauncherLayout> & {
-  version?: number;
+type FolderLayout = {
+  id: string;
+  title: string;
+  childIds: string[];
 };
 
 type LauncherContainer = "desktop" | "dock" | "folder";
 
 export type LauncherLayoutStorage = {
-  load: () => Promise<StoredLauncherLayout | null | undefined>;
-  save: (layout: LauncherLayout, options?: { reason?: "user" | "system" }) => Promise<void> | void;
+  load: () => Promise<LauncherJson | null | undefined>;
+  save: (layout: LauncherJson, options?: { reason?: "user" | "system" }) => Promise<void> | void;
 };
 
 export type LauncherPreviewLayoutMode = "compact" | "original";
@@ -275,7 +262,7 @@ export type LauncherPageProps = {
   previewLayoutMode?: LauncherPreviewLayoutMode;
   topActions?: React.ReactNode;
   refreshToken?: unknown;
-  onLayoutChanged?: (layout: LauncherLayout) => void;
+  onLayoutChanged?: (layout: LauncherJson) => void;
 };
 
 type MenuState = {
@@ -336,7 +323,7 @@ export function LauncherPage({
   const labels = useMemo<LauncherLabels>(() => ({ ...defaultLabels, ...labelOverrides }), [labelOverrides]);
   const gridMetrics = useDesktopGridMetrics(variant);
   const [apps, setApps] = useState<LauncherApp[]>([]);
-  const [layout, setLayout] = useState<LauncherLayout>({ version: LAYOUT_VERSION, cells: [], dock: [...platform.defaultDockEntryIds], folders: [] });
+  const [layout, setLayout] = useState<LauncherJson>(() => emptyLauncherLayout(platform.defaultDockEntryIds));
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -358,7 +345,7 @@ export function LauncherPage({
     let cancelled = false;
     async function loadDesktop() {
       if (!cancelled && !hasLoadedDesktop.current) setLoading(true);
-      let nextLayout: LauncherLayout | null = null;
+      let nextLayout: LauncherJson | null = null;
       let nextApps: LauncherApp[] | null = null;
 
       try {
@@ -392,7 +379,7 @@ export function LauncherPage({
     if (loading) return;
     const reason = layoutSaveReason.current;
     layoutSaveReason.current = "system";
-    Promise.resolve(layoutStorage.save({ ...layout, version: LAYOUT_VERSION }, { reason })).catch(console.error);
+    Promise.resolve(layoutStorage.save(layout, { reason })).catch(console.error);
   }, [gridMetrics.columns, layout, loading, layoutStorage]);
 
   useEffect(() => {
@@ -432,7 +419,11 @@ export function LauncherPage({
     ...appEntries.map((item) => [item.id, item] as const),
   ]), [appEntries, systemEntries]);
 
-  const folders = useMemo<FolderEntry[]>(() => layout.folders.map((folder) => ({
+  const layoutDesktopCells = useMemo(() => desktopCellsFromLauncherLayout(layout), [layout]);
+  const layoutDockIds = useMemo(() => launcherCellIds(layout.dock), [layout.dock]);
+  const layoutFolders = useMemo(() => launcherFolderLayouts(layout.folders, labels.folder), [labels.folder, layout.folders]);
+
+  const folders = useMemo<FolderEntry[]>(() => layoutFolders.map((folder) => ({
     id: folder.id,
     kind: "folder",
     title: folder.title || labels.folder,
@@ -440,11 +431,11 @@ export function LauncherPage({
     children: folder.childIds
       .map((id) => availableEntries.get(id))
       .filter((item): item is LauncherSystemEntry | AppEntry => !!item)
-  })), [availableEntries, labels.folder, layout.folders]);
+  })), [availableEntries, labels.folder, layoutFolders]);
 
   const folderEntries = useMemo(() => new Map(folders.map((folder) => [folder.id, folder] as const)), [folders]);
   const containedIds = useMemo(() => new Set(folders.flatMap((folder) => folder.childIds)), [folders]);
-  const dockIds = useMemo(() => layout.dock.filter((id) => !containedIds.has(id) && (availableEntries.has(id) || folderEntries.has(id))), [availableEntries, containedIds, folderEntries, layout.dock]);
+  const dockIds = useMemo(() => layoutDockIds.filter((id) => !containedIds.has(id) && (availableEntries.has(id) || folderEntries.has(id))), [availableEntries, containedIds, folderEntries, layoutDockIds]);
   const dockEntries = useMemo(() => dockIds
     .map((id) => folderEntries.get(id) || availableEntries.get(id))
     .filter((item): item is LauncherEntry => !!item), [availableEntries, dockIds, folderEntries]);
@@ -455,35 +446,35 @@ export function LauncherPage({
 
   const placedAppIds = useMemo(() => {
     const ids = new Set<string>();
-    layout.cells.forEach((cell) => {
+    layoutDesktopCells.forEach((cell) => {
       if (cell.id.startsWith("app:")) ids.add(cell.id);
     });
-    layout.dock.forEach((id) => {
+    layoutDockIds.forEach((id) => {
       if (id.startsWith("app:")) ids.add(id);
     });
-    layout.folders.forEach((folder) => {
+    layoutFolders.forEach((folder) => {
       folder.childIds.forEach((id) => {
         if (id.startsWith("app:")) ids.add(id);
       });
     });
     return ids;
-  }, [layout.cells, layout.dock, layout.folders]);
+  }, [layoutDesktopCells, layoutDockIds, layoutFolders]);
 
   const autoWebAppIds = useMemo(() => appEntries
     .map((item) => item.id)
     .filter((id) => !placedAppIds.has(id) && availableEntries.has(id)), [appEntries, availableEntries, placedAppIds]);
 
-  const explicitDesktopIds = useMemo(() => layout.cells
+  const explicitDesktopIds = useMemo(() => layoutDesktopCells
     .map((cell) => cell.id)
-    .filter((id) => !containedIds.has(id) && !dockIds.includes(id) && (availableEntries.has(id) || folderEntries.has(id))), [availableEntries, containedIds, dockIds, folderEntries, layout.cells]);
+    .filter((id) => !containedIds.has(id) && !dockIds.includes(id) && (availableEntries.has(id) || folderEntries.has(id))), [availableEntries, containedIds, dockIds, folderEntries, layoutDesktopCells]);
 
   const visibleDesktopIds = useMemo(() => {
     return uniqueStrings([...explicitDesktopIds, ...autoDesktopIds, ...autoWebAppIds]);
   }, [autoDesktopIds, autoWebAppIds, explicitDesktopIds]);
 
   const originalDesktopCells = useMemo(
-    () => normalizeDesktopCells(layout.cells, visibleDesktopIds, gridMetrics),
-    [gridMetrics, layout.cells, visibleDesktopIds],
+    () => normalizeDesktopCells(layoutDesktopCells, visibleDesktopIds, gridMetrics),
+    [gridMetrics, layoutDesktopCells, visibleDesktopIds],
   );
   const originalDesktopIds = useMemo(
     () => sortCells(originalDesktopCells, gridMetrics)
@@ -514,12 +505,9 @@ export function LauncherPage({
   const openFolderIds = openFolder?.childIds || [];
   const activeEntry = activeId ? resolveEntry(activeId) : undefined;
 
-  function commitLayout(updater: (current: LauncherLayout) => LauncherLayout) {
+  function commitLayout(updater: (current: LauncherJson) => LauncherJson) {
     setLayout((current) => {
-      const next = {
-        ...limitDockItems(pruneEmptyFolders(removeDeprecatedEntryIds(updater(current), deprecatedEntryIds))),
-        version: LAYOUT_VERSION,
-      };
+      const next = limitDockItems(pruneEmptyFolders(removeDeprecatedEntryIds(updater(current), deprecatedEntryIds)));
       layoutSaveReason.current = "user";
       onLayoutChanged?.(next);
       return next;
@@ -535,19 +523,16 @@ export function LauncherPage({
         availableEntries,
       );
       const pruned = prunedResult.layout;
+      const prunedDesktopCells = desktopCellsFromLauncherLayout(pruned);
       const visibleDesktopIdSet = new Set(visibleDesktopIds);
-      const preservedCellIds = pruned.cells
+      const preservedCellIds = prunedDesktopCells
         .map((cell) => cell.id)
         .filter((id) => visibleDesktopIdSet.has(id));
       const nextCellIds = uniqueStrings([...preservedCellIds, ...autoDesktopIds, ...autoWebAppIds]);
-      const nextCells = normalizeDesktopCells(pruned.cells, nextCellIds, gridMetrics);
-      const next = sameCells(pruned.cells, nextCells, gridMetrics)
+      const nextCells = normalizeDesktopCells(prunedDesktopCells, nextCellIds, gridMetrics);
+      const next = sameCells(prunedDesktopCells, nextCells, gridMetrics)
         ? pruned
-        : {
-            ...pruned,
-            cells: nextCells,
-            version: LAYOUT_VERSION,
-          };
+        : withDesktopCells(pruned, nextCells);
       if (next !== current) layoutSaveReason.current = "system";
       return next === current ? current : next;
     });
@@ -913,73 +898,64 @@ export function LauncherPage({
   }
 
   function moveInsideFolderRelative(folderId: string, itemId: string, targetId: string, placement: DropPlacement) {
-    commitLayout((current) => ({
-      ...current,
-      folders: current.folders.map((folder) => (
+    commitLayout((current) => withFolders(current, launcherFolderLayouts(current.folders, labels.folder).map((folder) => (
         folder.id === folderId ? { ...folder, childIds: insertRelative(folder.childIds, itemId, targetId, placement) } : folder
-      )),
-    }));
+      ))));
   }
 
   function moveToDesktopCell(itemId: string, position: DesktopCellPosition) {
-    commitLayout((current) => ({
-      ...current,
-      cells: placeItemAtCell(current.cells, itemId, position, gridMetrics),
-      dock: current.dock.filter((id) => id !== itemId),
-      folders: removeChildFromFolders(current.folders, itemId),
+    commitLayout((current) => withLayoutParts(current, {
+      cells: placeItemAtCell(desktopCellsFromLauncherLayout(current), itemId, position, gridMetrics),
+      dockIds: launcherCellIds(current.dock).filter((id) => id !== itemId),
+      folders: removeChildFromFolders(launcherFolderLayouts(current.folders, labels.folder), itemId),
     }));
     setOpenFolderId(null);
   }
 
   function moveToDesktopNear(itemId: string, targetId: string, placement: DropPlacement) {
-    commitLayout((current) => ({
-      ...current,
-      cells: insertNearDesktopCell(current.cells, itemId, targetId, placement, gridMetrics),
-      dock: current.dock.filter((id) => id !== itemId),
-      folders: removeChildFromFolders(current.folders, itemId),
+    commitLayout((current) => withLayoutParts(current, {
+      cells: insertNearDesktopCell(desktopCellsFromLauncherLayout(current), itemId, targetId, placement, gridMetrics),
+      dockIds: launcherCellIds(current.dock).filter((id) => id !== itemId),
+      folders: removeChildFromFolders(launcherFolderLayouts(current.folders, labels.folder), itemId),
     }));
     setOpenFolderId(null);
   }
 
   function moveToDesktopEnd(itemId: string) {
-    commitLayout((current) => ({
-      ...current,
-      cells: appendToDesktopCells(current.cells, itemId, gridMetrics),
-      dock: current.dock.filter((id) => id !== itemId),
-      folders: removeChildFromFolders(current.folders, itemId),
+    commitLayout((current) => withLayoutParts(current, {
+      cells: appendToDesktopCells(desktopCellsFromLauncherLayout(current), itemId, gridMetrics),
+      dockIds: launcherCellIds(current.dock).filter((id) => id !== itemId),
+      folders: removeChildFromFolders(launcherFolderLayouts(current.folders, labels.folder), itemId),
     }));
     setOpenFolderId(null);
   }
 
   function moveToDockNear(itemId: string, targetId: string, placement: DropPlacement) {
     if (rejectDockIfFull(itemId)) return;
-    commitLayout((current) => ({
-      ...current,
-      cells: removeFromCells(current.cells, itemId),
-      dock: insertNearDockItem(dockIds, itemId, targetId, placement),
-      folders: removeChildFromFolders(current.folders, itemId),
+    commitLayout((current) => withLayoutParts(current, {
+      cells: removeFromCells(desktopCellsFromLauncherLayout(current), itemId),
+      dockIds: insertNearDockItem(dockIds, itemId, targetId, placement),
+      folders: removeChildFromFolders(launcherFolderLayouts(current.folders, labels.folder), itemId),
     }));
     setOpenFolderId(null);
   }
 
   function moveToDockEnd(itemId: string) {
     if (rejectDockIfFull(itemId)) return;
-    commitLayout((current) => ({
-      ...current,
-      cells: removeFromCells(current.cells, itemId),
-      dock: [...dockIds.filter((id) => id !== itemId), itemId],
-      folders: removeChildFromFolders(current.folders, itemId),
+    commitLayout((current) => withLayoutParts(current, {
+      cells: removeFromCells(desktopCellsFromLauncherLayout(current), itemId),
+      dockIds: [...dockIds.filter((id) => id !== itemId), itemId],
+      folders: removeChildFromFolders(launcherFolderLayouts(current.folders, labels.folder), itemId),
     }));
     setOpenFolderId(null);
   }
 
   function moveToFolder(itemId: string, folderId: string) {
     if (itemId.startsWith("folder:")) return;
-    commitLayout((current) => ({
-      ...current,
-      cells: removeFromCells(current.cells, itemId),
-      dock: current.dock.filter((id) => id !== itemId),
-      folders: current.folders.map((folder) => {
+    commitLayout((current) => withLayoutParts(current, {
+      cells: removeFromCells(desktopCellsFromLauncherLayout(current), itemId),
+      dockIds: launcherCellIds(current.dock).filter((id) => id !== itemId),
+      folders: launcherFolderLayouts(current.folders, labels.folder).map((folder) => {
         const childIds = folder.childIds.filter((id) => id !== itemId);
         return folder.id === folderId ? { ...folder, childIds: [...childIds, itemId] } : { ...folder, childIds };
       }),
@@ -988,11 +964,10 @@ export function LauncherPage({
   }
 
   function moveToDesktop(itemId: string) {
-    commitLayout((current) => ({
-      ...current,
-      cells: appendToDesktopCells(current.cells, itemId, gridMetrics),
-      dock: current.dock.filter((id) => id !== itemId),
-      folders: removeChildFromFolders(current.folders, itemId),
+    commitLayout((current) => withLayoutParts(current, {
+      cells: appendToDesktopCells(desktopCellsFromLauncherLayout(current), itemId, gridMetrics),
+      dockIds: launcherCellIds(current.dock).filter((id) => id !== itemId),
+      folders: removeChildFromFolders(launcherFolderLayouts(current.folders, labels.folder), itemId),
     }));
     closeMenu();
   }
@@ -1002,11 +977,10 @@ export function LauncherPage({
       closeMenu();
       return;
     }
-    commitLayout((current) => ({
-      ...current,
-      cells: removeFromCells(current.cells, itemId),
-      dock: [...current.dock.filter((id) => id !== itemId), itemId],
-      folders: removeChildFromFolders(current.folders, itemId),
+    commitLayout((current) => withLayoutParts(current, {
+      cells: removeFromCells(desktopCellsFromLauncherLayout(current), itemId),
+      dockIds: [...launcherCellIds(current.dock).filter((id) => id !== itemId), itemId],
+      folders: removeChildFromFolders(launcherFolderLayouts(current.folders, labels.folder), itemId),
     }));
     setOpenFolderId(null);
     closeMenu();
@@ -1015,16 +989,15 @@ export function LauncherPage({
   function createFolderWith(itemId: string, sourceContainer: LauncherContainer) {
     if (itemId.startsWith("folder:")) return;
     const folderId = `folder:${crypto.randomUUID()}`;
-    commitLayout((current) => ({
-      ...current,
+    commitLayout((current) => withLayoutParts(current, {
       cells: sourceContainer === "dock"
-        ? removeFromCells(current.cells, itemId)
-        : replaceInCellsOrAppend(current.cells, itemId, folderId, gridMetrics),
-      dock: sourceContainer === "dock"
-        ? current.dock.map((id) => (id === itemId ? folderId : id))
-        : current.dock.filter((id) => id !== itemId),
+        ? removeFromCells(desktopCellsFromLauncherLayout(current), itemId)
+        : replaceInCellsOrAppend(desktopCellsFromLauncherLayout(current), itemId, folderId, gridMetrics),
+      dockIds: sourceContainer === "dock"
+        ? launcherCellIds(current.dock).map((id) => (id === itemId ? folderId : id))
+        : launcherCellIds(current.dock).filter((id) => id !== itemId),
       folders: [
-        ...removeChildFromFolders(current.folders, itemId),
+        ...removeChildFromFolders(launcherFolderLayouts(current.folders, labels.folder), itemId),
         { id: folderId, title: labels.folder, childIds: [itemId] },
       ],
     }));
@@ -1035,16 +1008,15 @@ export function LauncherPage({
   function createFolderFromDrop(itemId: string, targetId: string, targetContainer: LauncherContainer | undefined) {
     if (itemId === targetId || itemId.startsWith("folder:") || targetId.startsWith("folder:")) return;
     const folderId = `folder:${crypto.randomUUID()}`;
-    commitLayout((current) => ({
-      ...current,
+    commitLayout((current) => withLayoutParts(current, {
       cells: targetContainer === "dock"
-        ? removeManyFromCells(current.cells, [itemId, targetId])
-        : replaceCellPairWithFolder(current.cells, itemId, targetId, folderId, gridMetrics),
-      dock: targetContainer === "dock"
-        ? replaceDockPairWithFolder(current.dock, itemId, targetId, folderId)
-        : current.dock.filter((id) => id !== itemId && id !== targetId),
+        ? removeManyFromCells(desktopCellsFromLauncherLayout(current), [itemId, targetId])
+        : replaceCellPairWithFolder(desktopCellsFromLauncherLayout(current), itemId, targetId, folderId, gridMetrics),
+      dockIds: targetContainer === "dock"
+        ? replaceDockPairWithFolder(launcherCellIds(current.dock), itemId, targetId, folderId)
+        : launcherCellIds(current.dock).filter((id) => id !== itemId && id !== targetId),
       folders: [
-        ...current.folders.map((folder) => ({
+        ...launcherFolderLayouts(current.folders, labels.folder).map((folder) => ({
           ...folder,
           childIds: folder.childIds.filter((id) => id !== itemId && id !== targetId),
         })),
@@ -1056,24 +1028,22 @@ export function LauncherPage({
   }
 
   function renameFolder(folderId: string) {
-    const folder = layout.folders.find((item) => item.id === folderId);
+    const folder = layoutFolders.find((item) => item.id === folderId);
     const title = window.prompt(labels.renameFolder, folder?.title || labels.folder);
     if (!title) return;
-    commitLayout((current) => ({
-      ...current,
-      folders: current.folders.map((item) => (item.id === folderId ? { ...item, title: title.trim() || labels.folder } : item)),
-    }));
+    commitLayout((current) => withFolders(current, launcherFolderLayouts(current.folders, labels.folder).map((item) => (
+      item.id === folderId ? { ...item, title: title.trim() || labels.folder } : item
+    ))));
     closeMenu();
   }
 
   function unpackFolder(folderId: string) {
-    const folder = layout.folders.find((item) => item.id === folderId);
+    const folder = layoutFolders.find((item) => item.id === folderId);
     if (!folder) return;
-    commitLayout((current) => ({
-      ...current,
-      cells: replaceCellWithMany(current.cells, folderId, folder.childIds, gridMetrics),
-      dock: current.dock.flatMap((id) => (id === folderId ? folder.childIds : [id])),
-      folders: current.folders.filter((item) => item.id !== folderId),
+    commitLayout((current) => withLayoutParts(current, {
+      cells: replaceCellWithMany(desktopCellsFromLauncherLayout(current), folderId, folder.childIds, gridMetrics),
+      dockIds: launcherCellIds(current.dock).flatMap((id) => (id === folderId ? folder.childIds : [id])),
+      folders: launcherFolderLayouts(current.folders, labels.folder).filter((item) => item.id !== folderId),
     }));
     setOpenFolderId(null);
     closeMenu();
@@ -1085,11 +1055,10 @@ export function LauncherPage({
     Promise.resolve(platform.deleteApp(entry.app))
       .then((nextApps) => {
         if (Array.isArray(nextApps)) setApps(nextApps);
-        commitLayout((current) => ({
-          ...current,
-          cells: removeFromCells(current.cells, itemId),
-          dock: current.dock.filter((id) => id !== itemId),
-          folders: removeChildFromFolders(current.folders, itemId),
+        commitLayout((current) => withLayoutParts(current, {
+          cells: removeFromCells(desktopCellsFromLauncherLayout(current), itemId),
+          dockIds: launcherCellIds(current.dock).filter((id) => id !== itemId),
+          folders: removeChildFromFolders(launcherFolderLayouts(current.folders, labels.folder), itemId),
         }));
         closeMenu();
       })
@@ -1991,40 +1960,190 @@ function currentDesktopBottomSafe(): number {
 }
 
 function normalizeStoredLayout(
-  value: StoredLauncherLayout | null | undefined,
+  value: LauncherJson | null | undefined,
   defaultDockEntryIds: string[],
   metrics: DesktopGridMetrics,
   defaultFolderTitle: string,
   deprecatedEntryIds: Set<string>,
-): LauncherLayout {
-  const dock = (Array.isArray(value?.dock) ? uniqueStrings(value.dock) : [...defaultDockEntryIds])
+): LauncherJson {
+  const source = normalizeLauncherLayout(value);
+  const dockIds = (Array.isArray(source.dock) ? launcherCellIds(source.dock) : [...defaultDockEntryIds])
     .filter((id) => !deprecatedEntryIds.has(id))
     .slice(0, MAX_DOCK_ITEMS);
-  const dockSet = new Set(dock);
-  const cells = Array.isArray(value?.cells)
-    ? value.cells
-      .filter((cell): cell is DesktopCell => (
-        typeof cell?.id === "string"
-        && Number.isInteger(cell.page)
-        && Number.isInteger(cell.row)
-        && Number.isInteger(cell.column)
-      ))
-      .filter((cell) => !dockSet.has(cell.id) && !deprecatedEntryIds.has(cell.id))
+  const dockSet = new Set(dockIds);
+  const cells = desktopCellsFromLauncherLayout(source)
+    .filter((cell) => !dockSet.has(cell.id) && !deprecatedEntryIds.has(cell.id));
+  const folders = launcherFolderLayouts(source.folders, defaultFolderTitle)
+    .map((folder) => ({
+      id: folder.id,
+      title: folder.title || defaultFolderTitle,
+      childIds: uniqueStrings(folder.childIds).filter((id) => !dockSet.has(id) && !deprecatedEntryIds.has(id)),
+    }));
+  return withLayoutParts(
+    { rev: source.rev },
+    {
+      cells: normalizeDesktopCells(cells, [], metrics),
+      dockIds,
+      folders,
+    },
+  );
+}
+
+function emptyLauncherLayout(defaultDockEntryIds: string[]): LauncherJson {
+  return {
+    dock: launcherCellsFromIds(defaultDockEntryIds.slice(0, MAX_DOCK_ITEMS)),
+    rev: { counter: 0, deviceId: "" },
+  };
+}
+
+function normalizeLauncherLayout(value: unknown): LauncherJson {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { rev: { counter: 0, deviceId: "" } };
+  }
+  const source = value as Partial<LauncherJson>;
+  const firstPage = Array.isArray(source.pages) ? source.pages[0] : undefined;
+  const pageCells = normalizeLauncherCells(firstPage?.cells);
+  const dock = normalizeLauncherCells(source.dock).slice(0, MAX_DOCK_ITEMS);
+  const folders = Array.isArray(source.folders)
+    ? source.folders.map(normalizeLauncherFolder).filter((folder): folder is LauncherFolder => !!folder)
     : [];
   return {
-    version: LAYOUT_VERSION,
-    cells: normalizeDesktopCells(cells, [], metrics),
-    dock,
-    folders: Array.isArray(value?.folders)
-      ? value.folders
-        .filter((folder): folder is FolderLayout => typeof folder?.id === "string" && Array.isArray(folder.childIds))
-        .map((folder) => ({
-          id: folder.id,
-          title: typeof folder.title === "string" ? folder.title : defaultFolderTitle,
-          childIds: uniqueStrings(folder.childIds).filter((id) => !dockSet.has(id) && !deprecatedEntryIds.has(id)),
-        }))
-      : [],
+    ...(pageCells.length > 0 ? { pages: [{ cells: pageCells }] } : {}),
+    ...(dock.length > 0 ? { dock } : {}),
+    ...(folders.length > 0 ? { folders } : {}),
+    rev: normalizeLauncherRevision(source.rev),
   };
+}
+
+function normalizeLauncherRevision(value: unknown): LauncherJson["rev"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { counter: 0, deviceId: "" };
+  const source = value as Partial<LauncherJson["rev"]>;
+  return {
+    counter: Number.isSafeInteger(source.counter) ? Number(source.counter) : 0,
+    deviceId: typeof source.deviceId === "string" ? source.deviceId : "",
+  };
+}
+
+function normalizeLauncherFolder(value: unknown): LauncherFolder | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as Partial<LauncherFolder>;
+  const id = stringData(source.id);
+  if (!id) return null;
+  const cells = normalizeLauncherCells(source.cells);
+  return {
+    id,
+    ...(typeof source.title === "string" ? { title: source.title } : {}),
+    ...(cells.length > 0 ? { cells } : {}),
+  };
+}
+
+function normalizeLauncherCells(value: unknown): LauncherCell[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value
+    .map((cell, fallbackIndex) => launcherCellFromUnknown(cell, fallbackIndex))
+    .filter((cell): cell is LauncherCell => {
+      if (!cell || seen.has(cell.id)) return false;
+      seen.add(cell.id);
+      return true;
+    })
+    .sort(compareLauncherCells);
+}
+
+function launcherCellFromUnknown(value: unknown, fallbackIndex: number): LauncherCell | null {
+  if (typeof value === "string") return launcherCell(value, fallbackIndex);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as Partial<LauncherCell>;
+  return launcherCell(source.id, source.index, fallbackIndex);
+}
+
+function launcherCell(idValue: unknown, indexValue: unknown, fallbackIndex = 0): LauncherCell | null {
+  const id = stringData(idValue);
+  if (!id) return null;
+  const index = Number(indexValue);
+  return {
+    id,
+    index: Number.isFinite(index) && index >= 0 ? Math.floor(index) : fallbackIndex,
+  };
+}
+
+function compareLauncherCells(left: LauncherCell, right: LauncherCell): number {
+  return left.index - right.index || left.id.localeCompare(right.id);
+}
+
+function launcherCellsFromIds(ids: string[]): LauncherCell[] {
+  return uniqueStrings(ids).map((id, index) => ({ id, index }));
+}
+
+function launcherCellIds(cells: unknown): string[] {
+  return normalizeLauncherCells(cells).map((cell) => cell.id);
+}
+
+function launcherFolderLayouts(folders: unknown, defaultFolderTitle: string): FolderLayout[] {
+  if (!Array.isArray(folders)) return [];
+  return folders
+    .map(normalizeLauncherFolder)
+    .filter((folder): folder is LauncherFolder => !!folder)
+    .map((folder) => ({
+      id: folder.id,
+      title: folder.title || defaultFolderTitle,
+      childIds: launcherCellIds(folder.cells),
+    }));
+}
+
+function desktopCellsFromLauncherLayout(layout: LauncherJson): DesktopCell[] {
+  return normalizeLauncherCells(layout.pages?.[0]?.cells)
+    .map((cell) => ({ id: cell.id, page: 0, row: 0, column: 0, index: cell.index }));
+}
+
+function withLayoutParts(
+  layout: LauncherJson,
+  parts: { cells?: DesktopCell[]; dockIds?: string[]; folders?: FolderLayout[] },
+): LauncherJson {
+  return normalizeLauncherLayout({
+    ...layout,
+    ...(parts.cells ? { pages: launcherPagesFromDesktopCells(parts.cells) } : {}),
+    ...(parts.dockIds ? { dock: launcherCellsFromIds(parts.dockIds).slice(0, MAX_DOCK_ITEMS) } : {}),
+    ...(parts.folders ? { folders: launcherFoldersFromLayouts(parts.folders) } : {}),
+  });
+}
+
+function withDesktopCells(layout: LauncherJson, cells: DesktopCell[]): LauncherJson {
+  return withLayoutParts(layout, { cells });
+}
+
+function withFolders(layout: LauncherJson, folders: FolderLayout[]): LauncherJson {
+  return withLayoutParts(layout, { folders });
+}
+
+function launcherPagesFromDesktopCells(cells: DesktopCell[]): LauncherPage[] {
+  const pageCells = sortDesktopCellsByIndex(cells)
+    .map((cell, fallbackIndex) => launcherCell(cell.id, cell.index, fallbackIndex))
+    .filter((cell): cell is LauncherCell => !!cell);
+  return pageCells.length > 0 ? [{ cells: pageCells }] : [];
+}
+
+function launcherFoldersFromLayouts(folders: FolderLayout[]): LauncherFolder[] {
+  return folders
+    .map((folder): LauncherFolder | null => {
+      const id = stringData(folder.id);
+      if (!id) return null;
+      const cells = launcherCellsFromIds(folder.childIds);
+      return {
+        id,
+        ...(folder.title ? { title: folder.title } : {}),
+        ...(cells.length > 0 ? { cells } : {}),
+      };
+    })
+    .filter((folder): folder is LauncherFolder => !!folder);
+}
+
+function sortDesktopCellsByIndex(cells: DesktopCell[]): DesktopCell[] {
+  return [...cells].sort((left, right) => {
+    const leftIndex = Number.isInteger(left.index) ? Number(left.index) : 0;
+    const rightIndex = Number.isInteger(right.index) ? Number(right.index) : 0;
+    return leftIndex - rightIndex || left.id.localeCompare(right.id);
+  });
 }
 
 function useDesktopGridMetrics(variant: LauncherPageProps["variant"]): DesktopGridMetrics {
@@ -2122,9 +2241,6 @@ function sameCells(left: DesktopCell[], right: DesktopCell[], metrics: DesktopGr
   return sortedLeft.every((cell, index) => (
     cell.id === sortedRight[index].id
     && globalCellIndex(cell, metrics) === globalCellIndex(sortedRight[index], metrics)
-    && cell.page === sortedRight[index].page
-    && cell.row === sortedRight[index].row
-    && cell.column === sortedRight[index].column
   ));
 }
 
@@ -2455,39 +2571,39 @@ function removeChildFromFolders(folders: FolderLayout[], itemId: string): Folder
   return folders.map((folder) => ({ ...folder, childIds: folder.childIds.filter((id) => id !== itemId) }));
 }
 
-function removeDeprecatedEntryIds(layout: LauncherLayout, deprecatedEntryIds: Set<string>): LauncherLayout {
+function removeDeprecatedEntryIds(layout: LauncherJson, deprecatedEntryIds: Set<string>): LauncherJson {
   if (deprecatedEntryIds.size === 0) return layout;
   let changed = false;
-  const cells = layout.cells.filter((cell) => {
+  const cells = desktopCellsFromLauncherLayout(layout).filter((cell) => {
     const keep = !deprecatedEntryIds.has(cell.id);
     if (!keep) changed = true;
     return keep;
   });
-  const dock = layout.dock.filter((id) => {
+  const dockIds = launcherCellIds(layout.dock).filter((id) => {
     const keep = !deprecatedEntryIds.has(id);
     if (!keep) changed = true;
     return keep;
   });
-  const folders = layout.folders.map((folder) => {
+  const folders = launcherFolderLayouts(layout.folders, "Folder").map((folder) => {
     const childIds = folder.childIds.filter((id) => !deprecatedEntryIds.has(id));
     if (sameStringList(childIds, folder.childIds)) return folder;
     changed = true;
     return { ...folder, childIds };
   });
-  return changed ? { ...layout, cells, dock, folders } : layout;
+  return changed ? withLayoutParts(layout, { cells, dockIds, folders }) : layout;
 }
 
-function limitDockItems(layout: LauncherLayout): LauncherLayout {
-  const dock = uniqueStrings(layout.dock).slice(0, MAX_DOCK_ITEMS);
-  return sameStringList(dock, layout.dock) ? layout : { ...layout, dock };
+function limitDockItems(layout: LauncherJson): LauncherJson {
+  const dockIds = launcherCellIds(layout.dock).slice(0, MAX_DOCK_ITEMS);
+  return sameStringList(dockIds, launcherCellIds(layout.dock)) ? layout : withLayoutParts(layout, { dockIds });
 }
 
-function pruneEmptyFolders(layout: LauncherLayout, availableEntryIds?: Set<string>): LauncherLayout {
+function pruneEmptyFolders(layout: LauncherJson, availableEntryIds?: Set<string>): LauncherJson {
   const removedFolderIds = new Set<string>();
   let changed = false;
   const folders: FolderLayout[] = [];
 
-  for (const folder of layout.folders) {
+  for (const folder of launcherFolderLayouts(layout.folders, "Folder")) {
     const childIds = uniqueStrings(folder.childIds)
       .filter((id) => !availableEntryIds || availableEntryIds.has(id));
     const folderChanged = !sameStringList(childIds, folder.childIds);
@@ -2501,35 +2617,30 @@ function pruneEmptyFolders(layout: LauncherLayout, availableEntryIds?: Set<strin
   }
 
   if (removedFolderIds.size === 0 && !changed) return layout;
-  return {
-    ...layout,
-    cells: removedFolderIds.size > 0 ? layout.cells.filter((cell) => !removedFolderIds.has(cell.id)) : layout.cells,
-    dock: removedFolderIds.size > 0 ? layout.dock.filter((id) => !removedFolderIds.has(id)) : layout.dock,
+  return withLayoutParts(layout, {
+    cells: removedFolderIds.size > 0 ? desktopCellsFromLauncherLayout(layout).filter((cell) => !removedFolderIds.has(cell.id)) : desktopCellsFromLauncherLayout(layout),
+    dockIds: removedFolderIds.size > 0 ? launcherCellIds(layout.dock).filter((id) => !removedFolderIds.has(id)) : launcherCellIds(layout.dock),
     folders,
-  };
+  });
 }
 
-function removeUnavailableEntryIds(layout: LauncherLayout, availableEntries: Map<string, LauncherSystemEntry | AppEntry>): { layout: LauncherLayout; changed: boolean } {
+function removeUnavailableEntryIds(layout: LauncherJson, availableEntries: Map<string, LauncherSystemEntry | AppEntry>): { layout: LauncherJson; changed: boolean } {
   const availableEntryIds = new Set(availableEntries.keys());
   const withoutInvalidFolderChildren = pruneEmptyFolders(layout, availableEntryIds);
-  const folderIds = new Set(withoutInvalidFolderChildren.folders.map((folder) => folder.id));
+  const folderIds = new Set(launcherFolderLayouts(withoutInvalidFolderChildren.folders, "Folder").map((folder) => folder.id));
   const isAvailableLayoutId = (id: string) => availableEntryIds.has(id) || folderIds.has(id);
-  const cells = withoutInvalidFolderChildren.cells.filter((cell) => isAvailableLayoutId(cell.id));
-  const dock = withoutInvalidFolderChildren.dock.filter(isAvailableLayoutId);
+  const cells = desktopCellsFromLauncherLayout(withoutInvalidFolderChildren).filter((cell) => isAvailableLayoutId(cell.id));
+  const dockIds = launcherCellIds(withoutInvalidFolderChildren.dock).filter(isAvailableLayoutId);
   if (
-    cells.length === withoutInvalidFolderChildren.cells.length
-    && dock.length === withoutInvalidFolderChildren.dock.length
+    cells.length === desktopCellsFromLauncherLayout(withoutInvalidFolderChildren).length
+    && dockIds.length === launcherCellIds(withoutInvalidFolderChildren.dock).length
     && withoutInvalidFolderChildren === layout
   ) {
     return { layout, changed: false };
   }
   return {
     changed: true,
-    layout: {
-      ...withoutInvalidFolderChildren,
-      cells,
-      dock,
-    },
+    layout: withLayoutParts(withoutInvalidFolderChildren, { cells, dockIds }),
   };
 }
 

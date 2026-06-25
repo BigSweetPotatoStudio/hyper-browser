@@ -157,7 +157,7 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     if (!layout) return;
     await withLocalLock(async () => {
       const current = await options.loadSyncV2Store();
-      const next = appendLocalSnapshotOperations(current, { layout });
+      const next = appendLocalSnapshotOperations(current, { layout }, { forceLayout: true });
       if (canonicalJson(current) !== canonicalJson(next)) {
         await options.saveSyncV2Store(next);
       }
