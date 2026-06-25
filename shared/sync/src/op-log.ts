@@ -1630,7 +1630,6 @@ function appFieldsChanged(left: SyncV2App, right: WebAppRecord): boolean {
 export function normalizeBookmarkKey(value: string): string {
   try {
     const url = new URL(value.trim());
-    url.hash = "";
     return url.toString();
   } catch {
     return value.trim();

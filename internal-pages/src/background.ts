@@ -272,7 +272,6 @@ async function requestNativeItems<T = unknown>(type: string, payload: Record<str
 function normalizeBookmarkUrlKey(value: string): string {
   try {
     const url = new URL(value.trim());
-    url.hash = "";
     return url.toString();
   } catch {
     return value.trim();

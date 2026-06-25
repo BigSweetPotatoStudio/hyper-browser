@@ -32,13 +32,14 @@ internal fun normalizeBookmarkUrl(value: String): String {
     return runCatching {
         val uri = java.net.URI(trimmed)
         val scheme = uri.scheme?.lowercase() ?: return@runCatching trimmed
-        val authority = uri.rawAuthority ?: return@runCatching trimmed.substringBefore('#')
+        val authority = uri.rawAuthority ?: return@runCatching trimmed
         val path = uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/"
         buildString {
             append(scheme).append("://").append(authority).append(path)
             uri.rawQuery?.let { append('?').append(it) }
+            uri.rawFragment?.let { append('#').append(it) }
         }
-    }.getOrDefault(trimmed.substringBefore('#'))
+    }.getOrDefault(trimmed)
 }
 
 data class BrowserSettings(
