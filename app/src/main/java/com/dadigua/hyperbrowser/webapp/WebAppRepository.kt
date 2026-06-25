@@ -38,6 +38,20 @@ class WebAppRepository(
     fun syncJson(): JSONObject =
         readJSONObject(storeFile) ?: webAppsSyncJson(state.value)
 
+    fun saveSyncJson(json: JSONObject) {
+        val previousById = state.value.associateBy { it.id }
+        val normalized = normalizeWebAppsSyncJson(json)
+        storeFile.writeText(normalized.toString())
+        val next = loadFromSyncFile(storeFile).sortedByDescending { it.lastOpenedAt }
+        val nextIds = next.map { it.id }.toSet()
+        previousById.values
+            .filter { it.id !in nextIds }
+            .forEach { disableShortcut(it) }
+        state.value = next
+        next.filter { previousById[it.id] != null && previousById[it.id] != it }
+            .forEach { updateShortcut(it) }
+    }
+
     suspend fun get(id: String): WebAppDefinition? = state.value.firstOrNull { it.id == id }
 
     fun mergeImported(items: List<WebAppDefinition>): Int {
@@ -469,6 +483,15 @@ class WebAppRepository(
         return JSONObject()
             .put("schemaVersion", 2)
             .put("apps", nextApps)
+            .put("appTombstones", tombstones)
+    }
+
+    private fun normalizeWebAppsSyncJson(json: JSONObject): JSONObject {
+        val apps = json.optJSONObject("apps") ?: JSONObject()
+        val tombstones = json.optJSONObject("appTombstones")?.deepCopy() ?: JSONObject()
+        return JSONObject()
+            .put("schemaVersion", 2)
+            .put("apps", apps)
             .put("appTombstones", tombstones)
     }
 

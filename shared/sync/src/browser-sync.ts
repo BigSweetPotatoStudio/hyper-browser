@@ -11,7 +11,10 @@ import {
   findWebAppsByUrlInState,
   identityKeyForUrl,
   layoutFromState,
+  readSyncStateFromFiles,
+  saveSyncStateToFiles,
   syncV2,
+  type SyncStateFileStorage,
   type SyncV2LocalSnapshot,
   type SyncV2Result,
   type SyncV2State,
@@ -81,6 +84,7 @@ export type BrowserSyncServiceOptions = {
   saveSettings: (settings: SyncSettings) => Promise<void>;
   loadSyncV2Store: () => Promise<SyncV2Store>;
   saveSyncV2Store: (store: SyncV2Store) => Promise<void>;
+  syncFiles: SyncStateFileStorage;
   loadLauncherLayout: () => Promise<SyncV2LocalSnapshot["layout"] | undefined>;
   bookmarks: {
     getTree: () => Promise<BrowserBookmarkNode[]>;
@@ -102,7 +106,7 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
   async function syncNow(): Promise<BrowserSyncResult> {
     let settings = await options.loadSettings();
     settings = await ensureBookmarkFolder(settings);
-    const before = (await options.loadSyncV2Store()).state;
+    const before = await loadStateFiles();
     let result = {
       state: before,
       stateChanged: false,
@@ -117,15 +121,17 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
         settings,
         loadStore: options.loadSyncV2Store,
         saveStore: options.saveSyncV2Store,
+        loadState: () => loadStateFiles(),
+        saveState: (state) => saveLocalState(settings, state),
         loadLocalSnapshot: () => loadLocalSnapshot(),
-        applyState: (state) => saveLocalState(settings, state),
         withLocalLock,
       });
     } else {
       await withLocalLock(async () => {
         const current = await options.loadSyncV2Store();
-        const next = appendLocalSnapshotOperations(current, await loadLocalSnapshot());
-        await options.saveSyncV2Store(next);
+        const currentState = await loadStateFiles();
+        const next = appendLocalSnapshotOperations(current, currentState, await loadLocalSnapshot());
+        await options.saveSyncV2Store(next.store);
         await saveLocalState(settings, next.state);
         result = {
           state: next.state,
@@ -133,7 +139,7 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
           launcherChanged: false,
           uploadedOperationCount: 0,
           remoteOperationCount: 0,
-          pendingOperationCount: next.outbox.length,
+          pendingOperationCount: 0,
           syncedAt: Date.now(),
         };
       });
@@ -142,24 +148,26 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
   }
 
   async function loadRemoteWebApps(): Promise<WebAppRecord[]> {
-    return activeWebAppsFromState((await options.loadSyncV2Store()).state);
+    return activeWebAppsFromState(await loadStateFiles());
   }
 
   async function loadRemoteBookmarks(): Promise<BookmarkRecord[]> {
-    return activeBookmarksFromState((await options.loadSyncV2Store()).state);
+    return activeBookmarksFromState(await loadStateFiles());
   }
 
   async function loadLauncherLayout(): Promise<SyncV2LocalSnapshot["layout"]> {
-    return layoutFromState((await options.loadSyncV2Store()).state);
+    return await options.loadLauncherLayout() || null;
   }
 
   async function saveLauncherLayout(layout: SyncV2LocalSnapshot["layout"]): Promise<void> {
     if (!layout) return;
     await withLocalLock(async () => {
       const current = await options.loadSyncV2Store();
-      const next = appendLocalSnapshotOperations(current, { layout }, { forceLayout: true });
-      if (canonicalJson(current) !== canonicalJson(next)) {
-        await options.saveSyncV2Store(next);
+      const currentState = await loadStateFiles();
+      const next = appendLocalSnapshotOperations(current, currentState, { layout }, { forceLayout: true });
+      if (canonicalJson(current) !== canonicalJson(next.store) || canonicalJson(currentState) !== canonicalJson(next.state)) {
+        await options.saveSyncV2Store(next.store);
+        await saveStateFiles(next.state);
       }
     });
   }
@@ -174,10 +182,14 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     let changed = false;
     await withLocalLock(async () => {
       const current = await options.loadSyncV2Store();
-      const bookmarks = await collectLocalBookmarkRecords(settings, current.state);
-      const next = appendLocalSnapshotOperations(current, { bookmarks });
-      changed = canonicalJson(current) !== canonicalJson(next);
-      if (changed) await options.saveSyncV2Store(next);
+      const currentState = await loadStateFiles();
+      const bookmarks = await collectLocalBookmarkRecords(settings, currentState);
+      const next = appendLocalSnapshotOperations(current, currentState, { bookmarks });
+      changed = canonicalJson(current) !== canonicalJson(next.store) || canonicalJson(currentState) !== canonicalJson(next.state);
+      if (changed) {
+        await options.saveSyncV2Store(next.store);
+        await saveStateFiles(next.state);
+      }
     });
     return changed;
   }
@@ -185,24 +197,26 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
   async function findBookmarkByUrl(url: string): Promise<BookmarkRecord | null> {
     const normalizedUrl = url.trim();
     if (!isHttpUrl(normalizedUrl)) return null;
-    return findBookmarkByUrlInState((await options.loadSyncV2Store()).state, normalizedUrl);
+    return findBookmarkByUrlInState(await loadStateFiles(), normalizedUrl);
   }
 
   async function findWebAppsByUrl(url: string): Promise<WebAppRecord[]> {
     const normalizedUrl = url.trim();
     if (!isHttpUrl(normalizedUrl)) return [];
-    return findWebAppsByUrlInState((await options.loadSyncV2Store()).state, normalizedUrl);
+    return findWebAppsByUrlInState(await loadStateFiles(), normalizedUrl);
   }
 
   async function saveRemoteWebApp(input: Partial<WebAppRecord> & { name: string; startUrl: string }): Promise<WebAppRecord[]> {
     const settings = await options.loadSettings();
     await withLocalLock(async () => {
       const current = await options.loadSyncV2Store();
-      const { store } = appendWebAppUpsert(current, input);
-      await options.saveSyncV2Store(store);
+      const currentState = await loadStateFiles();
+      const next = appendWebAppUpsert(current, currentState, input);
+      await options.saveSyncV2Store(next.store);
+      await saveStateFiles(next.state);
     });
     if (settings.webDavUrl.trim()) await syncNow();
-    return activeWebAppsFromState((await options.loadSyncV2Store()).state);
+    return activeWebAppsFromState(await loadStateFiles());
   }
 
   async function addBookmarkToSyncFolder(input: { title: string; url: string; iconDataUrl?: string | null }): Promise<BrowserSyncResult> {
@@ -217,7 +231,8 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     }
     await withLocalLock(async () => {
       const current = await options.loadSyncV2Store();
-      const existing = findBookmarkByUrlInState(current.state, url);
+      const currentState = await loadStateFiles();
+      const existing = findBookmarkByUrlInState(currentState, url);
       const now = Date.now();
       const bookmark: BookmarkRecord = {
         url,
@@ -227,7 +242,9 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
         deletedAt: null,
         iconDataUrl: input.iconDataUrl ?? existing?.iconDataUrl ?? null,
       };
-      await options.saveSyncV2Store(appendOperation(current, { type: "bookmark.upsert", bookmark }));
+      const next = appendOperation(current, currentState, { type: "bookmark.upsert", bookmark });
+      await options.saveSyncV2Store(next.store);
+      await saveStateFiles(next.state);
     });
     return syncNow();
   }
@@ -240,11 +257,14 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     await removeLocalBookmarksByUrl(settings.folderId, record.url);
     await withLocalLock(async () => {
       const current = await options.loadSyncV2Store();
-      await options.saveSyncV2Store(appendOperation(current, {
+      const currentState = await loadStateFiles();
+      const next = appendOperation(current, currentState, {
         type: "bookmark.delete",
         url: record.url,
         title: record.title,
-      }));
+      });
+      await options.saveSyncV2Store(next.store);
+      await saveStateFiles(next.state);
     });
     return syncNow();
   }
@@ -252,13 +272,16 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
   async function deleteRemoteWebApp(input: string | Partial<WebAppRecord> | null | undefined): Promise<WebAppRecord[]> {
     const settings = await options.loadSettings();
     const id = typeof input === "string" ? input.trim() : input?.id?.trim();
-    if (!id) return activeWebAppsFromState((await options.loadSyncV2Store()).state);
+    if (!id) return activeWebAppsFromState(await loadStateFiles());
     await withLocalLock(async () => {
       const current = await options.loadSyncV2Store();
-      await options.saveSyncV2Store(appendWebAppDelete(current, id));
+      const currentState = await loadStateFiles();
+      const next = appendWebAppDelete(current, currentState, id);
+      await options.saveSyncV2Store(next.store);
+      await saveStateFiles(next.state);
     });
     if (settings.webDavUrl.trim()) await syncNow();
-    return activeWebAppsFromState((await options.loadSyncV2Store()).state);
+    return activeWebAppsFromState(await loadStateFiles());
   }
 
   async function loadLocalSnapshot(): Promise<SyncV2LocalSnapshot> {
@@ -268,8 +291,17 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
   }
 
   async function saveLocalState(settings: SyncSettings, state: SyncV2State): Promise<void> {
+    await saveStateFiles(state);
     await applyBookmarkRecords(settings, activeBookmarksFromState(state));
     void layoutFromState(state);
+  }
+
+  async function loadStateFiles(): Promise<SyncV2State> {
+    return readSyncStateFromFiles(options.syncFiles);
+  }
+
+  async function saveStateFiles(state: SyncV2State): Promise<void> {
+    await saveSyncStateToFiles(options.syncFiles, state);
   }
 
   async function withLocalLock<T>(operation: () => Promise<T>): Promise<T> {

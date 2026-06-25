@@ -1,8 +1,7 @@
 import type { LauncherLayoutStorage } from "@hyper-launcher";
-import { layoutFromState } from "@hyper-sync/op-log";
 import type { LauncherJson } from "@hyper-sync/sync-json-types";
 import { browser } from "wxt/browser";
-import { loadSyncV2Store } from "./storage";
+import { readSyncFile } from "./storage";
 
 export const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"];
 export const DEPRECATED_ENTRY_IDS = ["system:chrome"];
@@ -11,7 +10,9 @@ let launcherLayoutSaveQueue: Promise<void> = Promise.resolve();
 
 export const launcherLayoutStorage: LauncherLayoutStorage = {
   async load() {
-    return layoutFromState((await loadSyncV2Store()).state);
+    const layout = await readSyncFile("launcher.json");
+    if (isLauncherJson(layout)) return layout;
+    return null;
   },
   save(layout: LauncherJson, options) {
     const run = launcherLayoutSaveQueue.then(() => saveLauncherLayoutIfCurrent(layout, options?.reason || "user"));
@@ -24,4 +25,8 @@ async function saveLauncherLayoutIfCurrent(layout: LauncherJson, reason: "user" 
   if (reason !== "user") return;
   const response = await browser.runtime.sendMessage({ type: "launcher.layout.save", payload: layout });
   if (!response?.ok) throw new Error(response?.error || "Unable to save launcher layout.");
+}
+
+function isLauncherJson(value: unknown): value is LauncherJson {
+  return !!value && typeof value === "object" && !Array.isArray(value) && "rev" in value;
 }

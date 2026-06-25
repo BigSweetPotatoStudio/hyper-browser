@@ -2,6 +2,7 @@ import { browser } from "wxt/browser";
 import { DEFAULT_DEVICE_NAME } from "./identity";
 import type { SyncSettings } from "./types";
 import { canonicalJson, createEmptyStore, ensureStore, type SyncV2Store } from "@hyper-sync/op-log";
+import type { SyncJsonByFileName, SyncJsonFileName } from "@hyper-sync/sync-json-types";
 
 const DEFAULT_FOLDER_TITLE = "Hyper Browser";
 const LEGACY_LAUNCHER_LAYOUT_KEY = "launcherLayout";
@@ -48,6 +49,15 @@ export async function loadSyncV2Store(): Promise<SyncV2Store> {
 
 export async function saveSyncV2Store(store: SyncV2Store): Promise<void> {
   await storageSet({ syncV2Store: ensureStore(store, store.deviceId) });
+}
+
+export async function readSyncFile(path: SyncJsonFileName): Promise<SyncJsonByFileName[SyncJsonFileName] | null> {
+  const result = await storageGet<Partial<Record<SyncJsonFileName, SyncJsonByFileName[SyncJsonFileName]>>>(path);
+  return result[path] || null;
+}
+
+export async function saveSyncFile(path: SyncJsonFileName, data: SyncJsonByFileName[SyncJsonFileName]): Promise<void> {
+  await storageSet({ [path]: data });
 }
 
 async function removeLegacyLauncherLayout(): Promise<void> {

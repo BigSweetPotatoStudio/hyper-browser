@@ -7,6 +7,8 @@ import type {
   LauncherJson,
   LauncherPage,
   SyncRevision,
+  SyncJsonByFileName,
+  SyncJsonFileName,
   SyncTombstone,
   SyncV2State,
   WebAppsJson,
@@ -23,6 +25,7 @@ const BOOKMARKS_FILE = "bookmarks.json";
 const WEBAPPS_FILE = "webapps.json";
 const LAUNCHER_FILE = "launcher.json";
 const MANIFEST_FILE = "manifest.json";
+export const SYNC_STATE_FILE_NAMES = [BOOKMARKS_FILE, WEBAPPS_FILE, LAUNCHER_FILE] as const satisfies readonly SyncJsonFileName[];
 const TOMBSTONE_COMPACT_TRIGGER = 1500;
 const TOMBSTONE_COMPACT_TARGET = 500;
 const TOMBSTONE_MIN_RETENTION_MS = 0;
@@ -54,8 +57,11 @@ export type SyncV2Store = {
   schemaVersion: 2;
   deviceId: string;
   counter: number;
+};
+
+export type SyncV2Mutation = {
+  store: SyncV2Store;
   state: SyncV2State;
-  outbox: SyncV2Operation[];
 };
 
 type SnapshotRecordCollection<T> = Array<T> | Record<string, T>;
@@ -78,6 +84,11 @@ export type SyncV2Result = {
   remoteOperationCount: number;
   pendingOperationCount: number;
   syncedAt: number;
+};
+
+export type SyncStateFileStorage = {
+  readFile: (path: SyncJsonFileName) => Promise<unknown | null | undefined>;
+  saveFile: (path: SyncJsonFileName, data: SyncJsonByFileName[SyncJsonFileName]) => Promise<void>;
 };
 
 type RemoteStateFile = {
@@ -124,8 +135,6 @@ export function createEmptyStore(deviceId = ""): SyncV2Store {
     schemaVersion: SYNC_V2_SCHEMA_VERSION,
     deviceId,
     counter: 0,
-    state: createEmptyState(),
-    outbox: [],
   };
 }
 
@@ -134,19 +143,10 @@ export function ensureStore(value: unknown, deviceId: string): SyncV2Store {
     return createEmptyStore(deviceId);
   }
   const store = value as Partial<SyncV2Store>;
-  const state = ensureState(store.state);
-  const outbox = Array.isArray(store.outbox)
-    ? store.outbox.filter(isOperation)
-    : [];
   return {
     schemaVersion: SYNC_V2_SCHEMA_VERSION,
     deviceId: store.deviceId || deviceId,
-    counter: Math.max(
-      Number.isSafeInteger(store.counter) ? Number(store.counter) : 0,
-      maxOperationCounter(outbox),
-    ),
-    state,
-    outbox,
+    counter: Number.isSafeInteger(store.counter) ? Number(store.counter) : 0,
   };
 }
 
@@ -167,6 +167,37 @@ export function ensureState(value: unknown): SyncV2State {
 
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(canonicalize(value));
+}
+
+export async function readSyncStateFromFiles(files: Pick<SyncStateFileStorage, "readFile">): Promise<SyncV2State> {
+  const [bookmarks, webApps, launcher] = await Promise.all([
+    files.readFile(BOOKMARKS_FILE),
+    files.readFile(WEBAPPS_FILE),
+    files.readFile(LAUNCHER_FILE),
+  ]);
+  const state = createEmptyState();
+  mergeBookmarkFileIntoState(state, parseJsonFileValue(bookmarks));
+  mergeWebAppFileIntoState(state, parseJsonFileValue(webApps));
+  mergeLauncherFileIntoState(state, parseJsonFileValue(launcher));
+  return ensureState(state);
+}
+
+export async function saveSyncStateToFiles(files: SyncStateFileStorage, state: SyncV2State): Promise<void> {
+  const desired = stateToSyncJsonFiles(state);
+  await Promise.all(SYNC_STATE_FILE_NAMES.map(async (path) => {
+    const current = parseJsonFileValue(await files.readFile(path));
+    if (canonicalJson(current) === canonicalJson(desired[path])) return;
+    await files.saveFile(path, desired[path]);
+  }));
+}
+
+export function stateToSyncJsonFiles(state: SyncV2State): SyncJsonByFileName {
+  const remoteFiles = stateToRemoteFiles(state);
+  return {
+    [BOOKMARKS_FILE]: remoteFiles[BOOKMARKS_FILE] as BookmarksJson,
+    [WEBAPPS_FILE]: remoteFiles[WEBAPPS_FILE] as WebAppsJson,
+    [LAUNCHER_FILE]: remoteFiles[LAUNCHER_FILE] as LauncherJson,
+  };
 }
 
 function sanitizeState(state: SyncV2State): SyncV2State {
@@ -211,6 +242,17 @@ function canonicalize(value: unknown): unknown {
   return value;
 }
 
+function parseJsonFileValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
 export function compareRevision(a: Partial<SyncRevision> = {}, b: Partial<SyncRevision> = {}): number {
   const ac = Number.isSafeInteger(a.counter) ? Number(a.counter) : 0;
   const bc = Number.isSafeInteger(b.counter) ? Number(b.counter) : 0;
@@ -225,27 +267,28 @@ export function reduceOperations(operations: SyncV2Operation[]): SyncV2State {
   return state;
 }
 
-export function appendOperation(store: SyncV2Store, operation: SyncV2OperationInput): SyncV2Store {
-  const next = cloneJson(store);
-  next.counter += 1;
+export function appendOperation(store: SyncV2Store, state: SyncV2State, operation: SyncV2OperationInput): SyncV2Mutation {
+  const nextStore = cloneJson(store);
+  const nextState = ensureState(state);
+  nextStore.counter += 1;
   const fullOperation = {
     schemaVersion: SYNC_V2_SCHEMA_VERSION,
     opId: crypto.randomUUID(),
-    deviceId: next.deviceId,
-    counter: next.counter,
+    deviceId: nextStore.deviceId,
+    counter: nextStore.counter,
     createdAt: Date.now(),
     ...operation,
   } as SyncV2Operation;
-  applyOperationInPlace(next.state, fullOperation);
-  next.outbox.push(fullOperation);
-  return next;
+  applyOperationInPlace(nextState, fullOperation);
+  return { store: nextStore, state: nextState };
 }
 
-export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput): { store: SyncV2Store; app: WebAppSyncRecord } {
+export function appendWebAppUpsert(store: SyncV2Store, state: SyncV2State, input: WebAppInput): SyncV2Mutation & { app: WebAppSyncRecord } {
+  const currentState = ensureState(state);
   const inputId = input.id?.trim() || "";
-  const existing = inputId ? store.state.apps[inputId] : undefined;
+  const existing = inputId ? currentState.apps[inputId] : undefined;
   const id = existing?.id || inputId || crypto.randomUUID();
-  if (store.state.appTombstones[id]) throw new Error("Deleted WebApp UUID cannot be reused.");
+  if (currentState.appTombstones[id]) throw new Error("Deleted WebApp UUID cannot be reused.");
   const now = Date.now();
   const hasIconDataUrl = Object.prototype.hasOwnProperty.call(input, "iconDataUrl");
   const app: WebAppRecord = {
@@ -261,39 +304,40 @@ export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput): { st
     iconDataUrl: hasIconDataUrl ? input.iconDataUrl ?? null : existing?.iconDataUrl ?? null,
     iconSource: input.iconSource || (hasIconDataUrl ? (input.iconDataUrl ? "custom" : "title") : existing?.iconSource) || "title",
   };
-  const next = appendOperation(store, { type: "app.upsert", app });
-  return { store: next, app: next.state.apps[id] };
+  const next = appendOperation(store, currentState, { type: "app.upsert", app });
+  return { ...next, app: next.state.apps[id] };
 }
 
-export function appendWebAppDelete(store: SyncV2Store, appId: string): SyncV2Store {
+export function appendWebAppDelete(store: SyncV2Store, state: SyncV2State, appId: string): SyncV2Mutation {
   const id = appId.trim();
-  if (!id) return store;
-  return appendOperation(store, { type: "app.delete", appId: id });
+  if (!id) return { store: cloneJson(store), state: ensureState(state) };
+  return appendOperation(store, state, { type: "app.delete", appId: id });
 }
 
 export function appendLocalSnapshotOperations(
   store: SyncV2Store,
+  state: SyncV2State,
   snapshot: SyncV2LocalSnapshot,
   options: SnapshotAppendOptions = {},
-): SyncV2Store {
-  let next = cloneJson(store);
+): SyncV2Mutation {
+  let next: SyncV2Mutation = { store: cloneJson(store), state: ensureState(state) };
   if (snapshot.bookmarks) next = appendBookmarkSnapshotOperations(next, snapshot.bookmarks);
   if (snapshot.webApps) next = appendWebAppSnapshotOperations(next, snapshot.webApps);
-  if (snapshot.layout) next = appendLayoutSnapshotOperations(next, snapshot.layout, { force: options.forceLayout });
+  if (snapshot.layout) next = appendLayoutSnapshotOperations(next.store, next.state, snapshot.layout, { force: options.forceLayout });
   return next;
 }
 
 function appendBookmarkSnapshotOperations(
-  store: SyncV2Store,
+  mutation: SyncV2Mutation,
   bookmarks: SnapshotRecordCollection<BookmarkRecord & { rev?: Partial<SyncRevision> }>,
-): SyncV2Store {
-  let next = store;
+): SyncV2Mutation {
+  let next = mutation;
   const local = new Map<string, BookmarkRecord>();
   snapshotRecordValues(bookmarks).forEach((bookmark) => {
     const record = normalizeBookmarkRecordInput(bookmark, next.state);
     if (!record) return;
     if (record.deletedAt != null) {
-      next = appendOperation(next, { type: "bookmark.delete", ...bookmarkDeleteInput(record) });
+      next = appendOperation(next.store, next.state, { type: "bookmark.delete", ...bookmarkDeleteInput(record) });
       return;
     }
     local.set(bookmarkRecordKey(record), record);
@@ -301,23 +345,23 @@ function appendBookmarkSnapshotOperations(
   local.forEach((bookmark, key) => {
     const current = next.state.bookmarks[key];
     if (!current || bookmarkFieldsChanged(current, bookmark)) {
-      next = appendOperation(next, { type: "bookmark.upsert", bookmark });
+      next = appendOperation(next.store, next.state, { type: "bookmark.upsert", bookmark });
     }
   });
   activeBookmarksFromState(next.state).forEach((bookmark) => {
     const key = bookmarkRecordKey(bookmark);
     if (key && !local.has(key)) {
-      next = appendOperation(next, { type: "bookmark.delete", ...bookmarkDeleteInput(bookmark) });
+      next = appendOperation(next.store, next.state, { type: "bookmark.delete", ...bookmarkDeleteInput(bookmark) });
     }
   });
   return next;
 }
 
 function appendWebAppSnapshotOperations(
-  store: SyncV2Store,
+  mutation: SyncV2Mutation,
   webApps: SnapshotRecordCollection<WebAppRecord & { rev?: Partial<SyncRevision> }>,
-): SyncV2Store {
-  let next = store;
+): SyncV2Mutation {
+  let next = mutation;
   const local = new Map<string, WebAppRecord & { rev?: Partial<SyncRevision> }>();
   snapshotRecordValues(webApps).forEach((app) => {
     const id = app.id?.trim();
@@ -328,14 +372,14 @@ function appendWebAppSnapshotOperations(
     const tombstone = next.state.appTombstones[id];
     if (app.deletedAt != null) {
       if (current && snapshotCanOverrideRevision(app, current)) {
-        next = appendWebAppDelete(next, id);
+        next = appendWebAppDelete(next.store, next.state, id);
       }
       return;
     }
     if (current && !snapshotCanOverrideRevision(app, current)) return;
     if (!current && tombstone && !snapshotCanOverrideRevision(app, tombstone)) return;
     if (!current || appFieldsChanged(current, app)) {
-      next = appendOperation(next, {
+      next = appendOperation(next.store, next.state, {
         type: "app.upsert",
         app: {
           ...app,
@@ -357,13 +401,17 @@ function snapshotCanOverrideRevision(snapshot: { rev?: Partial<SyncRevision> }, 
 
 export function appendLayoutSnapshotOperations(
   store: SyncV2Store,
+  state: SyncV2State,
   layout: LauncherJson,
   options: { force?: boolean } = {},
-): SyncV2Store {
+): SyncV2Mutation {
+  const currentState = ensureState(state);
   const snapshot = normalizeLauncherJson(layout);
-  if (!layoutDocumentChanged(store.state.layout, snapshot)) return store;
-  if (!options.force && snapshot.rev.counter > 0 && compareRevision(snapshot.rev, store.state.layout.rev) <= 0) return store;
-  return appendOperation(store, { type: "layout.replace", layout: snapshot });
+  if (!layoutDocumentChanged(currentState.layout, snapshot)) return { store: cloneJson(store), state: currentState };
+  if (!options.force && snapshot.rev.counter > 0 && compareRevision(snapshot.rev, currentState.layout.rev) <= 0) {
+    return { store: cloneJson(store), state: currentState };
+  }
+  return appendOperation(store, currentState, { type: "layout.replace", layout: snapshot });
 }
 
 export function activeBookmarksFromState(state: SyncV2State): BookmarkRecord[] {
@@ -411,8 +459,9 @@ export async function syncV2(options: {
   settings: WebDavSettings & { deviceId: string };
   loadStore: () => Promise<SyncV2Store>;
   saveStore: (store: SyncV2Store) => Promise<void>;
+  loadState: () => Promise<SyncV2State>;
+  saveState: (state: SyncV2State) => Promise<void>;
   loadLocalSnapshot?: () => Promise<SyncV2LocalSnapshot>;
-  applyState?: (state: SyncV2State) => Promise<void>;
   withLocalLock: <T>(operation: () => Promise<T>) => Promise<T>;
 }): Promise<SyncV2Result> {
   const client = new WebDavClient(options.settings);
@@ -428,30 +477,20 @@ export async function syncV2(options: {
 
     await options.withLocalLock(async () => {
       let store = ensureStore(await options.loadStore(), options.settings.deviceId);
-      const pendingOutbox = store.outbox;
-      const previousState = store.state;
-      store = {
-        ...store,
-        state: mergeState(store.state, remote.state),
-        outbox: [],
-      };
-      if (pendingOutbox.length > 0) {
-        store = rebasePendingOperations(store, pendingOutbox);
-      }
+      const previousState = await options.loadState();
+      let workingState = mergeState(previousState, remote.state);
       if (options.loadLocalSnapshot) {
-        store = appendLocalSnapshotOperations(store, await options.loadLocalSnapshot());
+        const next = appendLocalSnapshotOperations(store, workingState, await options.loadLocalSnapshot());
+        store = next.store;
+        workingState = next.state;
       }
-      uploadedOperationCount = store.outbox.length;
-      mergedState = mergeState(store.state, remote.state);
+      uploadedOperationCount = 0;
+      mergedState = mergeState(workingState, remote.state);
       stateChanged = canonicalJson(previousState) !== canonicalJson(mergedState);
       launcherChanged = launcherStateSignature(previousState) !== launcherStateSignature(mergedState);
-      store = {
-        ...store,
-        state: mergedState,
-      };
-      pendingOperationCount = store.outbox.length;
+      pendingOperationCount = 0;
       await options.saveStore(store);
-      if (options.applyState) await options.applyState(mergedState);
+      await options.saveState(mergedState);
     });
 
     const desiredFiles = stateToRemoteFiles(mergedState);
@@ -460,12 +499,13 @@ export async function syncV2(options: {
     if (changedFiles.length === 0) {
       await options.withLocalLock(async () => {
         const latest = ensureStore(await options.loadStore(), options.settings.deviceId);
-        if (canonicalJson(latest.state) !== canonicalJson(mergedState)) {
-          pendingOperationCount = latest.outbox.length;
+        const latestState = await options.loadState();
+        if (canonicalJson(latestState) !== canonicalJson(mergedState)) {
+          pendingOperationCount = 1;
           return;
         }
         pendingOperationCount = 0;
-        await options.saveStore({ ...latest, outbox: [] });
+        await options.saveStore(latest);
       });
       if (pendingOperationCount > 0) continue;
       return {
@@ -488,12 +528,13 @@ export async function syncV2(options: {
 
     await options.withLocalLock(async () => {
       const latest = ensureStore(await options.loadStore(), options.settings.deviceId);
-      if (canonicalJson(latest.state) !== canonicalJson(mergedState)) {
-        pendingOperationCount = latest.outbox.length;
+      const latestState = await options.loadState();
+      if (canonicalJson(latestState) !== canonicalJson(mergedState)) {
+        pendingOperationCount = 1;
         return;
       }
       pendingOperationCount = 0;
-      await options.saveStore({ ...latest, outbox: [] });
+      await options.saveStore(latest);
     });
 
     if (pendingOperationCount > 0) continue;
@@ -510,24 +551,6 @@ export async function syncV2(options: {
   }
 
   throw new Error("WebDAV sync conflict retry limit reached.");
-}
-
-function rebasePendingOperations(store: SyncV2Store, operations: SyncV2Operation[]): SyncV2Store {
-  const next = {
-    ...cloneJson(store),
-    outbox: [] as SyncV2Operation[],
-  };
-  uniqueOperations(operations).sort(compareOperations).forEach((operation) => {
-    next.counter += 1;
-    const rebased = {
-      ...operation,
-      deviceId: next.deviceId,
-      counter: next.counter,
-    } as SyncV2Operation;
-    applyOperationInPlace(next.state, rebased);
-    next.outbox.push(rebased);
-  });
-  return next;
 }
 
 function launcherStateSignature(state: SyncV2State): string {
@@ -1144,10 +1167,6 @@ function isOperation(value: unknown): value is SyncV2Operation {
     Number.isSafeInteger(operation.counter) &&
     Number.isSafeInteger(operation.createdAt) &&
     typeof operation.type === "string";
-}
-
-function maxOperationCounter(operations: SyncV2Operation[]): number {
-  return operations.reduce((max, operation) => Math.max(max, operation.counter || 0), 0);
 }
 
 function maxStateCounter(state: SyncV2State): number {

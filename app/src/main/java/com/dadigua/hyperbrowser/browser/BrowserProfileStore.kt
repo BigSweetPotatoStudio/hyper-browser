@@ -194,6 +194,12 @@ class BrowserProfileStore(context: Context) {
                 .put("bookmarkTombstones", JSONObject())
     }
 
+    fun saveBookmarksSyncJson(json: JSONObject) {
+        val normalized = normalizeBookmarksSyncJson(json)
+        bookmarksFile.writeText(normalized.toString())
+        bookmarksState.value = loadBookmarksFromSyncFile(bookmarksFile).distinctBy { it.url }
+    }
+
     fun mergeBookmarks(imported: List<BrowserBookmark>): Int {
         val current = bookmarksState.value.associateBy { normalizeBookmarkUrl(it.url) }
         val accepted = imported.mapNotNull { bookmark ->
@@ -655,6 +661,15 @@ class BrowserProfileStore(context: Context) {
                 .put("bookmarkTombstones", tombstones)
                 .toString()
         )
+    }
+
+    private fun normalizeBookmarksSyncJson(json: JSONObject): JSONObject {
+        val bookmarks = json.optJSONObject("bookmarks") ?: JSONObject()
+        val tombstones = json.optJSONObject("bookmarkTombstones")?.deepCopy() ?: JSONObject()
+        return JSONObject()
+            .put("schemaVersion", 2)
+            .put("bookmarks", bookmarks)
+            .put("bookmarkTombstones", tombstones)
     }
 
     private fun saveSettings(settings: BrowserSettings) {

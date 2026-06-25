@@ -1,13 +1,17 @@
 import { browser, type Browser } from "wxt/browser";
 import { createBrowserSyncService, type BrowserBookmarkNode } from "@hyper-sync/browser-sync";
 import { launcherLayoutStorage } from "./launcher-layout";
-import { loadSettings, loadSyncV2Store, saveSettings, saveSyncV2Store } from "./storage";
+import { loadSettings, loadSyncV2Store, readSyncFile, saveSettings, saveSyncFile, saveSyncV2Store } from "./storage";
 
 export const browserSyncService = createBrowserSyncService({
   loadSettings,
   saveSettings,
   loadSyncV2Store,
   saveSyncV2Store,
+  syncFiles: {
+    readFile: readSyncFile,
+    saveFile: saveSyncFile,
+  },
   loadLauncherLayout: () => launcherLayoutStorage.load(),
   bookmarks: {
     getTree: () => browser.bookmarks.getTree() as Promise<BrowserBookmarkNode[]>,

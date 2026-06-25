@@ -10,16 +10,17 @@ import {
   ensureStore,
   findBookmarkByUrlInState,
   identityKeyForUrl,
-  layoutFromState,
+  readSyncStateFromFiles,
+  saveSyncStateToFiles,
   syncV2,
-  type SyncV2LocalSnapshot,
+  type SyncStateFileStorage,
   type SyncV2Result,
   type SyncV2State,
   type SyncV2Store,
 } from "@hyper-sync/op-log";
 import type { BookmarkRecord, WebAppRecord } from "@hyper-sync";
-import type { LauncherJson } from "@hyper-sync/sync-json-types";
-import type { BrowserSettings, WebDavLocalSyncData, WebDavSyncResult, WebDavSyncSettings } from "./hyper-browser";
+import type { LauncherJson, SyncJsonByFileName, SyncJsonFileName } from "@hyper-sync/sync-json-types";
+import type { BrowserSettings, WebDavSyncResult, WebDavSyncSettings } from "./hyper-browser";
 
 const ANDROID_SYNC_V2_STORAGE_KEY = "hyper-browser-sync-v2-store";
 const NATIVE_APP = "hyperBrowser";
@@ -42,17 +43,22 @@ type BridgeResponse = {
 
 let localLock: Promise<void> = Promise.resolve();
 
+const androidSyncFiles: SyncStateFileStorage = {
+  readFile: readAndroidSyncFile,
+  saveFile: saveAndroidSyncFile,
+};
+
 export async function runAndroidWebDavSync(baseSettings?: BrowserSettings): Promise<WebDavSyncResult> {
   const initialSettings = baseSettings || await requestSettingsData();
   if (!initialSettings.webDavSyncUrl.trim()) throw new Error("WebDAV URL is required.");
   const settings = await ensureAndroidDeviceId(initialSettings);
-  const before = (await readStoredStore(settings.webDavSyncDeviceId)).state;
+  const before = await readLocalState();
   const result = await syncV2({
     settings: webDavSettings(settings),
     loadStore: async () => readStoredStore(settings.webDavSyncDeviceId),
     saveStore: (store) => writeStoredStore(store, settings.webDavSyncDeviceId),
-    loadLocalSnapshot: () => loadLocalSnapshot(),
-    applyState: (state) => applyAndroidState(state),
+    loadState: () => readLocalState(),
+    saveState: (state) => applyAndroidState(state),
     withLocalLock,
   });
   return syncResultFromState(result.state, before, settings, result);
@@ -64,22 +70,14 @@ export async function runAndroidWebDavSyncIfEnabled(): Promise<WebDavSyncResult 
   return runAndroidWebDavSync(settings);
 }
 
-async function loadLocalSnapshot(): Promise<SyncV2LocalSnapshot> {
-  const localData = await requestWebDavLocalData();
-  return {
-    bookmarks: localData.bookmarks || [],
-    webApps: localData.webApps || [],
-    layout: launcherLayoutOrNull(localData.layout),
-  };
-}
-
 export async function saveAndroidLauncherLayoutToSync(layout: LauncherJson): Promise<void> {
   const settings = await ensureAndroidDeviceId(await requestSettingsData());
   await withLocalLock(async () => {
-    const current = await readStoreWithLocalSnapshot(settings.webDavSyncDeviceId);
-    const next = appendLocalSnapshotOperations(current, { layout }, { forceLayout: true });
-    if (canonicalJson(current) !== canonicalJson(next)) {
-      await writeStoredStore(next, settings.webDavSyncDeviceId);
+    const current = await readStoredStore(settings.webDavSyncDeviceId);
+    const currentState = await readLocalState();
+    const next = appendLocalSnapshotOperations(current, currentState, { layout }, { forceLayout: true });
+    if (canonicalJson(current) !== canonicalJson(next.store) || canonicalJson(currentState) !== canonicalJson(next.state)) {
+      await writeStoredStore(next.store, settings.webDavSyncDeviceId);
       await applyAndroidState(next.state);
     }
   });
@@ -89,21 +87,24 @@ export async function saveAndroidBookmarkToSync(input: AndroidBookmarkSaveInput)
   const settings = await ensureAndroidDeviceId(await requestSettingsData());
   let nextState: SyncV2State | null = null;
   await withLocalLock(async () => {
-    let store = await readStoreWithLocalSnapshot(settings.webDavSyncDeviceId);
+    let store = await readStoredStore(settings.webDavSyncDeviceId);
+    let state = await readLocalState();
     const url = identityKeyForUrl(input.url || "");
     if (!url) throw new Error("Bookmark URL is required.");
     const oldUrl = identityKeyForUrl(input.oldUrl || "");
-    const existing = findBookmarkByUrlInState(store.state, url) ||
-      (oldUrl ? findBookmarkByUrlInState(store.state, oldUrl) : null);
-    if (oldUrl && oldUrl !== url && findBookmarkByUrlInState(store.state, oldUrl)) {
-      store = appendOperation(store, {
+    const existing = findBookmarkByUrlInState(state, url) ||
+      (oldUrl ? findBookmarkByUrlInState(state, oldUrl) : null);
+    if (oldUrl && oldUrl !== url && findBookmarkByUrlInState(state, oldUrl)) {
+      const next = appendOperation(store, state, {
         type: "bookmark.delete",
         url: oldUrl,
         title: existing?.title,
       });
+      store = next.store;
+      state = next.state;
     }
     const now = Date.now();
-    store = appendOperation(store, {
+    const next = appendOperation(store, state, {
       type: "bookmark.upsert",
       bookmark: {
         url,
@@ -114,45 +115,49 @@ export async function saveAndroidBookmarkToSync(input: AndroidBookmarkSaveInput)
         iconDataUrl: input.iconDataUrl ?? existing?.iconDataUrl ?? null,
       },
     });
+    store = next.store;
+    state = next.state;
     await writeStoredStore(store, settings.webDavSyncDeviceId);
-    await applyAndroidState(store.state);
-    nextState = store.state;
+    await applyAndroidState(state);
+    nextState = state;
   });
-  return activeBookmarksFromState(nextState || (await readStoredStore(settings.webDavSyncDeviceId)).state);
+  return activeBookmarksFromState(nextState || await readLocalState());
 }
 
 export async function deleteAndroidBookmarkFromSync(input: { url?: string }): Promise<BookmarkRecord[]> {
   const settings = await ensureAndroidDeviceId(await requestSettingsData());
   let nextState: SyncV2State | null = null;
   await withLocalLock(async () => {
-    let store = await readStoreWithLocalSnapshot(settings.webDavSyncDeviceId);
+    const store = await readStoredStore(settings.webDavSyncDeviceId);
+    const state = await readLocalState();
     const url = identityKeyForUrl(input.url || "");
-    const bookmark = url ? findBookmarkByUrlInState(store.state, url) : null;
+    const bookmark = url ? findBookmarkByUrlInState(state, url) : null;
     if (bookmark) {
-      store = appendOperation(store, {
+      const next = appendOperation(store, state, {
         type: "bookmark.delete",
         url: bookmark.url,
         title: bookmark.title,
       });
-      await writeStoredStore(store, settings.webDavSyncDeviceId);
-      await applyAndroidState(store.state);
-      nextState = store.state;
+      await writeStoredStore(next.store, settings.webDavSyncDeviceId);
+      await applyAndroidState(next.state);
+      nextState = next.state;
     }
   });
-  return activeBookmarksFromState(nextState || (await readStoredStore(settings.webDavSyncDeviceId)).state);
+  return activeBookmarksFromState(nextState || await readLocalState());
 }
 
 export async function saveAndroidWebAppToSync(input: Partial<WebAppRecord> & { name: string; startUrl: string }): Promise<WebAppRecord[]> {
   const settings = await ensureAndroidDeviceId(await requestSettingsData());
   let nextState: SyncV2State | null = null;
   await withLocalLock(async () => {
-    const current = await readStoreWithLocalSnapshot(settings.webDavSyncDeviceId);
-    const { store } = appendWebAppUpsert(current, input);
-    await writeStoredStore(store, settings.webDavSyncDeviceId);
-    await applyAndroidState(store.state);
-    nextState = store.state;
+    const current = await readStoredStore(settings.webDavSyncDeviceId);
+    const currentState = await readLocalState();
+    const next = appendWebAppUpsert(current, currentState, input);
+    await writeStoredStore(next.store, settings.webDavSyncDeviceId);
+    await applyAndroidState(next.state);
+    nextState = next.state;
   });
-  return activeWebAppsFromState(nextState || (await readStoredStore(settings.webDavSyncDeviceId)).state);
+  return activeWebAppsFromState(nextState || await readLocalState());
 }
 
 export async function deleteAndroidWebAppFromSync(input: AndroidWebAppDeleteInput): Promise<WebAppRecord[]> {
@@ -160,41 +165,24 @@ export async function deleteAndroidWebAppFromSync(input: AndroidWebAppDeleteInpu
   const id = typeof input === "string" ? input.trim() : input?.id?.trim() || "";
   let nextState: SyncV2State | null = null;
   await withLocalLock(async () => {
-    const current = await readStoreWithLocalSnapshot(settings.webDavSyncDeviceId);
-    const store = appendWebAppDelete(current, id);
-    if (canonicalJson(current) !== canonicalJson(store)) {
-      await writeStoredStore(store, settings.webDavSyncDeviceId);
-      await applyAndroidState(store.state);
-      nextState = store.state;
+    const current = await readStoredStore(settings.webDavSyncDeviceId);
+    const currentState = await readLocalState();
+    const next = appendWebAppDelete(current, currentState, id);
+    if (canonicalJson(current) !== canonicalJson(next.store) || canonicalJson(currentState) !== canonicalJson(next.state)) {
+      await writeStoredStore(next.store, settings.webDavSyncDeviceId);
+      await applyAndroidState(next.state);
+      nextState = next.state;
     }
   });
-  return activeWebAppsFromState(nextState || (await readStoredStore(settings.webDavSyncDeviceId)).state);
+  return activeWebAppsFromState(nextState || await readLocalState());
 }
 
 async function applyAndroidState(state: SyncV2State): Promise<void> {
-  const clean = state;
-  await applyWebDavSyncRecords({
-    bookmarks: {
-      schemaVersion: 2,
-      bookmarks: clean.bookmarks,
-      bookmarkTombstones: clean.bookmarkTombstones,
-    },
-    webApps: {
-      schemaVersion: 2,
-      apps: clean.apps,
-      appTombstones: clean.appTombstones,
-    },
-  });
-  const nextLayout = layoutFromState(clean);
-  const currentLayout = await requestLauncherLayout().catch(() => null);
-  if (canonicalLauncherLayout(currentLayout) !== canonicalLauncherLayout(nextLayout)) {
-    await saveLauncherLayout(clean.layout);
-  }
+  await saveSyncStateToFiles(androidSyncFiles, state);
 }
 
-function canonicalLauncherLayout(layout: unknown): string {
-  if (!layout || typeof layout !== "object" || Array.isArray(layout)) return "";
-  return canonicalJson(layout);
+async function readLocalState(): Promise<SyncV2State> {
+  return readSyncStateFromFiles(androidSyncFiles);
 }
 
 async function withLocalLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -235,10 +223,6 @@ async function readStoredStore(deviceId: string): Promise<SyncV2Store> {
   } catch {
     return createEmptyStore(deviceId);
   }
-}
-
-async function readStoreWithLocalSnapshot(deviceId: string): Promise<SyncV2Store> {
-  return appendLocalSnapshotOperations(await readStoredStore(deviceId), await loadLocalSnapshot());
 }
 
 async function writeStoredStore(store: SyncV2Store, deviceId: string): Promise<void> {
@@ -334,19 +318,23 @@ async function requestSettingsData(): Promise<BrowserSettings> {
   return requestObject<BrowserSettings>("data.settings");
 }
 
-async function requestLauncherLayout(): Promise<LauncherJson | null> {
-  const result = await requestObject<{ layout?: object | null }>("data.launcherLayout");
-  return launcherLayoutOrNull(result.layout);
+async function readAndroidSyncFile(path: SyncJsonFileName): Promise<unknown | null> {
+  const response = await requestObject<{ content?: string | object | null }>("sync.localFile.read", {
+    syncClientVersion: ANDROID_SYNC_CLIENT_VERSION,
+    path,
+  });
+  const content = response.content;
+  if (typeof content !== "string") return content ?? null;
+  if (!content.trim()) return null;
+  return JSON.parse(content) as unknown;
 }
 
-async function saveLauncherLayout(layout: LauncherJson): Promise<void> {
-  await sendNativeBridge("launcher.layout.save", { layout: JSON.stringify(layout) });
-}
-
-function launcherLayoutOrNull(value: unknown): LauncherJson | null {
-  return value && typeof value === "object" && !Array.isArray(value) && "rev" in value
-    ? value as LauncherJson
-    : null;
+async function saveAndroidSyncFile(path: SyncJsonFileName, data: SyncJsonByFileName[SyncJsonFileName]): Promise<void> {
+  await sendNativeBridge("sync.localFile.save", {
+    syncClientVersion: ANDROID_SYNC_CLIENT_VERSION,
+    path,
+    content: canonicalJson(data),
+  });
 }
 
 async function updateWebDavSyncSettings(settings: WebDavSyncSettings): Promise<BrowserSettings> {
@@ -356,20 +344,6 @@ async function updateWebDavSyncSettings(settings: WebDavSyncSettings): Promise<B
     username: settings.webDavSyncUsername,
     password: settings.webDavSyncPassword,
     deviceName: settings.webDavSyncDeviceName,
-  });
-}
-
-async function requestWebDavLocalData(): Promise<WebDavLocalSyncData> {
-  return requestObject<WebDavLocalSyncData>("sync.webdav.localData", {
-    syncClientVersion: ANDROID_SYNC_CLIENT_VERSION,
-  });
-}
-
-async function applyWebDavSyncRecords(records: { bookmarks: BookmarkRecord[] | object; webApps: WebAppRecord[] | object }): Promise<WebDavSyncResult> {
-  return requestObject<WebDavSyncResult>("sync.webdav.applyRecords", {
-    syncClientVersion: ANDROID_SYNC_CLIENT_VERSION,
-    bookmarks: JSON.stringify(records.bookmarks),
-    webApps: JSON.stringify(records.webApps),
   });
 }
 

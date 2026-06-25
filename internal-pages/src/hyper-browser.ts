@@ -92,17 +92,6 @@ type WebDavSyncResult = {
   settings?: BrowserSettings;
 };
 
-type WebDavLocalSyncData = {
-  deviceId: string;
-  deviceName: string;
-  bookmarks: BookmarkRecord[] | Record<string, BookmarkRecord>;
-  bookmarkTombstones?: Record<string, unknown>;
-  webApps: WebAppRecord[] | Record<string, WebAppRecord>;
-  appTombstones?: Record<string, unknown>;
-  layout?: object | null;
-  settings?: BrowserSettings;
-};
-
 type UpdateAsset = {
   abi: string;
   url: string;
@@ -165,8 +154,8 @@ type HyperBridgeMessageType =
   | "settings.batteryOptimizationState"
   | "settings.openBatteryOptimization"
   | "sync.webdav.update"
-  | "sync.webdav.localData"
-  | "sync.webdav.applyRecords"
+  | "sync.localFile.read"
+  | "sync.localFile.save"
   | "backup.export"
   | "backup.import"
   | "update.check"
@@ -249,8 +238,6 @@ type HyperBrowserApi = {
   requestBatteryOptimizationState(): Promise<BatteryOptimizationState>;
   openBatteryOptimizationSettings(): Promise<BatteryOptimizationState>;
   updateWebDavSyncSettings(settings: WebDavSyncSettings): Promise<BrowserSettings>;
-  requestWebDavLocalData(): Promise<WebDavLocalSyncData>;
-  applyWebDavSyncRecords(records: { bookmarks: BookmarkRecord[] | object; webApps: WebAppRecord[] | object }): Promise<WebDavSyncResult>;
   exportBackup(): Promise<BackupActionResult>;
   importBackup(): Promise<BackupActionResult>;
   checkUpdate(ignoreSkipped?: boolean): Promise<UpdateCheckResult>;
@@ -412,15 +399,6 @@ window.hyperBrowser = {
       deviceName: settings.webDavSyncDeviceName,
     }).then((response) => response.data as BrowserSettings);
   },
-  requestWebDavLocalData() {
-    return requestObject<WebDavLocalSyncData>("sync.webdav.localData");
-  },
-  applyWebDavSyncRecords(records) {
-    return send("sync.webdav.applyRecords", {
-      bookmarks: JSON.stringify(records.bookmarks),
-      webApps: JSON.stringify(records.webApps),
-    }).then((response) => response.data as WebDavSyncResult);
-  },
   exportBackup() {
     return send("backup.export").then((response) => response.data as BackupActionResult);
   },
@@ -500,4 +478,4 @@ window.hyperBrowser = {
   }
 };
 
-export type { AvailableUpdate, BackupActionResult, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem, WebDavLocalSyncData, WebDavSyncResult, WebDavSyncSettings };
+export type { AvailableUpdate, BackupActionResult, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem, WebDavSyncResult, WebDavSyncSettings };

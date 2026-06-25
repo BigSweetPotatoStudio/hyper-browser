@@ -219,7 +219,7 @@ private fun BrowserScreen(
     val linkCopiedText = stringResource(R.string.browser_toast_link_copied)
     val faviconStore = remember { FaviconRepository(app) }
     val backupManager = remember { BrowserBackupManager(profileStore, app.webApps, faviconStore) }
-    val webDavLocalSyncAdapter = remember { WebDavLocalSyncAdapter(app, profileStore, app.webApps, faviconStore) }
+    val webDavLocalSyncAdapter = remember { WebDavLocalSyncAdapter(profileStore, app.webApps) }
     val downloadStore = remember { DownloadStore(app) }
     val downloadHandler = remember { DownloadHandler(app, downloadStore) }
     val updateManager = remember { AppUpdateManager(app, UpdateSettingsStore(app)) }
@@ -702,29 +702,20 @@ private fun BrowserScreen(
                 )
                 okData(nextSettings.toJson())
             }
-            "sync.webdav.localData" -> {
+            "sync.localFile.read" -> {
                 if (payload.optString("syncClientVersion") != WEB_DAV_SYNC_CLIENT_VERSION) {
-                    JSONObject()
-                        .put("ok", false)
-                        .put("error", "Unsupported WebDAV sync client. Restart Hyper Browser and try again.")
-                } else {
-                val currentSettings = profileStore.observeSettings().value
-                val syncSettings = if (currentSettings.webDavSyncDeviceId.isBlank()) {
-                    profileStore.updateWebDavSyncSettings(
-                        enabled = currentSettings.webDavSyncEnabled,
-                        url = currentSettings.webDavSyncUrl,
-                        username = currentSettings.webDavSyncUsername,
-                        password = currentSettings.webDavSyncPassword,
-                        deviceName = currentSettings.webDavSyncDeviceName
-                    )
-                } else {
-                    currentSettings
+                    return bridgeError("Unsupported WebDAV sync client. Restart Hyper Browser and try again.")
                 }
+                val path = payload.optString("path").trim()
                 runCatching {
-                    webDavLocalSyncAdapter.localData(syncSettings)
+                    webDavLocalSyncAdapter.readSyncFile(path)
                 }.fold(
-                    onSuccess = { data ->
-                        okData(data.put("settings", profileStore.observeSettings().value.toJson()))
+                    onSuccess = { content ->
+                        okData(
+                            JSONObject()
+                                .put("path", path)
+                                .put("content", content?.toString() ?: JSONObject.NULL)
+                        )
                     },
                     onFailure = { throwable ->
                         JSONObject()
@@ -732,34 +723,19 @@ private fun BrowserScreen(
                             .put("error", throwable.message ?: context.getString(R.string.webdav_sync_failed))
                     }
                 )
-                }
             }
-            "sync.webdav.applyRecords" -> {
+            "sync.localFile.save" -> {
                 if (payload.optString("syncClientVersion") != WEB_DAV_SYNC_CLIENT_VERSION) {
                     return bridgeError("Unsupported WebDAV sync client. Restart Hyper Browser and try again.")
                 }
                 val result = GeckoResult<Any>()
-                val bookmarksJson = payload.optString("bookmarks")
-                val webAppsJson = payload.optString("webApps")
+                val path = payload.optString("path").trim()
+                val content = payload.optString("content")
                 scope.launch {
                     val response = runCatching {
-                        val currentSettings = profileStore.observeSettings().value
-                        val syncSettings = if (currentSettings.webDavSyncDeviceId.isBlank()) {
-                            profileStore.updateWebDavSyncSettings(
-                                enabled = currentSettings.webDavSyncEnabled,
-                                url = currentSettings.webDavSyncUrl,
-                                username = currentSettings.webDavSyncUsername,
-                                password = currentSettings.webDavSyncPassword,
-                                deviceName = currentSettings.webDavSyncDeviceName
-                            )
-                        } else {
-                            currentSettings
-                        }
-                        webDavLocalSyncAdapter.applyRecords(syncSettings, bookmarksJson, webAppsJson)
+                        webDavLocalSyncAdapter.saveSyncFile(path, content)
                     }.fold(
-                        onSuccess = { applyResult ->
-                            okData(applyResult.toJson().put("settings", profileStore.observeSettings().value.toJson()))
-                        },
+                        onSuccess = { ok() },
                         onFailure = { throwable ->
                             JSONObject()
                                 .put("ok", false)
