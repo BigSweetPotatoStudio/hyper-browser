@@ -20,12 +20,15 @@ export type BookmarksJson = {
   bookmarkTombstones: Record<string, SyncTombstone>;
 };
 
-export type BookmarkSyncRecord = {
+export type BookmarkRecord = {
   // 书签身份。通常和 bookmarks 的 key 一致。
   url: string;
   title: string;
   createdAt: number;
   updatedAt: number;
+};
+
+export type BookmarkSyncRecord = BookmarkRecord & {
   // 书签本条记录的最后修改版本。
   rev: SyncRevision;
 };
@@ -46,7 +49,7 @@ export type WebAppsJson = {
   appTombstones: Record<string, SyncTombstone>;
 };
 
-export type WebAppSyncRecord = {
+export type WebAppRecord = {
   // WebApp 实例 id。它是身份，不是 URL。
   id: string;
   name: string;
@@ -58,6 +61,9 @@ export type WebAppSyncRecord = {
   updatedAt: number;
   iconDataUrl?: string | null;
   iconSource?: "custom" | "site" | "title";
+};
+
+export type WebAppSyncRecord = WebAppRecord & {
   // WebApp 本条记录的最后修改版本。
   rev: SyncRevision;
 };

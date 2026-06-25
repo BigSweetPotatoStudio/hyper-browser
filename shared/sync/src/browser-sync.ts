@@ -1,4 +1,4 @@
-import { hostLabel, isHttpUrl, type BookmarkRecord, type SyncSettings, type WebAppRecord } from "./index";
+import { hostLabel, isHttpUrl, type SyncSettings } from "./index";
 import {
   activeBookmarksFromState,
   activeWebAppsFromState,
@@ -20,6 +20,7 @@ import {
   type SyncV2State,
   type SyncV2Store,
 } from "./op-log";
+import type { BookmarkRecord, WebAppRecord } from "./sync-json-types";
 
 export type BrowserSyncResult = {
   stateChanged: boolean;

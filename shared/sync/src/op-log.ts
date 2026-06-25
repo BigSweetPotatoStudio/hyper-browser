@@ -1,5 +1,5 @@
-import type { BookmarkRecord, WebAppRecord } from "./index";
 import type {
+  BookmarkRecord,
   BookmarksJson,
   BookmarkSyncRecord,
   LauncherCell,
@@ -11,6 +11,7 @@ import type {
   SyncJsonFileName,
   SyncTombstone,
   SyncV2State,
+  WebAppRecord,
   WebAppsJson,
   WebAppSyncRecord,
 } from "./sync-json-types";

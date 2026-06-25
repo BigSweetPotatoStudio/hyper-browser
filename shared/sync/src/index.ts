@@ -10,25 +10,7 @@ export type SyncSettings = {
   deviceId: string;
 };
 
-export type BookmarkRecord = {
-  url: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-};
-
-export type WebAppRecord = {
-  id: string;
-  name: string;
-  startUrl: string;
-  themeColor: number;
-  displayMode: string;
-  createdAt: number;
-  lastOpenedAt: number;
-  updatedAt: number;
-  iconDataUrl?: string | null;
-  iconSource?: "custom" | "site" | "title";
-};
+export type { BookmarkRecord, WebAppRecord } from "./sync-json-types";
 
 export function hostLabel(url: string): string {
   try {

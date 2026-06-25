@@ -1,6 +1,5 @@
-import type { BookmarkRecord, WebAppRecord } from "./index";
 import type { SyncBackgroundController, SyncBackgroundSignal } from "./background";
-import type { LauncherCell, LauncherFolder, LauncherJson } from "./sync-json-types";
+import type { BookmarkRecord, LauncherCell, LauncherFolder, LauncherJson, WebAppRecord } from "./sync-json-types";
 
 export type HyperBackgroundCommand = {
   type: string;
