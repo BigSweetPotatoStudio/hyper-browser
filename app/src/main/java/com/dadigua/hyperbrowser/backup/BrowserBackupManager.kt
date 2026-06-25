@@ -35,7 +35,6 @@ class BrowserBackupManager(
                     .put("id", webApp.id)
                     .put("name", webApp.name)
                     .put("startUrl", webApp.startUrl)
-                    .put("scopeUrl", webApp.scopeUrl)
                     .put("themeColor", webApp.themeColor)
                     .put("displayMode", webApp.displayMode)
                     .put("createdAt", webApp.createdAt)
@@ -101,7 +100,6 @@ class BrowserBackupManager(
                         id = item.optString("id").trim().ifBlank { UUID.randomUUID().toString() },
                         name = item.optString("name").trim().ifBlank { startUrl },
                         startUrl = startUrl,
-                        scopeUrl = item.optString("scopeUrl").trim(),
                         iconPath = iconPath,
                         themeColor = item.optInt("themeColor", Color.rgb(18, 109, 106)),
                         displayMode = item.optString("displayMode", "standalone"),

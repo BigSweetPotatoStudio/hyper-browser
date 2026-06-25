@@ -121,7 +121,6 @@ internal fun List<WebAppDefinition>.toWebAppsJsonString(app: HyperBrowserApp): S
                 .put("id", webApp.id)
                 .put("name", webApp.name)
                 .put("startUrl", webApp.startUrl)
-                .put("scopeUrl", webApp.scopeUrl)
                 .put("iconPath", webApp.iconPath)
                 .put("iconDataUrl", app.webApps.iconDataUrl(webApp))
                 .put("siteIconDataUrl", app.webApps.siteIconDataUrl(webApp))

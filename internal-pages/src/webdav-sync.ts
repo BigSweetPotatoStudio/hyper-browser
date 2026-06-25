@@ -57,7 +57,7 @@ async function loadLocalSnapshot(): Promise<SyncV2LocalSnapshot> {
   const localData = await requestWebDavLocalData();
   const layout = await requestLauncherLayout();
   return {
-    webApps: activeLocalWebApps(localData),
+    webApps: localData.webApps || [],
     layout,
   };
 }
@@ -88,7 +88,6 @@ export async function recordAndroidBookmarkUpserts(bookmarks: BookmarkRecord[]):
         type: "bookmark.upsert",
         bookmark: {
           ...bookmark,
-          sourceDeviceId: settings.webDavSyncDeviceId,
           deletedAt: null,
         },
       });
@@ -119,8 +118,8 @@ export async function recordAndroidBookmarkDeletes(bookmarks: BookmarkRecord[]):
 async function applyAndroidState(state: SyncV2State): Promise<void> {
   const clean = state;
   await applyWebDavSyncRecords({
-    bookmarks: activeBookmarksFromState(clean),
-    webApps: activeWebAppsFromState(clean),
+    bookmarks: { bookmarks: clean.bookmarks },
+    webApps: { apps: clean.apps },
   });
   const nextLayout = layoutFromState(clean);
   const currentLayout = await requestLauncherLayout().catch(() => null);
@@ -232,10 +231,6 @@ function webDavSettings(settings: BrowserSettings) {
     password: settings.webDavSyncPassword,
     deviceId: settings.webDavSyncDeviceId,
   };
-}
-
-function activeLocalWebApps(localData: WebDavLocalSyncData) {
-  return (localData.webApps || []).filter((app) => app.deletedAt == null);
 }
 
 function syncResultFromState(

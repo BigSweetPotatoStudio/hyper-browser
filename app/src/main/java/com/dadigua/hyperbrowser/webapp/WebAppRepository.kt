@@ -62,7 +62,6 @@ class WebAppRepository(
                 id = id,
                 name = item.name.trim().ifBlank { existing?.name ?: Uri.parse(startUrl).host ?: "WebApp" },
                 startUrl = startUrl,
-                scopeUrl = item.scopeUrl.trim().ifBlank { scopeFor(startUrl) },
                 iconPath = iconPath,
                 themeColor = item.themeColor,
                 displayMode = item.displayMode.ifBlank { existing?.displayMode ?: "standalone" },
@@ -119,7 +118,6 @@ class WebAppRepository(
             id = UUID.randomUUID().toString(),
             name = name.ifBlank { Uri.parse(url).host ?: "WebApp" },
             startUrl = url,
-            scopeUrl = scopeFor(url),
             iconPath = resolvedIconPath,
             themeColor = themeColor,
             displayMode = "standalone",
@@ -144,7 +142,6 @@ class WebAppRepository(
         val updated = current.copy(
             name = name.trim().ifBlank { Uri.parse(cleanUrl).host ?: current.name },
             startUrl = cleanUrl,
-            scopeUrl = scopeFor(cleanUrl),
             iconPath = iconPath ?: currentIconPath
         )
         upsert(updated)
@@ -348,11 +345,6 @@ class WebAppRepository(
         return "data:image/png;base64,${Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)}"
     }
 
-    private fun scopeFor(url: String): String {
-        val uri = Uri.parse(url)
-        return uri.buildUpon().encodedPath("/").encodedQuery(null).fragment(null).build().toString()
-    }
-
     private fun upsert(webApp: WebAppDefinition) {
         val updated = state.value.filterNot { it.id == webApp.id } + webApp
         save(updated.sortedByDescending { it.lastOpenedAt })
@@ -367,7 +359,6 @@ class WebAppRepository(
                     .put("id", item.id)
                     .put("name", item.name)
                     .put("startUrl", item.startUrl)
-                    .put("scopeUrl", item.scopeUrl)
                     .put("iconPath", item.iconPath)
                     .put("themeColor", item.themeColor)
                     .put("displayMode", item.displayMode)
@@ -390,7 +381,6 @@ class WebAppRepository(
                             id = item.getString("id"),
                             name = item.getString("name"),
                             startUrl = item.getString("startUrl"),
-                            scopeUrl = item.getString("scopeUrl"),
                             iconPath = siteModeIconPath(item.optString("iconPath").ifBlank { null }),
                             themeColor = item.optInt("themeColor", Color.rgb(18, 109, 106)),
                             displayMode = item.optString("displayMode", "standalone"),

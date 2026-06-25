@@ -98,8 +98,7 @@ class WebDavLocalSyncAdapter(
                 records[key] = known.copy(
                     url = key,
                     updatedAt = now,
-                    deletedAt = now,
-                    sourceDeviceId = deviceId
+                    deletedAt = now
                 )
             }
 
@@ -120,8 +119,8 @@ class WebDavLocalSyncAdapter(
                 createdAt = bookmark.createdAt.takeIf { it > 0 } ?: now,
                 updatedAt = if (changed) now else known.updatedAt,
                 deletedAt = null,
-                sourceDeviceId = if (changed) deviceId else known.sourceDeviceId,
-                iconDataUrl = iconDataUrl
+                iconDataUrl = iconDataUrl,
+                rev = known?.rev ?: SyncRevision()
             )
         }
 
@@ -147,8 +146,7 @@ class WebDavLocalSyncAdapter(
             .forEach { known ->
                 records[known.id] = known.copy(
                     updatedAt = now,
-                    deletedAt = now,
-                    sourceDeviceId = deviceId
+                    deletedAt = now
                 )
             }
 
@@ -162,7 +160,7 @@ class WebDavLocalSyncAdapter(
             val changed = known == null ||
                 known.deletedAt != null ||
                 known.name != webApp.name ||
-                known.scopeUrl != webApp.scopeUrl ||
+                known.startUrl != startUrl ||
                 known.themeColor != webApp.themeColor ||
                 known.displayMode != webApp.displayMode ||
                 known.iconDataUrl != iconDataUrl ||
@@ -171,16 +169,15 @@ class WebDavLocalSyncAdapter(
                 id = id,
                 name = webApp.name.ifBlank { startUrl },
                 startUrl = startUrl,
-                scopeUrl = webApp.scopeUrl,
                 themeColor = webApp.themeColor,
                 displayMode = webApp.displayMode.ifBlank { "standalone" },
                 createdAt = webApp.createdAt.takeIf { it > 0 } ?: now,
                 lastOpenedAt = webApp.lastOpenedAt.takeIf { it > 0 } ?: now,
                 updatedAt = if (changed) now else known.updatedAt,
                 deletedAt = null,
-                sourceDeviceId = if (changed) deviceId else known.sourceDeviceId,
                 iconDataUrl = iconDataUrl,
-                iconSource = iconSource
+                iconSource = iconSource,
+                rev = known?.rev ?: SyncRevision()
             )
         }
 
@@ -239,7 +236,7 @@ class WebDavLocalSyncAdapter(
             val current = currentById[record.id]
             if (current == null ||
                 current.name != record.name ||
-                current.scopeUrl != record.scopeUrl ||
+                current.startUrl != record.startUrl ||
                 current.themeColor != record.themeColor ||
                 current.displayMode != record.displayMode ||
                 webAppRepository.iconDataUrl(current) != record.iconDataUrl ||
@@ -249,7 +246,6 @@ class WebDavLocalSyncAdapter(
                     id = record.id.ifBlank { UUID.randomUUID().toString() },
                     name = record.name.ifBlank { record.startUrl },
                     startUrl = record.startUrl,
-                    scopeUrl = record.scopeUrl,
                     iconPath = saveSyncedWebAppIcon(record),
                     themeColor = record.themeColor,
                     displayMode = record.displayMode.ifBlank { "standalone" },
@@ -359,24 +355,23 @@ private data class SyncBookmarkRecord(
     val createdAt: Long,
     override val updatedAt: Long,
     override val deletedAt: Long?,
-    val sourceDeviceId: String,
-    val iconDataUrl: String?
+    val iconDataUrl: String?,
+    val rev: SyncRevision = SyncRevision()
 ) : SyncRecord
 
 private data class SyncWebAppRecord(
     val id: String,
     val name: String,
     val startUrl: String,
-    val scopeUrl: String,
     val themeColor: Int,
     val displayMode: String,
     val createdAt: Long,
     val lastOpenedAt: Long,
     override val updatedAt: Long,
     override val deletedAt: Long?,
-    val sourceDeviceId: String,
     val iconDataUrl: String?,
-    val iconSource: String?
+    val iconSource: String?,
+    val rev: SyncRevision = SyncRevision()
 ) : SyncRecord {
     fun normalizedIconSource(): String =
         when (iconSource) {
@@ -404,6 +399,16 @@ private fun bookmarkRecordsById(records: Collection<SyncBookmarkRecord>): Map<St
     return result
 }
 
+private data class SyncRevision(
+    val counter: Long = 0L,
+    val deviceId: String = ""
+) {
+    fun toJson(): JSONObject =
+        JSONObject()
+            .put("counter", counter)
+            .put("deviceId", deviceId)
+}
+
 private fun bookmarkRecordKey(record: SyncBookmarkRecord): String =
     bookmarkUrlKey(record.url)
 
@@ -420,8 +425,8 @@ private fun chooseLatestBookmark(
     right: SyncBookmarkRecord
 ): SyncBookmarkRecord =
     when {
-        right.updatedAt > left.updatedAt -> right
-        left.updatedAt > right.updatedAt -> left
+        right.rev.counter > left.rev.counter -> right
+        left.rev.counter > right.rev.counter -> left
         right.deletedAt != null && left.deletedAt == null -> right
         else -> left
     }
@@ -442,8 +447,8 @@ private fun chooseLatestWebApp(
     right: SyncWebAppRecord
 ): SyncWebAppRecord =
     when {
-        right.updatedAt > left.updatedAt -> right
-        left.updatedAt > right.updatedAt -> left
+        right.rev.counter > left.rev.counter -> right
+        left.rev.counter > right.rev.counter -> left
         right.deletedAt != null && left.deletedAt == null -> right
         else -> left
     }
@@ -452,7 +457,8 @@ private fun parseBookmarkRecords(raw: String?): List<SyncBookmarkRecord> {
     if (raw.isNullOrBlank()) return emptyList()
     return runCatching {
         val root = JSONObject(raw)
-        parseBookmarkRecords(root.opt("items") ?: root.opt("bookmarks") ?: JSONArray())
+        val wrapped = root.opt("items") ?: root.opt("bookmarks")
+        if (wrapped != null) parseBookmarkRecords(wrapped) else parseBookmarkRecordsMap(root)
     }.getOrDefault(emptyList())
 }
 
@@ -506,8 +512,8 @@ private fun parseBookmarkRecord(item: JSONObject, fallbackUrl: String?): SyncBoo
         createdAt = item.optLong("createdAt", updatedAt),
         updatedAt = updatedAt,
         deletedAt = item.optNullableLong("deletedAt"),
-        sourceDeviceId = item.optString("sourceDeviceId"),
-        iconDataUrl = item.optCleanString("iconDataUrl")
+        iconDataUrl = item.optCleanString("iconDataUrl"),
+        rev = item.optRevision()
     )
 }
 
@@ -515,7 +521,8 @@ private fun parseWebAppRecords(raw: String?): List<SyncWebAppRecord> {
     if (raw.isNullOrBlank()) return emptyList()
     return runCatching {
         val root = JSONObject(raw)
-        parseWebAppRecords(root.opt("items") ?: root.opt("apps") ?: root.opt("webApps") ?: JSONArray())
+        val wrapped = root.opt("items") ?: root.opt("apps") ?: root.opt("webApps")
+        if (wrapped != null) parseWebAppRecords(wrapped) else parseWebAppRecordsMap(root)
     }.getOrDefault(emptyList())
 }
 
@@ -570,16 +577,15 @@ private fun parseWebAppRecord(item: JSONObject, fallbackId: String?): SyncWebApp
         },
         name = item.optString("name").ifBlank { startUrl },
         startUrl = startUrl,
-        scopeUrl = item.optString("scopeUrl"),
         themeColor = item.optInt("themeColor", Color.rgb(18, 109, 106)),
         displayMode = item.optString("displayMode", "standalone"),
         createdAt = item.optLong("createdAt", updatedAt),
         lastOpenedAt = item.optLong("lastOpenedAt", updatedAt),
         updatedAt = updatedAt,
         deletedAt = item.optNullableLong("deletedAt"),
-        sourceDeviceId = item.optString("sourceDeviceId"),
         iconDataUrl = item.optString("iconDataUrl").ifBlank { null },
-        iconSource = item.optString("iconSource").ifBlank { null }
+        iconSource = item.optString("iconSource").ifBlank { null },
+        rev = item.optRevision()
     )
 }
 
@@ -593,8 +599,8 @@ private fun bookmarksArray(records: Collection<SyncBookmarkRecord>): JSONArray =
                     .put("createdAt", record.createdAt)
                     .put("updatedAt", record.updatedAt)
                     .putJsonNullable("deletedAt", record.deletedAt)
-                    .put("sourceDeviceId", record.sourceDeviceId)
                     .putJsonNullable("iconDataUrl", record.iconDataUrl)
+                    .putRevision(record.rev)
             )
         }
     }
@@ -607,19 +613,29 @@ private fun webAppsArray(records: Collection<SyncWebAppRecord>): JSONArray =
                     .put("id", record.id)
                     .put("name", record.name)
                     .put("startUrl", record.startUrl)
-                    .put("scopeUrl", record.scopeUrl)
                     .put("themeColor", record.themeColor)
                     .put("displayMode", record.displayMode)
                     .put("createdAt", record.createdAt)
                     .put("lastOpenedAt", record.lastOpenedAt)
                     .put("updatedAt", record.updatedAt)
                     .put("deletedAt", record.deletedAt)
-                    .put("sourceDeviceId", record.sourceDeviceId)
                     .put("iconDataUrl", record.iconDataUrl)
                     .put("iconSource", record.iconSource)
+                    .putRevision(record.rev)
             )
         }
     }
+
+private fun JSONObject.optRevision(): SyncRevision {
+    val rev = optJSONObject("rev") ?: return SyncRevision()
+    return SyncRevision(
+        counter = rev.optLong("counter", 0L).coerceAtLeast(0L),
+        deviceId = rev.optString("deviceId").trim()
+    )
+}
+
+private fun JSONObject.putRevision(rev: SyncRevision): JSONObject =
+    put("rev", rev.toJson())
 
 private fun JSONObject.optNullableLong(name: String): Long? {
     if (!has(name) || isNull(name)) return null

@@ -4,7 +4,6 @@ data class WebAppDefinition(
     val id: String,
     val name: String,
     val startUrl: String,
-    val scopeUrl: String,
     val iconPath: String?,
     val themeColor: Int,
     val displayMode: String,

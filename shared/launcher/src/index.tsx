@@ -41,7 +41,6 @@ export type LauncherApp = {
   id: string;
   name: string;
   startUrl: string;
-  scopeUrl?: string;
   themeColor: number;
   displayMode?: string;
   iconDataUrl?: string | null;

@@ -25,7 +25,6 @@ type WebAppItem = {
   id: string;
   name: string;
   startUrl: string;
-  scopeUrl: string;
   iconPath?: string | null;
   iconDataUrl?: string | null;
   siteIconDataUrl?: string | null;

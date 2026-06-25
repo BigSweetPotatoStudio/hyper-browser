@@ -204,7 +204,6 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
         createdAt: existing?.createdAt || now,
         updatedAt: now,
         deletedAt: null,
-        sourceDeviceId: settings.deviceId,
         iconDataUrl: input.iconDataUrl ?? existing?.iconDataUrl ?? null,
       };
       await options.saveSyncV2Store(appendOperation(current, { type: "bookmark.upsert", bookmark }));
@@ -368,7 +367,6 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
         createdAt: existing?.createdAt || now,
         updatedAt: now,
         deletedAt: null,
-        sourceDeviceId: settings.deviceId,
         iconDataUrl: existing?.iconDataUrl ?? null,
       });
     }

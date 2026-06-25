@@ -8,7 +8,6 @@ type Draft = {
   id?: string;
   name: string;
   startUrl: string;
-  scopeUrl: string;
   displayMode: string;
   themeColor: string;
 };
@@ -16,7 +15,6 @@ type Draft = {
 const emptyDraft: Draft = {
   name: "",
   startUrl: "",
-  scopeUrl: "",
   displayMode: "standalone",
   themeColor: "#126d6a",
 };
@@ -51,7 +49,6 @@ function WebAppsPage() {
       id: draft.id,
       name: draft.name,
       startUrl: draft.startUrl,
-      scopeUrl: draft.scopeUrl,
       displayMode: draft.displayMode,
       themeColor: colorToInt(draft.themeColor),
     })
@@ -72,7 +69,6 @@ function WebAppsPage() {
       id: item.id,
       name: item.name,
       startUrl: item.startUrl,
-      scopeUrl: item.scopeUrl,
       displayMode: item.displayMode || "standalone",
       themeColor: intToColor(item.themeColor),
     });
@@ -122,10 +118,6 @@ function WebAppsPage() {
           <label className="field full">
             <span className="label">Start URL</span>
             <input className="input" type="url" required value={draft.startUrl} onChange={(event) => setDraft({ ...draft, startUrl: event.currentTarget.value })} />
-          </label>
-          <label className="field">
-            <span className="label">Scope URL</span>
-            <input className="input" type="url" value={draft.scopeUrl} onChange={(event) => setDraft({ ...draft, scopeUrl: event.currentTarget.value })} />
           </label>
           <label className="field">
             <span className="label">Theme color</span>
