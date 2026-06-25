@@ -6,10 +6,17 @@ import type {
   LauncherFolder,
   LauncherJson,
   LauncherPage,
+  SyncRevision,
+  SyncTombstone,
+  SyncV2State,
   WebAppsJson,
   WebAppSyncRecord,
 } from "./sync-json-types";
 import { WebDavClient, WebDavConflictError, type WebDavSettings } from "./webdav";
+
+export type {
+  SyncV2State,
+} from "./sync-json-types";
 
 export const SYNC_V2_SCHEMA_VERSION = 2;
 const BOOKMARKS_FILE = "bookmarks.json";
@@ -19,33 +26,6 @@ const MANIFEST_FILE = "manifest.json";
 const TOMBSTONE_COMPACT_TRIGGER = 1500;
 const TOMBSTONE_COMPACT_TARGET = 500;
 const TOMBSTONE_MIN_RETENTION_MS = 0;
-
-export type Revision = {
-  counter: number;
-  deviceId: string;
-};
-
-export type SyncV2Bookmark = BookmarkRecord & {
-  rev: Revision;
-};
-
-export type SyncV2App = WebAppRecord & {
-  rev: Revision;
-};
-
-export type SyncV2Tombstone = {
-  deletedAt: string;
-  rev: Revision;
-};
-
-export type SyncV2State = {
-  schemaVersion: 2;
-  bookmarks: Record<string, SyncV2Bookmark>;
-  bookmarkTombstones: Record<string, SyncV2Tombstone>;
-  apps: Record<string, SyncV2App>;
-  appTombstones: Record<string, SyncV2Tombstone>;
-  layout: LauncherJson;
-};
 
 export type SyncV2Operation =
   | SyncV2BaseOperation<"bookmark.upsert"> & { bookmark: BookmarkRecord }
@@ -81,8 +61,8 @@ export type SyncV2Store = {
 type SnapshotRecordCollection<T> = Array<T> | Record<string, T>;
 
 export type SyncV2LocalSnapshot = {
-  bookmarks?: SnapshotRecordCollection<BookmarkRecord & { rev?: Partial<Revision> }>;
-  webApps?: SnapshotRecordCollection<WebAppRecord & { rev?: Partial<Revision> }>;
+  bookmarks?: SnapshotRecordCollection<BookmarkRecord & { rev?: Partial<SyncRevision> }>;
+  webApps?: SnapshotRecordCollection<WebAppRecord & { rev?: Partial<SyncRevision> }>;
   layout?: LauncherJson | null;
 };
 
@@ -192,7 +172,7 @@ export function canonicalJson(value: unknown): string {
 function sanitizeState(state: SyncV2State): SyncV2State {
   const clean = cloneJson(state);
 
-  const bookmarks: Record<string, SyncV2Bookmark> = {};
+  const bookmarks: Record<string, BookmarkSyncRecord> = {};
   Object.entries(clean.bookmarks).forEach(([fallbackId, record]) => {
     const normalized = normalizeStoredBookmarkRecord(record, fallbackId);
     if (normalized) bookmarks[bookmarkRecordKey(normalized)] = normalized;
@@ -202,7 +182,7 @@ function sanitizeState(state: SyncV2State): SyncV2State {
   applyBookmarkTombstones(clean.bookmarks, clean.bookmarkTombstones);
   dedupeBookmarkUrlKeys(clean);
 
-  const apps: Record<string, SyncV2App> = {};
+  const apps: Record<string, WebAppSyncRecord> = {};
   Object.entries(clean.apps).forEach(([fallbackId, record]) => {
     const normalized = normalizeStoredWebAppRecord(record, fallbackId);
     if (normalized) apps[normalized.id] = normalized;
@@ -231,7 +211,7 @@ function canonicalize(value: unknown): unknown {
   return value;
 }
 
-export function compareRevision(a: Partial<Revision> = {}, b: Partial<Revision> = {}): number {
+export function compareRevision(a: Partial<SyncRevision> = {}, b: Partial<SyncRevision> = {}): number {
   const ac = Number.isSafeInteger(a.counter) ? Number(a.counter) : 0;
   const bc = Number.isSafeInteger(b.counter) ? Number(b.counter) : 0;
   return ac === bc ? 0 : (ac < bc ? -1 : 1);
@@ -261,7 +241,7 @@ export function appendOperation(store: SyncV2Store, operation: SyncV2OperationIn
   return next;
 }
 
-export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput): { store: SyncV2Store; app: SyncV2App } {
+export function appendWebAppUpsert(store: SyncV2Store, input: WebAppInput): { store: SyncV2Store; app: WebAppSyncRecord } {
   const inputId = input.id?.trim() || "";
   const existing = inputId ? store.state.apps[inputId] : undefined;
   const id = existing?.id || inputId || crypto.randomUUID();
@@ -305,7 +285,7 @@ export function appendLocalSnapshotOperations(
 
 function appendBookmarkSnapshotOperations(
   store: SyncV2Store,
-  bookmarks: SnapshotRecordCollection<BookmarkRecord & { rev?: Partial<Revision> }>,
+  bookmarks: SnapshotRecordCollection<BookmarkRecord & { rev?: Partial<SyncRevision> }>,
 ): SyncV2Store {
   let next = store;
   const local = new Map<string, BookmarkRecord>();
@@ -335,10 +315,10 @@ function appendBookmarkSnapshotOperations(
 
 function appendWebAppSnapshotOperations(
   store: SyncV2Store,
-  webApps: SnapshotRecordCollection<WebAppRecord & { rev?: Partial<Revision> }>,
+  webApps: SnapshotRecordCollection<WebAppRecord & { rev?: Partial<SyncRevision> }>,
 ): SyncV2Store {
   let next = store;
-  const local = new Map<string, WebAppRecord & { rev?: Partial<Revision> }>();
+  const local = new Map<string, WebAppRecord & { rev?: Partial<SyncRevision> }>();
   snapshotRecordValues(webApps).forEach((app) => {
     const id = app.id?.trim();
     if (id) local.set(id, { ...app, id });
@@ -371,7 +351,7 @@ function snapshotRecordValues<T>(records: SnapshotRecordCollection<T>): T[] {
   return Array.isArray(records) ? records : Object.values(records || {});
 }
 
-function snapshotCanOverrideRevision(snapshot: { rev?: Partial<Revision> }, target: { rev?: Partial<Revision> }): boolean {
+function snapshotCanOverrideRevision(snapshot: { rev?: Partial<SyncRevision> }, target: { rev?: Partial<SyncRevision> }): boolean {
   return compareRevision(normalizeRevision(snapshot.rev), normalizeRevision(target.rev)) >= 0;
 }
 
@@ -391,7 +371,7 @@ export function activeBookmarksFromState(state: SyncV2State): BookmarkRecord[] {
     .sort(compareBookmarkRecords)
     .map((raw) => {
       const { rev: _rev, ...bookmark } = raw;
-      return bookmark as BookmarkRecord;
+      return { ...bookmark, deletedAt: null };
     });
 }
 
@@ -404,14 +384,14 @@ export function findBookmarkByUrlInState(state: SyncV2State, url: string): Bookm
     .sort((left, right) => compareRevision(right.rev, left.rev))[0];
   if (!match) return null;
   const { rev: _rev, ...bookmark } = match;
-  return bookmark as BookmarkRecord;
+  return { ...bookmark, deletedAt: null };
 }
 
 export function activeWebAppsFromState(state: SyncV2State): WebAppRecord[] {
   return Object.values(ensureState(state).apps)
     .map((raw) => {
       const { rev: _rev, ...app } = raw;
-      return app as WebAppRecord;
+      return { ...app, deletedAt: null };
     });
 }
 
@@ -584,7 +564,7 @@ function mergeState(leftState: SyncV2State, rightState: SyncV2State): SyncV2Stat
   });
 }
 
-function mergeLwwMap<T extends { rev?: Revision }>(left: Record<string, T> = {}, right: Record<string, T> = {}): Record<string, T> {
+function mergeLwwMap<T extends { rev?: SyncRevision }>(left: Record<string, T> = {}, right: Record<string, T> = {}): Record<string, T> {
   const result: Record<string, T> = {};
   new Set([...Object.keys(left), ...Object.keys(right)]).forEach((key) => {
     const value = pickLww(left[key], right[key]);
@@ -593,7 +573,7 @@ function mergeLwwMap<T extends { rev?: Revision }>(left: Record<string, T> = {},
   return result;
 }
 
-function pickLww<T extends { rev?: Revision }>(left?: T, right?: T): T | undefined {
+function pickLww<T extends { rev?: SyncRevision }>(left?: T, right?: T): T | undefined {
   if (!left) return right ? cloneJson(right) : undefined;
   if (!right) return cloneJson(left);
   const order = compareRevision(left.rev, right.rev);
@@ -649,8 +629,8 @@ function normalizeLauncherJson(value: unknown): LauncherJson {
 
 function sanitizeLauncherJson(
   value: unknown,
-  apps: Record<string, SyncV2App> = {},
-  appTombstones: Record<string, SyncV2Tombstone> = {},
+  apps: Record<string, WebAppSyncRecord> = {},
+  appTombstones: Record<string, SyncTombstone> = {},
 ): LauncherJson {
   const layout = normalizeLauncherJson(value);
   const used = new Set<string>();
@@ -718,7 +698,7 @@ function sortLauncherCells(cells: LauncherCell[]): LauncherCell[] {
   return [...cells].sort((left, right) => left.index - right.index || left.id.localeCompare(right.id));
 }
 
-function launcherItemAvailable(id: string, apps: Record<string, SyncV2App>, appTombstones: Record<string, SyncV2Tombstone>): boolean {
+function launcherItemAvailable(id: string, apps: Record<string, WebAppSyncRecord>, appTombstones: Record<string, SyncTombstone>): boolean {
   if (!id.startsWith("app:")) return true;
   const appId = id.slice(4);
   return !!appId && !!apps[appId] && !appTombstones[appId];
@@ -739,7 +719,7 @@ function launcherContainsItem(layout: LauncherJson, idValue: unknown): boolean {
     );
 }
 
-function removeLauncherItem(layout: LauncherJson, idValue: unknown, rev: Revision): LauncherJson {
+function removeLauncherItem(layout: LauncherJson, idValue: unknown, rev: SyncRevision): LauncherJson {
   const id = cleanOptionalString(idValue);
   const clean = normalizeLauncherJson(layout);
   if (!id) return { ...clean, rev };
@@ -772,10 +752,10 @@ function launcherCellCount(layout: LauncherJson): number {
     (clean.folders || []).reduce((count, folder) => count + 1 + (folder.cells || []).length, 0);
 }
 
-function normalizeRevision(value: unknown, fallbackDeviceId: unknown = ""): Revision {
+function normalizeRevision(value: unknown, fallbackDeviceId: unknown = ""): SyncRevision {
   const fallback = cleanOptionalString(fallbackDeviceId);
   if (!value || typeof value !== "object" || Array.isArray(value)) return { counter: 0, deviceId: fallback };
-  const source = value as Partial<Revision>;
+  const source = value as Partial<SyncRevision>;
   return {
     counter: Number.isSafeInteger(source.counter) ? Math.max(0, Number(source.counter)) : 0,
     deviceId: cleanOptionalString(source.deviceId) || fallback,
@@ -792,13 +772,13 @@ function compactStateTombstones(state: SyncV2State): void {
   state.appTombstones = compactTombstones(state.appTombstones);
 }
 
-function compactTombstones(tombstones: Record<string, SyncV2Tombstone>): Record<string, SyncV2Tombstone> {
+function compactTombstones(tombstones: Record<string, SyncTombstone>): Record<string, SyncTombstone> {
   const entries = Object.entries(tombstones || {}).filter(([, tombstone]) => tombstone?.rev);
   if (entries.length <= TOMBSTONE_COMPACT_TRIGGER) return tombstones;
 
   const now = Date.now();
-  const retained: Array<[string, SyncV2Tombstone]> = [];
-  const compactable: Array<[string, SyncV2Tombstone]> = [];
+  const retained: Array<[string, SyncTombstone]> = [];
+  const compactable: Array<[string, SyncTombstone]> = [];
   entries.forEach((entry) => {
     const deletedAt = tombstoneDeletedAtMs(entry[1]);
     if (TOMBSTONE_MIN_RETENTION_MS > 0 && deletedAt > 0 && now - deletedAt <= TOMBSTONE_MIN_RETENTION_MS) {
@@ -817,8 +797,8 @@ function compactTombstones(tombstones: Record<string, SyncV2Tombstone>): Record<
 }
 
 function compareTombstoneEntriesNewestFirst(
-  left: [string, SyncV2Tombstone],
-  right: [string, SyncV2Tombstone],
+  left: [string, SyncTombstone],
+  right: [string, SyncTombstone],
 ): number {
   const timeDelta = tombstoneDeletedAtMs(right[1]) - tombstoneDeletedAtMs(left[1]);
   if (timeDelta !== 0) return timeDelta;
@@ -827,7 +807,7 @@ function compareTombstoneEntriesNewestFirst(
   return left[0].localeCompare(right[0]);
 }
 
-function tombstoneDeletedAtMs(tombstone: SyncV2Tombstone): number {
+function tombstoneDeletedAtMs(tombstone: SyncTombstone): number {
   const value = Date.parse(tombstone.deletedAt || "");
   return Number.isFinite(value) ? value : 0;
 }
@@ -904,7 +884,7 @@ function stateToRemoteFiles(state: SyncV2State): Record<string, unknown> {
   };
 }
 
-function bookmarksJsonRecords(bookmarks: Record<string, SyncV2Bookmark>): Record<string, BookmarkSyncRecord> {
+function bookmarksJsonRecords(bookmarks: Record<string, BookmarkSyncRecord>): Record<string, BookmarkSyncRecord> {
   const result: Record<string, BookmarkSyncRecord> = {};
   Object.entries(bookmarks).forEach(([key, bookmark]) => {
     result[key] = {
@@ -919,7 +899,7 @@ function bookmarksJsonRecords(bookmarks: Record<string, SyncV2Bookmark>): Record
   return result;
 }
 
-function webAppsJsonRecords(apps: Record<string, SyncV2App>): Record<string, WebAppSyncRecord> {
+function webAppsJsonRecords(apps: Record<string, WebAppSyncRecord>): Record<string, WebAppSyncRecord> {
   const result: Record<string, WebAppSyncRecord> = {};
   Object.entries(apps).forEach(([key, app]) => {
     result[key] = {
@@ -969,7 +949,7 @@ function mergeWebAppFileIntoState(state: SyncV2State, value: unknown): void {
   if (!value || typeof value !== "object" || Array.isArray(value)) return;
   const root = value as Record<string, unknown>;
   mergeLwwMapInto(state.apps, readWebAppRecordMap(root.apps));
-  mergeLwwMapInto(state.appTombstones, readRecordMap<SyncV2Tombstone>(root.appTombstones));
+  mergeLwwMapInto(state.appTombstones, readRecordMap<SyncTombstone>(root.appTombstones));
 }
 
 function mergeLauncherFileIntoState(state: SyncV2State, value: unknown): void {
@@ -984,7 +964,7 @@ function readLauncherLayoutState(value: unknown): LauncherJson | null {
   return layout.rev.counter > 0 || layout.rev.deviceId ? layout : null;
 }
 
-function mergeLwwMapInto<T extends { rev?: Revision }>(target: Record<string, T>, source: Record<string, T>): void {
+function mergeLwwMapInto<T extends { rev?: SyncRevision }>(target: Record<string, T>, source: Record<string, T>): void {
   const merged = mergeLwwMap(target, source);
   Object.keys(target).forEach((key) => {
     delete target[key];
@@ -992,7 +972,7 @@ function mergeLwwMapInto<T extends { rev?: Revision }>(target: Record<string, T>
   Object.assign(target, merged);
 }
 
-function readRecordMap<T extends { rev?: Revision }>(value: unknown): Record<string, T> {
+function readRecordMap<T extends { rev?: SyncRevision }>(value: unknown): Record<string, T> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const result: Record<string, T> = {};
   Object.entries(value as Record<string, unknown>).forEach(([key, raw]) => {
@@ -1004,9 +984,9 @@ function readRecordMap<T extends { rev?: Revision }>(value: unknown): Record<str
   return result;
 }
 
-function readBookmarkRecordMap(value: unknown): Record<string, SyncV2Bookmark> {
+function readBookmarkRecordMap(value: unknown): Record<string, BookmarkSyncRecord> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const result: Record<string, SyncV2Bookmark> = {};
+  const result: Record<string, BookmarkSyncRecord> = {};
   Object.entries(value as Record<string, unknown>).forEach(([key, raw]) => {
     const record = normalizeStoredBookmarkRecord(raw, key);
     if (record) result[bookmarkRecordKey(record)] = record;
@@ -1014,12 +994,12 @@ function readBookmarkRecordMap(value: unknown): Record<string, SyncV2Bookmark> {
   return result;
 }
 
-function readBookmarkTombstoneMap(value: unknown): Record<string, SyncV2Tombstone> {
+function readBookmarkTombstoneMap(value: unknown): Record<string, SyncTombstone> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const result: Record<string, SyncV2Tombstone> = {};
+  const result: Record<string, SyncTombstone> = {};
   Object.entries(value as Record<string, unknown>).forEach(([key, raw]) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
-    const tombstone = raw as SyncV2Tombstone;
+    const tombstone = raw as SyncTombstone;
     if (!tombstone.rev) return;
     const cleanKey = String(key || "").trim();
     if (cleanKey) result[cleanKey] = cloneJson(tombstone);
@@ -1027,9 +1007,9 @@ function readBookmarkTombstoneMap(value: unknown): Record<string, SyncV2Tombston
   return result;
 }
 
-function readWebAppRecordMap(value: unknown): Record<string, SyncV2App> {
+function readWebAppRecordMap(value: unknown): Record<string, WebAppSyncRecord> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const result: Record<string, SyncV2App> = {};
+  const result: Record<string, WebAppSyncRecord> = {};
   Object.entries(value as Record<string, unknown>).forEach(([key, raw]) => {
     const record = normalizeStoredWebAppRecord(raw, key);
     if (record) result[record.id] = record;
@@ -1052,7 +1032,7 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     const bookmark = normalizeBookmarkRecordInput(operation.bookmark, state);
     if (!bookmark) return;
     const tombstoneKeys = bookmarkTombstoneKeysForRecord(bookmark);
-    const tombstone = tombstoneKeys.reduce<SyncV2Tombstone | undefined>(
+    const tombstone = tombstoneKeys.reduce<SyncTombstone | undefined>(
       (current, key) => pickLww(current, state.bookmarkTombstones[key]),
       undefined,
     );
@@ -1062,9 +1042,11 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     if (current && compareRevision(current.rev, rev) > 0) return;
     const recordRev = revisionWithDevice(rev, current?.rev.deviceId || operation.deviceId);
     state.bookmarks[key] = {
-      ...bookmark,
+      url: bookmark.url,
+      title: bookmark.title,
+      createdAt: bookmark.createdAt,
       updatedAt: bookmark.updatedAt || operation.createdAt,
-      deletedAt: null,
+      iconDataUrl: bookmark.iconDataUrl,
       rev: recordRev,
     };
     tombstoneKeys.forEach((key) => {
@@ -1102,7 +1084,6 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
       createdAt: operation.app.createdAt || current?.createdAt || operation.createdAt,
       lastOpenedAt: operation.app.lastOpenedAt || current?.lastOpenedAt || operation.createdAt,
       updatedAt: operation.app.updatedAt || operation.createdAt,
-      deletedAt: null,
       iconDataUrl: operation.app.iconDataUrl ?? current?.iconDataUrl ?? null,
       iconSource: operation.app.iconSource || current?.iconSource || (operation.app.iconDataUrl ? "custom" : "title"),
       rev: recordRev,
@@ -1129,11 +1110,11 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
   }
 }
 
-function operationRevision(operation: SyncV2Operation): Revision {
+function operationRevision(operation: SyncV2Operation): SyncRevision {
   return { counter: operation.createdAt, deviceId: operation.deviceId };
 }
 
-function revisionWithDevice(rev: Revision, deviceId: unknown): Revision {
+function revisionWithDevice(rev: SyncRevision, deviceId: unknown): SyncRevision {
   return {
     counter: rev.counter,
     deviceId: cleanOptionalString(deviceId) || rev.deviceId,
@@ -1171,7 +1152,7 @@ function maxOperationCounter(operations: SyncV2Operation[]): number {
 
 function maxStateCounter(state: SyncV2State): number {
   let max = 0;
-  const visit = (record: { rev?: Revision }) => {
+  const visit = (record: { rev?: SyncRevision }) => {
     if (Number.isSafeInteger(record.rev?.counter)) max = Math.max(max, Number(record.rev?.counter));
   };
   Object.values(state.bookmarks).forEach(visit);
@@ -1182,21 +1163,29 @@ function maxStateCounter(state: SyncV2State): number {
   return max;
 }
 
-function normalizeStoredBookmarkRecord(raw: unknown, fallbackId = ""): SyncV2Bookmark | null {
+function normalizeStoredBookmarkRecord(raw: unknown, fallbackId = ""): BookmarkSyncRecord | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const source = raw as Partial<SyncV2Bookmark>;
+  const source = raw as Partial<BookmarkSyncRecord>;
   if (!source.rev) return null;
   const fallbackUrl = looksLikeUrlKey(fallbackId) ? fallbackId : "";
   const record = normalizeBookmarkRecordInput({
     ...source,
     url: source.url || fallbackUrl,
   });
-  return record ? { ...record, rev: normalizeRevision(source.rev) } : null;
+  if (!record) return null;
+  return {
+    url: record.url,
+    title: record.title,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    iconDataUrl: record.iconDataUrl,
+    rev: normalizeRevision(source.rev),
+  };
 }
 
-function normalizeStoredWebAppRecord(raw: unknown, fallbackId = ""): SyncV2App | null {
+function normalizeStoredWebAppRecord(raw: unknown, fallbackId = ""): WebAppSyncRecord | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const source = raw as Partial<SyncV2App>;
+  const source = raw as Partial<WebAppSyncRecord>;
   if (!source.rev) return null;
   const id = cleanOptionalString(source.id) || cleanOptionalString(fallbackId);
   const startUrl = String(source.startUrl || "").trim();
@@ -1214,7 +1203,6 @@ function normalizeStoredWebAppRecord(raw: unknown, fallbackId = ""): SyncV2App |
     createdAt: Number(source.createdAt) || updatedAt,
     lastOpenedAt: Number(source.lastOpenedAt) || updatedAt,
     updatedAt,
-    deletedAt: source.deletedAt == null ? null : Number(source.deletedAt) || Date.parse(String(source.deletedAt)) || 0,
     iconDataUrl: cleanOptionalString(source.iconDataUrl) || null,
     ...(iconSource ? { iconSource } : {}),
     rev: normalizeRevision(source.rev),
@@ -1236,10 +1224,10 @@ function normalizeBookmarkRecordInput(input: Partial<BookmarkRecord>, _state?: S
 }
 
 function normalizeBookmarkTombstones(
-  tombstones: Record<string, SyncV2Tombstone>,
-  bookmarks: Record<string, SyncV2Bookmark> = {},
-): Record<string, SyncV2Tombstone> {
-  const result: Record<string, SyncV2Tombstone> = {};
+  tombstones: Record<string, SyncTombstone>,
+  bookmarks: Record<string, BookmarkSyncRecord> = {},
+): Record<string, SyncTombstone> {
+  const result: Record<string, SyncTombstone> = {};
   Object.entries(tombstones || {}).forEach(([key, tombstone]) => {
     if (!tombstone?.rev) return;
     const normalizedKey = normalizeBookmarkTombstoneKey(key, bookmarks);
@@ -1252,7 +1240,7 @@ function normalizeBookmarkTombstones(
   return result;
 }
 
-function normalizeBookmarkTombstoneKey(key: string, bookmarks: Record<string, SyncV2Bookmark>): string {
+function normalizeBookmarkTombstoneKey(key: string, bookmarks: Record<string, BookmarkSyncRecord>): string {
   const value = String(key || "").trim();
   if (!value) return "";
   const bookmark = bookmarks[value];
@@ -1263,8 +1251,8 @@ function normalizeBookmarkTombstoneKey(key: string, bookmarks: Record<string, Sy
 }
 
 function applyBookmarkTombstones(
-  bookmarks: Record<string, SyncV2Bookmark>,
-  tombstones: Record<string, SyncV2Tombstone>,
+  bookmarks: Record<string, BookmarkSyncRecord>,
+  tombstones: Record<string, SyncTombstone>,
 ): void {
   Object.keys(tombstones).forEach((key) => {
     const tombstone = tombstones[key];
@@ -1288,7 +1276,7 @@ function looksLikeUrlKey(value: string): boolean {
 }
 
 function dedupeBookmarkUrlKeys(state: SyncV2State): void {
-  const selected = new Map<string, SyncV2Bookmark>();
+  const selected = new Map<string, BookmarkSyncRecord>();
   Object.values(state.bookmarks).forEach((bookmark) => {
     const key = bookmarkRecordKey(bookmark);
     if (!key) {
@@ -1350,10 +1338,10 @@ function bookmarkTombstoneKeysForRecord(bookmark: Pick<BookmarkRecord, "url" | "
 }
 
 function bookmarkRecordsForTombstoneKey(
-  bookmarks: Record<string, SyncV2Bookmark>,
+  bookmarks: Record<string, BookmarkSyncRecord>,
   key: string,
   fallbackId = "",
-): SyncV2Bookmark[] {
+): BookmarkSyncRecord[] {
   const cleanKey = String(key || "").trim();
   const cleanFallbackId = String(fallbackId || "").trim();
   if (!cleanKey && !cleanFallbackId) return [];
@@ -1369,18 +1357,18 @@ function cleanOptionalString(value: unknown): string {
     : "";
 }
 
-function compareBookmarkRecords(left: SyncV2Bookmark, right: SyncV2Bookmark): number {
+function compareBookmarkRecords(left: BookmarkSyncRecord, right: BookmarkSyncRecord): number {
   return left.title.localeCompare(right.title) ||
     left.url.localeCompare(right.url);
 }
 
-function bookmarkFieldsChanged(left: SyncV2Bookmark, right: BookmarkRecord): boolean {
+function bookmarkFieldsChanged(left: BookmarkSyncRecord, right: BookmarkRecord): boolean {
   return left.url !== right.url ||
     left.title !== right.title ||
     (left.iconDataUrl || null) !== (right.iconDataUrl || null);
 }
 
-function appFieldsChanged(left: SyncV2App, right: WebAppRecord): boolean {
+function appFieldsChanged(left: WebAppSyncRecord, right: WebAppRecord): boolean {
   return left.name !== right.name ||
     left.startUrl !== right.startUrl ||
     left.themeColor !== right.themeColor ||

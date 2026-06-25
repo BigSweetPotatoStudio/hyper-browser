@@ -101,3 +101,13 @@ export type SyncJsonByFileName = {
 };
 
 export type SyncJsonDocument = SyncJsonByFileName[SyncJsonFileName];
+
+export type SyncV2State = {
+  // 本地 syncV2Store.state 的合并态格式。远端仍拆成 bookmarks/webapps/launcher 三个 JSON 文件。
+  schemaVersion: SyncSchemaVersion;
+  bookmarks: Record<string, BookmarkSyncRecord>;
+  bookmarkTombstones: Record<string, SyncTombstone>;
+  apps: Record<string, WebAppSyncRecord>;
+  appTombstones: Record<string, SyncTombstone>;
+  layout: LauncherJson;
+};
