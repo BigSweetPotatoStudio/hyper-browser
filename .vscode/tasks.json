@@ -2,13 +2,16 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Hyper Browser: install all ADB devices + package extension",
+      "label": "Hyper Browser: install all ADB devices",
       "type": "shell",
       "command": "pnpm",
       "args": [
         "exec",
         "zx",
-        "${workspaceFolder}\\scripts\\install-all-adb-and-package-extension.ts"
+        "${workspaceFolder}\\scripts\\install-all-adb-and-package-extension.ts",
+        "--skip-extension-install",
+        "--skip-extension-typecheck",
+        "--skip-extension-zip"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
@@ -17,6 +20,23 @@
         "kind": "build",
         "isDefault": true
       },
+      "problemMatcher": []
+    },
+    {
+      "label": "Hyper Browser: package extension",
+      "type": "shell",
+      "command": "pnpm",
+      "args": [
+        "exec",
+        "zx",
+        "${workspaceFolder}\\scripts\\install-all-adb-and-package-extension.ts",
+        "--skip-android-build",
+        "--skip-android-install"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
       "problemMatcher": []
     }
   ]
