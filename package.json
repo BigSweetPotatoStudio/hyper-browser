@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "install-all-adb-and-package-extension": "zx scripts/install-all-adb-and-package-extension.ts",
-    "test:sync": "node -e \"const fs=require('fs');fs.mkdirSync('build/sync-tests',{recursive:true});fs.writeFileSync('build/sync-tests/package.json',JSON.stringify({type:'commonjs'}))\" && pnpm --dir internal-pages exec tsc -p ../shared/sync/tsconfig.test.json && node --test build/sync-tests/test/op-log.test.js"
+    "test:sync": "node -e \"const fs=require('fs');fs.mkdirSync('build/sync-tests',{recursive:true});fs.writeFileSync('build/sync-tests/package.json',JSON.stringify({type:'commonjs'}))\" && pnpm --dir internal-pages exec tsc -p ../shared/sync/tsconfig.test.json && node --test build/sync-tests/test/*.test.js"
   },
   "devDependencies": {
     "zx": "^8.8.4"

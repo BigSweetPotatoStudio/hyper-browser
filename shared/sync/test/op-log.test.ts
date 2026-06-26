@@ -259,6 +259,10 @@ class FakeWebDavServer {
   fetch = async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
     const method = String(init?.method || "GET").toUpperCase();
     const path = this.pathFromInput(input);
+    if (method === "PROPFIND") return new Response(
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?><multistatus xmlns=\"DAV:\"><response><href>/HyperBrowserSync/</href><propstat><prop><resourcetype><collection /></resourcetype></prop></propstat></response></multistatus>",
+      { status: 207 },
+    );
     if (method === "MKCOL") return new Response("", { status: 405 });
     if (method === "GET") {
       const file = this.files.get(path);

@@ -26,11 +26,11 @@ export class WebDavClient {
   }
 
   async ensureCollections(): Promise<void> {
-    await this.mkcol("");
+    await this.ensureCollectionExists("");
   }
 
   async ensureCollection(path: string): Promise<void> {
-    await this.mkcol(path.endsWith("/") ? path : `${path}/`);
+    await this.ensureCollectionExists(path.endsWith("/") ? path : `${path}/`);
   }
 
   async getJson<T>(path: string, options: { requireStrongEtag?: boolean } = {}): Promise<RemoteJson<T> | null> {
@@ -57,18 +57,37 @@ export class WebDavClient {
     etag?: string | null,
     options: { ifNoneMatch?: boolean; bodyText?: string } = {},
   ): Promise<void> {
+    const bodyText = options.bodyText ?? JSON.stringify(body, null, 2);
+    const response = await this.putJsonRequest(path, bodyText, etag, options.ifNoneMatch === true);
+    if (response.status === 405 && options.ifNoneMatch) {
+      const remote = await this.getJson<unknown>(path);
+      if (remote) throw new WebDavConflictError(412);
+      throw new Error("WebDAV server does not support atomic create with If-None-Match.");
+    }
+    await this.handlePutResponse(response);
+  }
+
+  private putJsonRequest(
+    path: string,
+    bodyText: string,
+    etag?: string | null,
+    ifNoneMatch = false,
+  ): Promise<Response> {
     const headers = this.headers({ "Content-Type": "application/json; charset=utf-8" });
-    if (options.ifNoneMatch) {
+    if (ifNoneMatch) {
       headers.set("If-None-Match", "*");
     } else if (etag) {
       headers.set("If-Match", etag);
     }
-    const response = await fetch(this.urlFor(path), {
+    return fetch(this.urlFor(path), {
       method: "PUT",
       headers,
       cache: "no-store",
-      body: options.bodyText ?? JSON.stringify(body, null, 2),
+      body: bodyText,
     });
+  }
+
+  private async handlePutResponse(response: Response): Promise<void> {
     if (response.status === 409 || response.status === 412) {
       throw new WebDavConflictError(response.status);
     }
@@ -87,13 +106,38 @@ export class WebDavClient {
     return parsePropfind(await response.text(), this.rootUrl, path);
   }
 
-  private async mkcol(path: string): Promise<void> {
+  private async ensureCollectionExists(path: string): Promise<void> {
+    const before = await this.collectionExists(path);
+    if (before === true) return;
+    const mkcolStatus = await this.mkcol(path);
+    if (before === false) {
+      const after = await this.collectionExists(path);
+      if (after !== true) {
+        throw new Error(`WebDAV collection was not created: ${this.urlFor(path)} (MKCOL HTTP ${mkcolStatus})`);
+      }
+    }
+  }
+
+  private async collectionExists(path: string): Promise<boolean | null> {
+    const response = await fetch(this.urlFor(path), {
+      method: "PROPFIND",
+      headers: this.headers({ ...noCacheHeaders(), Depth: "0" }),
+      cache: "no-store",
+      body: "<?xml version=\"1.0\" encoding=\"utf-8\" ?><propfind xmlns=\"DAV:\"><prop><resourcetype /></prop></propfind>",
+    });
+    if (response.status === 404) return false;
+    if (response.status === 200 || response.status === 207) return true;
+    if (!response.ok) return null;
+    return true;
+  }
+
+  private async mkcol(path: string): Promise<number> {
     const response = await fetch(this.urlFor(path), {
       method: "MKCOL",
       headers: this.headers(noCacheHeaders()),
       cache: "no-store",
     });
-    if (response.ok || response.status === 405) return;
+    if (response.ok || response.status === 405) return response.status;
     throw new Error(`WebDAV MKCOL failed: HTTP ${response.status}`);
   }
 
