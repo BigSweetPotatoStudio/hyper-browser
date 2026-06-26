@@ -41,6 +41,51 @@ export type BrowserSyncResult = {
   pendingOperationCount: number;
 };
 
+export type BrowserSyncResultLike = Pick<BrowserSyncResult,
+  "bookmarkCount" |
+  "webAppCount" |
+  "deletedBookmarkCount" |
+  "deletedWebAppCount" |
+  "pendingOperationCount"
+>;
+
+export type BrowserSyncResultFormatLabels = {
+  complete: (counts: { bookmarks: number; webApps: number; deleted: number }) => string;
+  pending?: (pending: number) => string;
+};
+
+export function isBrowserSyncResult(value: unknown): value is BrowserSyncResultLike {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<BrowserSyncResultLike>;
+  return typeof candidate.bookmarkCount === "number" &&
+    typeof candidate.webAppCount === "number" &&
+    typeof candidate.deletedBookmarkCount === "number" &&
+    typeof candidate.deletedWebAppCount === "number" &&
+    typeof candidate.pendingOperationCount === "number";
+}
+
+export function formatBrowserSyncResult(
+  result: BrowserSyncResultLike,
+  labels: BrowserSyncResultFormatLabels = defaultBrowserSyncResultLabels,
+): string {
+  const deleted = result.deletedBookmarkCount + result.deletedWebAppCount;
+  const summary = labels.complete({
+    bookmarks: result.bookmarkCount,
+    webApps: result.webAppCount,
+    deleted,
+  });
+  if (result.pendingOperationCount <= 0) return summary;
+  return `${summary}${labels.pending?.(result.pendingOperationCount) || ""}`;
+}
+
+const defaultBrowserSyncResultLabels: BrowserSyncResultFormatLabels = {
+  complete: ({ bookmarks, webApps, deleted }) => {
+    const tombstones = deleted > 0 ? `, ${deleted} tombstones` : "";
+    return `Synced ${bookmarks} bookmarks and ${webApps} WebApps${tombstones}`;
+  },
+  pending: (pending) => `, ${pending} pending changes`,
+};
+
 export type BrowserSyncRunOptions = {
   mode?: SyncV2Mode;
 };

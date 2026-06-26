@@ -1,21 +1,28 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
-import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
-import { shouldRefreshLauncherAfterSync } from "@hyper-sync";
-import { SyncSettingsDialog, type SyncSettingsDialogAction, type SyncSettingsDialogResult, type SyncSettingsDialogValues } from "@hyper-sync/settings-dialog";
+import {
+  DEFAULT_LAUNCHER_DOCK_ENTRY_IDS,
+  LauncherPage,
+  defaultLauncherLabels,
+  defaultLauncherSystemEntries,
+  type LauncherPlatform,
+} from "@hyper-launcher";
+import { formatBrowserSyncResult, isBrowserSyncResult } from "@hyper-sync/browser-sync";
+import {
+  defaultLauncherWebDavSyncLabels,
+  useLauncherWebDavSync,
+  type LauncherWebDavSyncEvent,
+  type LauncherWebDavSyncOptions,
+} from "@hyper-sync/launcher-webdav-sync";
+import type { SyncSettingsDialogValues } from "@hyper-sync/settings-dialog";
 import { DEFAULT_DEVICE_NAME } from "../identity";
 import { getDefaultSettings, loadSettings, saveSettings } from "../storage";
-import { DEFAULT_DOCK_ENTRY_IDS, DEPRECATED_ENTRY_IDS, launcherLayoutStorage } from "../launcher-layout";
+import { DEPRECATED_ENTRY_IDS, launcherLayoutStorage } from "../launcher-layout";
 import "../styles.css";
 import type { SyncResult, SyncSettings, WebAppRecord } from "../types";
 import { sendCommand } from "./bridge";
 
-const systemEntries: LauncherSystemEntry[] = [
-  { id: "system:bookmarks", kind: "system", title: "Bookmarks", mark: "B", color: "#34a853", action: "bookmarks" },
-  { id: "system:history", kind: "system", title: "History", mark: "H", color: "#fbbc04", action: "history" },
-  { id: "system:extensions", kind: "system", title: "Extensions", mark: "Ex", color: "#ea4335", action: "extensions" },
-];
 const chromiumSystemUrls: Record<string, string> = {
   bookmarks: "chrome://bookmarks/",
   history: "chrome://history/",
@@ -29,22 +36,10 @@ const firefoxSystemUrls: Record<string, string> = {
 
 function CompanionHomePage() {
   const launcherVariant = new URLSearchParams(window.location.search).get("variant") === "mobile" ? "mobile" : "desktop";
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsConfigured, setSettingsConfigured] = useState(false);
-  const [syncState, setSyncState] = useState<LauncherSyncState>("idle");
-  const [syncMessage, setSyncMessage] = useState("");
-  const [layoutRevision, setLayoutRevision] = useState(0);
-  const syncRunning = useRef(false);
-
-  useEffect(() => {
-    loadSettings()
-      .then((settings) => setSettingsConfigured(!!settings.webDavUrl.trim()))
-      .catch(() => undefined);
-  }, []);
 
   const platform = useMemo<LauncherPlatform>(() => ({
-    systemEntries,
-    defaultDockEntryIds: DEFAULT_DOCK_ENTRY_IDS,
+    systemEntries: defaultLauncherSystemEntries,
+    defaultDockEntryIds: DEFAULT_LAUNCHER_DOCK_ENTRY_IDS,
     deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
     loadApps: () => sendCommand<WebAppRecord[]>("webapps.list"),
     openApp: (app) => {
@@ -64,153 +59,57 @@ function CompanionHomePage() {
     updateAppIcon: (app, iconDataUrl) => sendCommand<WebAppRecord[]>("webapps.save", { ...app, iconDataUrl }),
   }), []);
 
-  const runSync = useCallback(async (options: { refreshLauncher?: boolean } = {}) => {
-    if (syncRunning.current) return;
-    syncRunning.current = true;
-    setSyncState("syncing");
-    setSyncMessage("Syncing...");
-    try {
-      const settings = await loadSettings();
-      const configured = !!settings.webDavUrl.trim();
-      setSettingsConfigured(configured);
-      if (!configured) {
-        setSyncState("needs-settings");
-        setSyncMessage("Set WebDAV URL first");
-        setSettingsOpen(true);
-        return;
-      }
-      const result = await sendCommand<SyncResult>("sync.run");
-      setSyncState("success");
-      setSyncMessage(syncResultMessage(result));
-      if (options.refreshLauncher) setLayoutRevision((current) => current + 1);
-    } catch (syncError) {
-      const text = syncError instanceof Error ? syncError.message : "Sync failed.";
-      setSyncState(isWebDavConfigError(syncError) ? "needs-settings" : "error");
-      setSyncMessage(text);
-      if (isWebDavConfigError(syncError)) setSettingsOpen(true);
-    } finally {
-      syncRunning.current = false;
-    }
+  const saveSyncSettings = useCallback(async (values: SyncSettingsDialogValues): Promise<SyncSettings> => {
+    const currentSettings = await loadSettings().catch(() => getDefaultSettings());
+    const nextSettings = dialogValuesToSettings(values, currentSettings);
+    await saveSettings(nextSettings);
+    return nextSettings;
   }, []);
 
-  const loadSyncSettings = useCallback(async () => settingsToDialogValues(await loadSettings()), []);
-
-  const syncSettings = useCallback(async (values: SyncSettingsDialogValues, action: SyncSettingsDialogAction): Promise<SyncSettingsDialogResult> => {
-    try {
-      const currentSettings = await loadSettings().catch(() => getDefaultSettings());
-      const nextSettings = dialogValuesToSettings(values, currentSettings);
-      await saveSettings(nextSettings);
-      setSettingsConfigured(!!nextSettings.webDavUrl.trim());
-      const result = await sendCommand<SyncResult>("sync.run", { mode: action });
-      setSyncState("success");
-      setSyncMessage(syncResultMessage(result));
-      return {
-        values: settingsToDialogValues(await loadSettings()),
-        message: syncResultMessage(result),
-      };
-    } catch (syncError) {
-      const text = syncError instanceof Error ? syncError.message : "Sync failed.";
-      setSyncState(isWebDavConfigError(text) ? "needs-settings" : "error");
-      setSyncMessage(text);
-      throw syncError;
-    }
-  }, []);
-
-  useEffect(() => {
+  const subscribeSyncEvents = useCallback((listener: (event: LauncherWebDavSyncEvent<SyncResult>) => void) => {
     const onMessage = (message: { type?: string; syncResult?: unknown }) => {
       if (message?.type !== "remote.synced" && message?.type !== "launcher.changed") return;
-      if (isSyncResult(message.syncResult)) {
-        setSyncState("success");
-        setSyncMessage(syncResultMessage(message.syncResult));
-        if (shouldRefreshLauncherAfterSync(message.syncResult)) {
-          setLayoutRevision((current) => current + 1);
-        }
-        return;
-      }
-      if (message.type === "launcher.changed") {
-        setLayoutRevision((current) => current + 1);
-      }
+      listener({
+        type: message.type,
+        syncResult: isBrowserSyncResult(message.syncResult) ? message.syncResult as SyncResult : null,
+      });
     };
     browser.runtime.onMessage.addListener(onMessage);
     return () => browser.runtime.onMessage.removeListener(onMessage);
   }, []);
 
+  const webDavOptions = useMemo<LauncherWebDavSyncOptions<SyncSettings, SyncResult>>(() => ({
+    labels: defaultLauncherWebDavSyncLabels,
+    loadSettings,
+    saveSettings: saveSyncSettings,
+    isConfigured: (settings) => !!settings.webDavUrl.trim(),
+    settingsToDialogValues,
+    normalizeDialogValues,
+    runSync: (options) => sendCommand<SyncResult>(
+      "sync.run",
+      options?.mode ? { mode: options.mode } : undefined,
+    ),
+    scheduleSyncSoon: () => sendCommand("sync.soon"),
+    summarizeResult: formatBrowserSyncResult,
+    subscribeSyncEvents,
+  }), [saveSyncSettings, subscribeSyncEvents]);
+  const webDavSync = useLauncherWebDavSync(webDavOptions);
+
   return (
     <>
       <LauncherPage
+        labels={defaultLauncherLabels}
         platform={platform}
         layoutStorage={launcherLayoutStorage}
-        refreshToken={layoutRevision}
+        refreshToken={webDavSync.refreshToken}
         previewLayoutMode="original"
-        onLayoutChanged={() => {
-          sendCommand("sync.soon").catch(() => undefined);
-        }}
-        topActions={(
-          <LauncherSyncActions
-            labels={{
-              settings: "Settings",
-              sync: "Sync",
-              syncing: "Syncing",
-              syncTitle: "Sync",
-              setupTitle: "Set up WebDAV before syncing",
-            }}
-            message={syncMessage}
-            settingsConfigured={settingsConfigured}
-            state={syncState}
-            onOpenSettings={() => setSettingsOpen(true)}
-            onSync={() => runSync()}
-          />
-        )}
+        onLayoutChanged={webDavSync.onLayoutChanged}
+        topActions={webDavSync.topActions}
         variant={launcherVariant}
       />
-      {settingsOpen && (
-        <SyncSettingsDialog
-          labels={companionSyncSettingsLabels}
-          loadValues={loadSyncSettings}
-          normalizeValues={normalizeDialogValues}
-          syncValues={syncSettings}
-          onClose={() => setSettingsOpen(false)}
-        />
-      )}
+      {webDavSync.settingsDialog}
     </>
   );
-}
-
-const companionSyncSettingsLabels = {
-  title: "Settings",
-  close: "Close",
-  webDavAddress: "WebDAV address",
-  username: "Username",
-  password: "Password or app token",
-  folderTitle: "Sync folder title",
-  help: "Remote data is stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, and manifest.json.",
-  useRemote: "Use cloud data",
-  useLocal: "Upload this device",
-  syncing: "Syncing...",
-  loadFailed: "Unable to load settings.",
-  syncFailed: "Sync failed.",
-  deviceId: (deviceId: string) => `Device ID: ${deviceId}`,
-};
-
-function isWebDavConfigError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error || "");
-  return /webdav url is required/i.test(message);
-}
-
-function syncResultMessage(result: SyncResult): string {
-  const deleted = result.deletedBookmarkCount + result.deletedWebAppCount;
-  const tombstones = deleted > 0 ? `, ${deleted} tombstones` : "";
-  const pending = result.pendingOperationCount > 0 ? `, ${result.pendingOperationCount} pending changes` : "";
-  return `Synced ${result.bookmarkCount} bookmarks and ${result.webAppCount} WebApps${tombstones}${pending}`;
-}
-
-function isSyncResult(value: unknown): value is SyncResult {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<SyncResult>;
-  return typeof candidate.bookmarkCount === "number" &&
-    typeof candidate.webAppCount === "number" &&
-    typeof candidate.deletedBookmarkCount === "number" &&
-    typeof candidate.deletedWebAppCount === "number";
 }
 
 function settingsToDialogValues(settings: SyncSettings): SyncSettingsDialogValues {

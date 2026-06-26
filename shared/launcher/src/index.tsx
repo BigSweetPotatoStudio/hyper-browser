@@ -59,7 +59,17 @@ export type LauncherSystemEntry = {
   action: string;
 };
 
-type LauncherSystemIconName = "bookmarks" | "history" | "extensions";
+export type LauncherSystemIconName = "bookmarks" | "history" | "extensions";
+export type LauncherSystemAction = "bookmarks" | "history" | "extensions";
+export type LauncherTranslate = (key: string, values?: Record<string, unknown>) => string;
+
+export const DEFAULT_LAUNCHER_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"];
+
+export type LauncherSystemEntryTheme = Partial<Record<LauncherSystemAction, {
+  mark?: string;
+  color?: string;
+  systemIcon?: LauncherSystemIconName;
+}>>;
 
 type AppEntry = {
   id: string;
@@ -179,47 +189,149 @@ export type LauncherLabels = {
   iconUpdateFailed: string;
 };
 
-const defaultLabels: LauncherLabels = {
-  loading: "Loading desktop...",
-  emptyDesktop: "This page is empty.",
-  loadAppsError: "Unable to load WebApps.",
-  loadLayoutError: "Unable to load desktop layout.",
-  folder: "Folder",
-  folderEmpty: "This folder is empty.",
-  openStandaloneApp: "Open as WebApp",
-  editHomeScreen: "Edit Desktop",
-  done: "Done",
-  newFolder: "New folder",
-  renameFolder: "Rename folder",
-  unpackFolder: "Move items out",
-  moveToDesktop: "Move to desktop",
-  moveToDock: "Move to Dock",
-  dockFull: "Dock can hold up to 4 items.",
-  pinApp: "Send to home screen",
-  editApp: "Edit WebApp",
-  editIcon: "Edit icon",
-  appName: "Name",
-  appUrl: "URL",
-  deleteApp: "Delete",
-  iconTitle: "Edit icon",
-  iconLetter: "Text",
-  iconBackground: "Background",
-  iconPreset: "Preset",
-  iconSourceTitle: "Icon source",
-  iconSite: "Site icon",
-  iconTitleFallback: "Title initial",
-  iconDefaultLibrary: "Default icons",
-  iconChooseImage: "Choose image",
-  iconSelectedImage: "Selected image",
-  iconUpload: "Upload image",
-  iconUseImage: "Use image",
-  iconReset: "Reset icon",
-  cancel: "Cancel",
-  save: "Save",
-  deleteFailed: "Unable to delete WebApp.",
-  editFailed: "Unable to edit WebApp.",
-  iconUpdateFailed: "Unable to update icon.",
-};
+const launcherSystemEntryDefinitions: Array<{
+  action: LauncherSystemAction;
+  titleKey: string;
+  mark: string;
+  color: string;
+  systemIcon: LauncherSystemIconName;
+}> = [
+  { action: "bookmarks", titleKey: "home.bookmarks", mark: "B", color: "#34a853", systemIcon: "bookmarks" },
+  { action: "history", titleKey: "home.history", mark: "H", color: "#fbbc04", systemIcon: "history" },
+  { action: "extensions", titleKey: "home.extensions", mark: "Ex", color: "#ea4335", systemIcon: "extensions" },
+];
+
+export function createLauncherSystemEntries(
+  t: LauncherTranslate = translateEnglishLauncherLabel,
+  theme: LauncherSystemEntryTheme = {},
+): LauncherSystemEntry[] {
+  return launcherSystemEntryDefinitions.map((definition) => {
+    const override = theme[definition.action] || {};
+    return {
+      id: `system:${definition.action}`,
+      kind: "system",
+      title: t(definition.titleKey),
+      mark: override.mark || definition.mark,
+      color: override.color || definition.color,
+      systemIcon: override.systemIcon || definition.systemIcon,
+      action: definition.action,
+    };
+  });
+}
+
+export function createLauncherLabels(t: LauncherTranslate = translateEnglishLauncherLabel): LauncherLabels {
+  return {
+    loading: t("apps.loading"),
+    emptyDesktop: t("apps.empty"),
+    loadAppsError: t("apps.failed"),
+    loadLayoutError: t("apps.failed"),
+    folder: t("home.folder"),
+    folderEmpty: t("home.folderEmpty"),
+    openStandaloneApp: t("apps.openStandalone"),
+    editHomeScreen: t("home.editHomeScreen"),
+    done: t("home.done"),
+    newFolder: t("home.newFolder"),
+    renameFolder: t("home.renameFolder"),
+    unpackFolder: t("home.unpackFolder"),
+    moveToDesktop: t("home.moveToDesktop"),
+    moveToDock: t("home.moveToDock"),
+    dockFull: t("home.dockFull"),
+    pinApp: t("apps.pin"),
+    editApp: t("apps.editTitle"),
+    editIcon: t("apps.editIcon"),
+    appName: t("common.name"),
+    appUrl: t("common.url"),
+    deleteApp: t("common.delete"),
+    iconTitle: t("apps.editIcon"),
+    iconLetter: t("apps.iconLetter"),
+    iconBackground: t("apps.iconBackground"),
+    iconPreset: t("apps.iconPreset"),
+    iconSourceTitle: t("apps.iconSourceTitle"),
+    iconSite: t("apps.iconSite"),
+    iconTitleFallback: t("apps.iconTitleFallback"),
+    iconDefaultLibrary: t("apps.iconDefaultLibrary"),
+    iconChooseImage: t("apps.iconChooseImage"),
+    iconSelectedImage: t("apps.iconSelectedImage"),
+    iconPresetLabels: {
+      news: t("apps.iconPresetNews"),
+      video: t("apps.iconPresetVideo"),
+      music: t("apps.iconPresetMusic"),
+      shop: t("apps.iconPresetShop"),
+      chat: t("apps.iconPresetChat"),
+      docs: t("apps.iconPresetDocs"),
+      work: t("apps.iconPresetWork"),
+      star: t("apps.iconPresetStar"),
+    },
+    iconUpload: t("apps.iconUpload"),
+    iconUseImage: t("apps.iconUseImage"),
+    iconReset: t("apps.iconReset"),
+    cancel: t("common.cancel"),
+    save: t("common.save"),
+    deleteFailed: t("apps.failed"),
+    editFailed: t("apps.failed"),
+    iconUpdateFailed: t("apps.iconUpdateFailed"),
+  };
+}
+
+export const defaultLauncherLabels = createLauncherLabels(translateEnglishLauncherLabel);
+export const defaultLauncherSystemEntries = createLauncherSystemEntries(translateEnglishLauncherLabel);
+
+const defaultLabels = defaultLauncherLabels;
+
+function translateEnglishLauncherLabel(key: string, values?: Record<string, unknown>): string {
+  const labels: Record<string, string> = {
+    "common.cancel": "Cancel",
+    "common.delete": "Delete",
+    "common.name": "Name",
+    "common.save": "Save",
+    "common.url": "URL",
+    "home.bookmarks": "Bookmarks",
+    "home.history": "History",
+    "home.extensions": "Extensions",
+    "home.folder": "Folder",
+    "home.folderEmpty": "This folder is empty.",
+    "home.editHomeScreen": "Edit Desktop",
+    "home.done": "Done",
+    "home.newFolder": "New folder",
+    "home.renameFolder": "Rename folder",
+    "home.unpackFolder": "Move items out",
+    "home.moveToDesktop": "Move to desktop",
+    "home.moveToDock": "Move to Dock",
+    "home.dockFull": "Dock can hold up to 4 items.",
+    "apps.loading": "Loading desktop...",
+    "apps.empty": "This page is empty.",
+    "apps.failed": "Unable to load WebApps.",
+    "apps.openStandalone": "Open as WebApp",
+    "apps.pin": "Send to home screen",
+    "apps.editTitle": "Edit WebApp",
+    "apps.editIcon": "Edit icon",
+    "apps.iconLetter": "Text",
+    "apps.iconBackground": "Background",
+    "apps.iconPreset": "Preset",
+    "apps.iconSourceTitle": "Icon source",
+    "apps.iconSite": "Site icon",
+    "apps.iconTitleFallback": "Title initial",
+    "apps.iconDefaultLibrary": "Default icons",
+    "apps.iconChooseImage": "Choose image",
+    "apps.iconSelectedImage": "Selected image",
+    "apps.iconPresetNews": "News",
+    "apps.iconPresetVideo": "Video",
+    "apps.iconPresetMusic": "Music",
+    "apps.iconPresetShop": "Shop",
+    "apps.iconPresetChat": "Chat",
+    "apps.iconPresetDocs": "Docs",
+    "apps.iconPresetWork": "Work",
+    "apps.iconPresetStar": "Star",
+    "apps.iconUpload": "Upload image",
+    "apps.iconUseImage": "Use image",
+    "apps.iconReset": "Reset icon",
+    "apps.iconUpdateFailed": "Unable to update icon.",
+  };
+  return (labels[key] || key).replace(/\{(\w+)}/g, (match, name) => {
+    const value = values?.[name];
+    return value === undefined ? match : String(value);
+  });
+}
 
 export function LauncherSyncActions(props: {
   labels: LauncherSyncActionLabels;

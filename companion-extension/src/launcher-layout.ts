@@ -3,7 +3,6 @@ import type { LauncherJson } from "@hyper-sync/sync-json-types";
 import { browser } from "wxt/browser";
 import { readSyncFile } from "./storage";
 
-export const DEFAULT_DOCK_ENTRY_IDS = ["system:bookmarks", "system:history", "system:extensions"];
 export const DEPRECATED_ENTRY_IDS = ["system:chrome"];
 
 let launcherLayoutSaveQueue: Promise<void> = Promise.resolve();
