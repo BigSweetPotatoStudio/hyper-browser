@@ -85,7 +85,6 @@ class BrowserSearchPageTest {
             id = id,
             name = name,
             startUrl = startUrl,
-            scopeUrl = startUrl,
             iconPath = null,
             themeColor = 0,
             displayMode = "standalone",

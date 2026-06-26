@@ -6,6 +6,15 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+## 0.1.8-beta.3 - 2026-06-26
+
+- Reworked WebDAV sync around shared JSON and operation-log handling across Android built-in pages, launcher layout, bookmarks, WebApps, and the companion extension.
+- Improved launcher and WebApp sync restore, folder renaming, layout ordering, install/uninstall cleanup, and icon recovery.
+- Added explicit WebDAV sync direction controls and clearer sync settings.
+- Improved bookmark sync for Chrome folder changes, URL fragments, tombstones, and local favicon caching.
+- Added global website display mode controls and a WebApp shortcut install action.
+- Improved the browser toolbar address display with page title and URL context.
+
 ## 0.1.8-beta.2 - 2026-06-23
 
 - Fixed GitHub Actions collection of WXT companion extension ZIPs for release uploads.
