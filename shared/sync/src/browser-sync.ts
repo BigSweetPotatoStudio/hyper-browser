@@ -16,6 +16,7 @@ import {
   syncV2,
   type SyncStateFileStorage,
   type SyncV2LocalSnapshot,
+  type SyncV2Mode,
   type SyncV2Result,
   type SyncV2State,
   type SyncV2Store,
@@ -38,6 +39,10 @@ export type BrowserSyncResult = {
   uploadedOperationCount: number;
   remoteOperationCount: number;
   pendingOperationCount: number;
+};
+
+export type BrowserSyncRunOptions = {
+  mode?: SyncV2Mode;
 };
 
 export type BrowserBookmarkNode = {
@@ -66,7 +71,7 @@ export type BrowserBookmarkUpdateChanges = {
 };
 
 export type BrowserSyncService = {
-  syncNow: () => Promise<BrowserSyncResult>;
+  syncNow: (options?: BrowserSyncRunOptions) => Promise<BrowserSyncResult>;
   recordLocalBookmarkFolderSnapshot: (events?: BrowserBookmarkEvent[]) => Promise<boolean | null>;
   loadRemoteBookmarks: () => Promise<BookmarkRecord[]>;
   findBookmarkByUrl: (url: string) => Promise<BookmarkRecord | null>;
@@ -104,10 +109,11 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
   let localBookmarkProjectionDepth = 0;
   let localBookmarkProjectionQuietUntil = 0;
 
-  async function syncNow(): Promise<BrowserSyncResult> {
+  async function syncNow(syncOptions: BrowserSyncRunOptions = {}): Promise<BrowserSyncResult> {
     let settings = await options.loadSettings();
     settings = await ensureBookmarkFolder(settings);
     const before = await loadStateFiles();
+    const mode = syncOptions.mode || "merge";
     let result = {
       state: before,
       stateChanged: false,
@@ -124,14 +130,15 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
         saveStore: options.saveSyncV2Store,
         loadState: () => loadStateFiles(),
         saveState: (state) => saveLocalState(settings, state),
-        loadLocalSnapshot: () => loadLocalSnapshot(),
+        loadLocalSnapshot: () => loadLocalSnapshot(settings, mode),
         withLocalLock,
+        mode,
       });
     } else {
       await withLocalLock(async () => {
         const current = await options.loadSyncV2Store();
         const currentState = await loadStateFiles();
-        const next = appendLocalSnapshotOperations(current, currentState, await loadLocalSnapshot());
+        const next = appendLocalSnapshotOperations(current, currentState, await loadLocalSnapshot(settings, "pushLocal"));
         await options.saveSyncV2Store(next.store);
         await saveLocalState(settings, next.state);
         result = {
@@ -283,9 +290,14 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     return activeWebAppsFromState(await loadStateFiles());
   }
 
-  async function loadLocalSnapshot(): Promise<SyncV2LocalSnapshot> {
+  async function loadLocalSnapshot(settings: SyncSettings, mode: SyncV2Mode): Promise<SyncV2LocalSnapshot> {
+    const layout = await options.loadLauncherLayout();
+    if (mode !== "pushLocal") {
+      return { layout };
+    }
     return {
-      layout: await options.loadLauncherLayout(),
+      bookmarks: await collectLocalBookmarkRecords(settings, await loadStateFiles()),
+      layout,
     };
   }
 

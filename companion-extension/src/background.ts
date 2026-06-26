@@ -1,6 +1,6 @@
 import { browser, type Browser } from "wxt/browser";
 import type { BrowserBookmarkEvent } from "@hyper-sync/browser-sync";
-import { createSyncBackgroundController } from "@hyper-sync/background";
+import { createSyncBackgroundController, type SyncBackgroundRunOptions } from "@hyper-sync/background";
 import { createHyperBackgroundCommandHandler } from "@hyper-sync/hyper-background";
 import { loadSettings } from "./storage";
 import { browserSyncService } from "./sync";
@@ -123,8 +123,8 @@ function ensureRemoteSyncAlarm() {
   });
 }
 
-async function runBookmarkSyncNow() {
-  return browserSyncService.syncNow();
+async function runBookmarkSyncNow(options?: SyncBackgroundRunOptions) {
+  return browserSyncService.syncNow(options);
 }
 
 async function syncIfConfigured(): Promise<SyncResult | null> {

@@ -1,3 +1,5 @@
+import type { SyncV2Mode } from "./op-log";
+
 export type SyncBackgroundSignal = {
   stateChanged?: boolean;
   launcherChanged?: boolean;
@@ -12,15 +14,19 @@ export type SyncBackgroundRemoteCheck<TSyncResult extends SyncBackgroundSignal> 
   syncResult?: TSyncResult;
 };
 
+export type SyncBackgroundRunOptions = {
+  mode?: SyncV2Mode;
+};
+
 export type SyncBackgroundController<TSyncResult extends SyncBackgroundSignal> = {
   scheduleSync: () => void;
-  runFullSyncNow: () => Promise<TSyncResult>;
+  runFullSyncNow: (options?: SyncBackgroundRunOptions) => Promise<TSyncResult>;
   checkRemoteChanges: (options?: { notifyPages?: boolean }) => Promise<SyncBackgroundRemoteCheck<TSyncResult>>;
 };
 
 export function createSyncBackgroundController<TSyncResult extends SyncBackgroundSignal>(options: {
   debounceMs: number;
-  syncNow: () => Promise<TSyncResult>;
+  syncNow: (runOptions?: SyncBackgroundRunOptions) => Promise<TSyncResult>;
   syncIfEnabled: () => Promise<TSyncResult | null>;
   notifyLauncherChanged?: (result: TSyncResult) => void;
   notifyRemoteSynced?: (updatedAt: number, result: TSyncResult) => void;
@@ -50,13 +56,13 @@ export function createSyncBackgroundController<TSyncResult extends SyncBackgroun
     });
   }
 
-  async function runFullSyncNow(): Promise<TSyncResult> {
+  async function runFullSyncNow(runOptions: SyncBackgroundRunOptions = {}): Promise<TSyncResult> {
     if (syncTimer) {
       clearTimeout(syncTimer);
       syncTimer = null;
     }
     syncPending = false;
-    const result = await runExclusive(() => options.syncNow());
+    const result = await runExclusive(() => options.syncNow(runOptions));
     options.notifyRemoteSynced?.(Date.now(), result);
     return result;
   }

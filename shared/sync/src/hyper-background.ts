@@ -1,4 +1,4 @@
-import type { SyncBackgroundController, SyncBackgroundSignal } from "./background";
+import type { SyncBackgroundController, SyncBackgroundRunOptions, SyncBackgroundSignal } from "./background";
 import type { BookmarkRecord, LauncherCell, LauncherFolder, LauncherJson, WebAppRecord } from "./sync-json-types";
 
 export type HyperBackgroundCommand = {
@@ -59,7 +59,7 @@ export function createHyperBackgroundCommandHandler<TSyncResult extends SyncBack
       case "settings.get":
         return handled(await requireCapability(adapter.getSettings, command.type)());
       case "sync.run":
-        return handled(await adapter.sync.runFullSyncNow());
+        return handled(await adapter.sync.runFullSyncNow(syncRunOptions(command.payload)));
       case "sync.soon":
         adapter.sync.scheduleSync();
         return handled(null);
@@ -165,6 +165,14 @@ export function createHyperBackgroundCommandHandler<TSyncResult extends SyncBack
 
 function handled(data: unknown): HyperBackgroundCommandResult {
   return { handled: true, data };
+}
+
+function syncRunOptions(payload: unknown): SyncBackgroundRunOptions {
+  if (!isPlainObject(payload)) return {};
+  const mode = typeof payload.mode === "string" ? payload.mode : "";
+  return mode === "pullRemote" || mode === "pushLocal" || mode === "merge"
+    ? { mode }
+    : {};
 }
 
 function requireCapability<T>(capability: T | undefined, commandType: string): T {

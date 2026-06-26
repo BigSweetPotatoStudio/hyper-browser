@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
 import { shouldRefreshLauncherAfterSync } from "@hyper-sync";
-import { SyncSettingsDialog, type SyncSettingsDialogResult, type SyncSettingsDialogValues } from "@hyper-sync/settings-dialog";
+import { SyncSettingsDialog, type SyncSettingsDialogAction, type SyncSettingsDialogResult, type SyncSettingsDialogValues } from "@hyper-sync/settings-dialog";
 import { DEFAULT_DEVICE_NAME } from "../identity";
 import { getDefaultSettings, loadSettings, saveSettings } from "../storage";
 import { DEFAULT_DOCK_ENTRY_IDS, DEPRECATED_ENTRY_IDS, launcherLayoutStorage } from "../launcher-layout";
@@ -95,13 +95,13 @@ function CompanionHomePage() {
 
   const loadSyncSettings = useCallback(async () => settingsToDialogValues(await loadSettings()), []);
 
-  const syncSettings = useCallback(async (values: SyncSettingsDialogValues): Promise<SyncSettingsDialogResult> => {
+  const syncSettings = useCallback(async (values: SyncSettingsDialogValues, action: SyncSettingsDialogAction): Promise<SyncSettingsDialogResult> => {
     try {
       const currentSettings = await loadSettings().catch(() => getDefaultSettings());
       const nextSettings = dialogValuesToSettings(values, currentSettings);
       await saveSettings(nextSettings);
       setSettingsConfigured(!!nextSettings.webDavUrl.trim());
-      const result = await sendCommand<SyncResult>("sync.run");
+      const result = await sendCommand<SyncResult>("sync.run", { mode: action });
       setSyncState("success");
       setSyncMessage(syncResultMessage(result));
       return {
@@ -184,7 +184,8 @@ const companionSyncSettingsLabels = {
   password: "Password or app token",
   folderTitle: "Sync folder title",
   help: "Remote data is stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, and manifest.json.",
-  sync: "Sync",
+  useRemote: "Use cloud data",
+  useLocal: "Upload this device",
   syncing: "Syncing...",
   loadFailed: "Unable to load settings.",
   syncFailed: "Sync failed.",

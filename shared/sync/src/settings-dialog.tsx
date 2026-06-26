@@ -18,7 +18,8 @@ export type SyncSettingsDialogLabels = {
   password: string;
   folderTitle: string;
   help: string;
-  sync: string;
+  useRemote: string;
+  useLocal: string;
   syncing: string;
   loadFailed: string;
   syncFailed: string;
@@ -30,10 +31,12 @@ export type SyncSettingsDialogResult = {
   message?: string;
 };
 
+export type SyncSettingsDialogAction = "pullRemote" | "pushLocal";
+
 type Props = {
   labels: SyncSettingsDialogLabels;
   loadValues: () => Promise<SyncSettingsDialogValues>;
-  syncValues: (values: SyncSettingsDialogValues) => Promise<SyncSettingsDialogResult | void>;
+  syncValues: (values: SyncSettingsDialogValues, action: SyncSettingsDialogAction) => Promise<SyncSettingsDialogResult | void>;
   onClose: () => void;
   onSynced?: () => void;
   normalizeValues?: (values: SyncSettingsDialogValues) => SyncSettingsDialogValues;
@@ -53,7 +56,7 @@ export function SyncSettingsDialog(props: Props) {
   const [values, setValues] = useState<SyncSettingsDialogValues>(emptyValues);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<SyncSettingsDialogAction | null>(null);
   const showFolderTitle = props.showFolderTitle !== false;
 
   useEffect(() => {
@@ -88,15 +91,15 @@ export function SyncSettingsDialog(props: Props) {
     };
   }
 
-  function sync(event?: FormEvent<HTMLFormElement>) {
+  function sync(action: SyncSettingsDialogAction, event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     const next = normalize(values);
-    if (busy || !next.webDavUrl.trim()) return;
+    if (busyAction || !next.webDavUrl.trim()) return;
     setValues(next);
-    setBusy(true);
+    setBusyAction(action);
     setMessage(props.labels.syncing);
     setError("");
-    props.syncValues(next)
+    props.syncValues(next, action)
       .then((result) => {
         if (result?.values) setValues(result.values);
         setMessage(result?.message || "");
@@ -106,12 +109,12 @@ export function SyncSettingsDialog(props: Props) {
         setMessage("");
         setError(syncError instanceof Error ? syncError.message : props.labels.syncFailed);
       })
-      .finally(() => setBusy(false));
+      .finally(() => setBusyAction(null));
   }
 
   return (
     <div className="sync-settings-scrim" onClick={props.onClose}>
-      <form className="sync-settings-dialog" role="dialog" aria-modal="true" aria-label={props.labels.title} onClick={(event) => event.stopPropagation()} onSubmit={sync}>
+      <form className="sync-settings-dialog" role="dialog" aria-modal="true" aria-label={props.labels.title} onClick={(event) => event.stopPropagation()} onSubmit={(event) => sync("pullRemote", event)}>
         <header className="sync-settings-header">
           <h2 className="sync-settings-title">{props.labels.title}</h2>
           <button className="sync-settings-close" type="button" onClick={props.onClose}>{props.labels.close}</button>
@@ -138,8 +141,11 @@ export function SyncSettingsDialog(props: Props) {
         </div>
         <p className="sync-settings-message">{props.labels.help}</p>
         <div className="sync-settings-actions">
-          <button className="sync-settings-button" type="submit" disabled={busy || !values.webDavUrl.trim()}>
-            {busy ? props.labels.syncing : props.labels.sync}
+          <button className="sync-settings-button" type="submit" disabled={!!busyAction || !values.webDavUrl.trim()}>
+            {busyAction === "pullRemote" ? props.labels.syncing : props.labels.useRemote}
+          </button>
+          <button className="sync-settings-button secondary" type="button" disabled={!!busyAction || !values.webDavUrl.trim()} onClick={() => sync("pushLocal")}>
+            {busyAction === "pushLocal" ? props.labels.syncing : props.labels.useLocal}
           </button>
         </div>
         {values.deviceId && <p className="sync-settings-message">{props.labels.deviceId(values.deviceId)}</p>}

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import { LauncherPage, LauncherSyncActions, type LauncherPlatform, type LauncherSyncState, type LauncherSystemEntry } from "@hyper-launcher";
 import { shouldRefreshLauncherAfterSync } from "@hyper-sync";
-import { SyncSettingsDialog, type SyncSettingsDialogResult, type SyncSettingsDialogValues } from "@hyper-sync/settings-dialog";
+import { SyncSettingsDialog, type SyncSettingsDialogAction, type SyncSettingsDialogResult, type SyncSettingsDialogValues } from "@hyper-sync/settings-dialog";
 import "../hyper-browser";
 import type { BrowserSettings, WebAppItem, WebDavSyncResult } from "../hyper-browser";
 import "../styles.css";
@@ -33,7 +33,7 @@ function HomePage() {
     return settingsToDialogValues(await window.hyperBrowser.requestSettingsData());
   }, []);
 
-  const syncSettings = useCallback(async (values: SyncSettingsDialogValues): Promise<SyncSettingsDialogResult> => {
+  const syncSettings = useCallback(async (values: SyncSettingsDialogValues, action: SyncSettingsDialogAction): Promise<SyncSettingsDialogResult> => {
     if (!isHttpUrl(values.webDavUrl.trim())) {
       throw new Error(t("settings.webDavUrlRequired"));
     }
@@ -46,7 +46,7 @@ function HomePage() {
         webDavSyncDeviceName: "Android",
       });
       setSettingsConfigured(isWebDavConfigured(savedSettings));
-      const result = await waitForLauncherLayoutSaves().then(() => sendBackgroundCommand<WebDavSyncResult>("sync.run"));
+      const result = await waitForLauncherLayoutSaves().then(() => sendBackgroundCommand<WebDavSyncResult>("sync.run", { mode: action }));
       if (result.settings) setSettingsConfigured(isWebDavConfigured(result.settings));
       setSyncState("success");
       setSyncMessage(webDavSyncSummary(result));
@@ -308,7 +308,8 @@ const androidSyncSettingsLabels = {
   password: t("settings.webDavPassword"),
   folderTitle: "Sync folder title",
   help: t("settings.webDavHelp"),
-  sync: t("settings.webDavSyncNow"),
+  useRemote: t("settings.webDavUseRemote"),
+  useLocal: t("settings.webDavUseLocal"),
   syncing: t("settings.webDavSyncingShort"),
   loadFailed: t("settings.unavailable"),
   syncFailed: t("settings.webDavSyncFailed"),

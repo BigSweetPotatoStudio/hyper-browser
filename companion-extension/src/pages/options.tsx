@@ -24,12 +24,12 @@ function OptionsPage() {
     setError("");
   }
 
-  function sync() {
+  function sync(mode: "pullRemote" | "pushLocal") {
     const next = normalizeSettings(settings);
     setBusy(true);
     setMessage("Syncing...");
     saveSettings(next)
-      .then(() => sendCommand<SyncResult>("sync.run"))
+      .then(() => sendCommand<SyncResult>("sync.run", { mode }))
       .then((result) => {
         setMessage(syncResultMessage(result));
         return loadSettings();
@@ -80,8 +80,11 @@ function OptionsPage() {
         </div>
         <p className="message">Remote data is stored under HyperBrowserSync/bookmarks.json, webapps.json, launcher.json, and manifest.json.</p>
         <div className="actions">
-          <button className="button primary" type="button" disabled={busy || !settings.webDavUrl.trim()} onClick={sync}>
-            {busy ? "Syncing..." : "Sync"}
+          <button className="button primary" type="button" disabled={busy || !settings.webDavUrl.trim()} onClick={() => sync("pullRemote")}>
+            {busy ? "Syncing..." : "Use cloud data"}
+          </button>
+          <button className="button" type="button" disabled={busy || !settings.webDavUrl.trim()} onClick={() => sync("pushLocal")}>
+            Upload this device
           </button>
         </div>
         {settings.deviceId && <p className="message">Device ID: {settings.deviceId}</p>}

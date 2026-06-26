@@ -3,6 +3,9 @@ import test from "node:test";
 import {
   createEmptyState,
   mergeSyncStates,
+  stateToSyncJsonFiles,
+  syncV2,
+  type SyncV2Store,
 } from "../src/op-log";
 import type {
   BookmarkSyncRecord,
@@ -95,6 +98,65 @@ test("legacy rev.counter is read as rev.updatedAt and not written back", () => {
   assert.equal("counter" in merged.bookmarks[bookmarkUrl].rev, false);
 });
 
+test("pullRemote sync applies remote launcher without uploading local state", async () => {
+  const localApp = webAppRecord({ id: "local-app", name: "Local", updatedAt: 5_000, deviceId: "phone" });
+  const remoteApp = webAppRecord({ id: "remote-app", name: "Remote", updatedAt: 1_000, deviceId: "desktop" });
+  const localState = state({
+    apps: { "local-app": localApp },
+    layout: {
+      pages: [{ cells: [{ id: "app:local-app", index: 0 }] }],
+      rev: revision(5_000, "phone"),
+    },
+  });
+  const remoteState = state({
+    apps: { "remote-app": remoteApp },
+    layout: {
+      pages: [{ cells: [{ id: "app:remote-app", index: 0 }] }],
+      rev: revision(1_000, "desktop"),
+    },
+  });
+  const server = new FakeWebDavServer(stateToSyncJsonFiles(remoteState));
+
+  await withFakeFetch(server, async () => {
+    const sync = await runFakeSync(localState, { mode: "pullRemote" });
+
+    assert.deepEqual(sync.savedState.layout.pages?.[0]?.cells, [{ id: "app:remote-app", index: 0 }]);
+    assert.equal(sync.savedState.apps["local-app"], undefined);
+    assert.equal(sync.savedState.apps["remote-app"].name, "Remote");
+    assert.equal(server.putPaths.length, 0);
+  });
+});
+
+test("pushLocal sync uploads local launcher instead of merging the remote layout", async () => {
+  const localApp = webAppRecord({ id: "local-app", name: "Local", updatedAt: 1_000, deviceId: "phone" });
+  const remoteApp = webAppRecord({ id: "remote-app", name: "Remote", updatedAt: 5_000, deviceId: "desktop" });
+  const localState = state({
+    apps: { "local-app": localApp },
+    layout: {
+      pages: [{ cells: [{ id: "app:local-app", index: 0 }] }],
+      rev: revision(1_000, "phone"),
+    },
+  });
+  const remoteState = state({
+    apps: { "remote-app": remoteApp },
+    layout: {
+      pages: [{ cells: [{ id: "app:remote-app", index: 0 }] }],
+      rev: revision(5_000, "desktop"),
+    },
+  });
+  const server = new FakeWebDavServer(stateToSyncJsonFiles(remoteState));
+
+  await withFakeFetch(server, async () => {
+    const sync = await runFakeSync(localState, { mode: "pushLocal" });
+    const remoteLauncher = server.file("launcher.json") as LauncherJson;
+
+    assert.deepEqual(sync.savedState.layout.pages?.[0]?.cells, [{ id: "app:local-app", index: 0 }]);
+    assert.deepEqual(remoteLauncher.pages?.[0]?.cells, [{ id: "app:local-app", index: 0 }]);
+    assert.equal(sync.savedState.apps["remote-app"], undefined);
+    assert.ok(server.putPaths.includes("launcher.json"));
+  });
+});
+
 function state(partial: Partial<SyncV2State> = {}): SyncV2State {
   const empty = createEmptyState();
   return {
@@ -136,4 +198,94 @@ function webAppRecord(input: { id: string; name: string; updatedAt: number; devi
     iconSource: "title",
     rev: revision(input.updatedAt, input.deviceId),
   };
+}
+
+async function runFakeSync(
+  initialState: SyncV2State,
+  options: { mode?: "merge" | "pullRemote" | "pushLocal" } = {},
+): Promise<{ savedState: SyncV2State; store: SyncV2Store }> {
+  let savedState = initialState;
+  let store: SyncV2Store = {
+    schemaVersion: 2,
+    deviceId: "phone",
+    counter: 0,
+  };
+  await syncV2({
+    settings: {
+      webDavUrl: "https://example.com/dav",
+      username: "",
+      password: "",
+      deviceId: "phone",
+    },
+    loadStore: async () => store,
+    saveStore: async (next) => {
+      store = next;
+    },
+    loadState: async () => savedState,
+    saveState: async (next) => {
+      savedState = next;
+    },
+    withLocalLock: async (operation) => operation(),
+    mode: options.mode,
+  });
+  return { savedState, store };
+}
+
+async function withFakeFetch<T>(server: FakeWebDavServer, operation: () => Promise<T>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = server.fetch as typeof fetch;
+  try {
+    return await operation();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+class FakeWebDavServer {
+  readonly putPaths: string[] = [];
+  private readonly files = new Map<string, { data: unknown; etag: string }>();
+  private etagCounter = 0;
+
+  constructor(files: Record<string, unknown>) {
+    Object.entries(files).forEach(([path, data]) => {
+      this.files.set(path, { data, etag: this.nextEtag() });
+    });
+  }
+
+  file(path: string): unknown {
+    return this.files.get(path)?.data;
+  }
+
+  fetch = async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
+    const method = String(init?.method || "GET").toUpperCase();
+    const path = this.pathFromInput(input);
+    if (method === "MKCOL") return new Response("", { status: 405 });
+    if (method === "GET") {
+      const file = this.files.get(path);
+      if (!file) return new Response("", { status: 404 });
+      return new Response(JSON.stringify(file.data), {
+        status: 200,
+        headers: { ETag: file.etag, "Content-Type": "application/json" },
+      });
+    }
+    if (method === "PUT") {
+      const bodyText = typeof init?.body === "string" ? init.body : "";
+      this.files.set(path, { data: JSON.parse(bodyText), etag: this.nextEtag() });
+      this.putPaths.push(path);
+      return new Response(null, { status: 204 });
+    }
+    return new Response("", { status: 405 });
+  };
+
+  private pathFromInput(input: Parameters<typeof fetch>[0]): string {
+    const url = new URL(String(input));
+    const marker = "/HyperBrowserSync/";
+    const index = url.pathname.indexOf(marker);
+    return index >= 0 ? decodeURIComponent(url.pathname.slice(index + marker.length)) : "";
+  }
+
+  private nextEtag(): string {
+    this.etagCounter += 1;
+    return `"etag-${this.etagCounter}"`;
+  }
 }

@@ -14,6 +14,7 @@ import {
   saveSyncStateToFiles,
   syncV2,
   type SyncStateFileStorage,
+  type SyncV2Mode,
   type SyncV2Result,
   type SyncV2State,
   type SyncV2Store,
@@ -34,6 +35,11 @@ type AndroidBookmarkSaveInput = Partial<BookmarkRecord> & {
 
 type AndroidWebAppDeleteInput = string | Partial<WebAppRecord> | null | undefined;
 
+type AndroidWebDavSyncRunOptions = {
+  settings?: BrowserSettings;
+  mode?: SyncV2Mode;
+};
+
 type BridgeResponse = {
   ok?: boolean;
   error?: string;
@@ -48,8 +54,9 @@ const androidSyncFiles: SyncStateFileStorage = {
   saveFile: saveAndroidSyncFile,
 };
 
-export async function runAndroidWebDavSync(baseSettings?: BrowserSettings): Promise<WebDavSyncResult> {
-  const initialSettings = baseSettings || await requestSettingsData();
+export async function runAndroidWebDavSync(input?: BrowserSettings | AndroidWebDavSyncRunOptions): Promise<WebDavSyncResult> {
+  const runOptions = isBrowserSettings(input) ? { settings: input } : input || {};
+  const initialSettings = runOptions.settings || await requestSettingsData();
   if (!initialSettings.webDavSyncUrl.trim()) throw new Error("WebDAV URL is required.");
   const settings = await ensureAndroidDeviceId(initialSettings);
   const before = await readLocalState();
@@ -60,6 +67,7 @@ export async function runAndroidWebDavSync(baseSettings?: BrowserSettings): Prom
     loadState: () => readLocalState(),
     saveState: (state) => applyAndroidState(state),
     withLocalLock,
+    mode: runOptions.mode,
   });
   return syncResultFromState(result.state, before, settings, result);
 }
@@ -68,6 +76,10 @@ export async function runAndroidWebDavSyncIfEnabled(): Promise<WebDavSyncResult 
   const settings = await requestSettingsData();
   if (!settings.webDavSyncEnabled || !settings.webDavSyncUrl.trim()) return null;
   return runAndroidWebDavSync(settings);
+}
+
+function isBrowserSettings(value: unknown): value is BrowserSettings {
+  return !!value && typeof value === "object" && typeof (value as Partial<BrowserSettings>).webDavSyncUrl === "string";
 }
 
 export async function saveAndroidLauncherLayoutToSync(layout: LauncherJson): Promise<void> {

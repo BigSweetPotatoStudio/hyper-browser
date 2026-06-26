@@ -87,6 +87,8 @@ export type SyncV2Result = {
   syncedAt: number;
 };
 
+export type SyncV2Mode = "merge" | "pullRemote" | "pushLocal";
+
 export type SyncStateFileStorage = {
   readFile: (path: SyncJsonFileName) => Promise<unknown | null | undefined>;
   saveFile: (path: SyncJsonFileName, data: SyncJsonByFileName[SyncJsonFileName]) => Promise<void>;
@@ -472,9 +474,39 @@ export async function syncV2(options: {
   saveState: (state: SyncV2State) => Promise<void>;
   loadLocalSnapshot?: () => Promise<SyncV2LocalSnapshot>;
   withLocalLock: <T>(operation: () => Promise<T>) => Promise<T>;
+  mode?: SyncV2Mode;
 }): Promise<SyncV2Result> {
   const client = new WebDavClient(options.settings);
   await client.ensureCollections();
+  const mode = options.mode || "merge";
+
+  if (mode === "pullRemote") {
+    const remote = await readRemoteStateFiles(client);
+    let state = ensureState(remote.state);
+    let previousState = createEmptyState();
+    let stateChanged = false;
+    let launcherChanged = false;
+
+    await options.withLocalLock(async () => {
+      const store = ensureStore(await options.loadStore(), options.settings.deviceId);
+      previousState = await options.loadState();
+      state = ensureState(remote.state);
+      stateChanged = canonicalJson(previousState) !== canonicalJson(state);
+      launcherChanged = launcherStateSignature(previousState) !== launcherStateSignature(state);
+      await options.saveStore(store);
+      await options.saveState(state);
+    });
+
+    return {
+      state,
+      stateChanged,
+      launcherChanged,
+      uploadedOperationCount: 0,
+      remoteOperationCount: countRemoteRecords(state),
+      pendingOperationCount: 0,
+      syncedAt: Date.now(),
+    };
+  }
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const remote = await readRemoteStateFiles(client);
@@ -487,14 +519,20 @@ export async function syncV2(options: {
     await options.withLocalLock(async () => {
       let store = ensureStore(await options.loadStore(), options.settings.deviceId);
       const previousState = await options.loadState();
-      let workingState = mergeSyncStates(previousState, remote.state);
+      let workingState = mode === "pushLocal"
+        ? ensureState(previousState)
+        : mergeSyncStates(previousState, remote.state);
       if (options.loadLocalSnapshot) {
-        const next = appendLocalSnapshotOperations(store, workingState, await options.loadLocalSnapshot());
+        const next = appendLocalSnapshotOperations(store, workingState, await options.loadLocalSnapshot(), {
+          forceLayout: mode === "pushLocal",
+        });
         store = next.store;
         workingState = next.state;
       }
       uploadedOperationCount = 0;
-      mergedState = mergeSyncStates(workingState, remote.state);
+      mergedState = mode === "pushLocal"
+        ? ensureState(workingState)
+        : mergeSyncStates(workingState, remote.state);
       stateChanged = canonicalJson(previousState) !== canonicalJson(mergedState);
       launcherChanged = launcherStateSignature(previousState) !== launcherStateSignature(mergedState);
       pendingOperationCount = 0;
