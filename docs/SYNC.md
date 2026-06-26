@@ -4,11 +4,11 @@
 
 - `shared/sync/src/sync-json-types.ts`
 - `shared/sync/src/op-log.ts`
+- `shared/sync/src/state-sync.ts`
 - `shared/sync/src/background.ts`
 - `shared/sync/src/hyper-background.ts`
 - `shared/sync/src/browser-sync.ts`
 - `internal-pages/src/background.ts`
-- `internal-pages/src/webdav-sync.ts`
 - `app/src/main/java/com/dadigua/hyperbrowser/sync/WebDavLocalSyncAdapter.kt`
 
 ## 文件模型
@@ -50,7 +50,6 @@ Android 本地也保留同形态业务文件：
 - `BookmarkSyncRecord` / `WebAppSyncRecord` 在业务记录基础上增加必填 `rev`。
 - `rev.updatedAt` 是本记录最后一次业务修改时间，用于 LWW 比较。
 - `rev.deviceId` 用于排查来源和 updatedAt 相同时的稳定排序，不作为主要新旧判断。
-- 读取层兼容早期写出的 `rev.counter`，但新写出的同步 JSON 只使用 `rev.updatedAt`。
 - 书签以规范化 URL 为 key。
 - WebApp 以 `id` 为 key，允许多个 WebApp 使用相同 URL。
 - `launcher.json` 作为整体布局合并，`rev` 在布局根节点，不给每个 item 单独做版本。
@@ -76,7 +75,7 @@ Android 本地也保留同形态业务文件：
   -> window.hyperBrowser 或 browser.runtime.sendMessage(...)
   -> internal-pages/src/background.ts 或 companion-extension/src/background.ts
   -> shared/sync/src/hyper-background.ts
-  -> shared/sync/src/browser-sync.ts 或 internal-pages/src/webdav-sync.ts
+  -> shared/sync/src/state-sync.ts 或 shared/sync/src/browser-sync.ts
   -> shared/sync/src/op-log.ts
   -> 本地 JSON / WebDAV
 ```
@@ -102,7 +101,7 @@ Android 本地也保留同形态业务文件：
 
 ## Android 本地桥
 
-Android 内置页 background 通过 `internal-pages/src/webdav-sync.ts` 调用 native bridge：
+Android 内置页 background 通过 `shared/sync/src/state-sync.ts` 执行业务合并和同步；`internal-pages/src/background.ts` 只把 native bridge 暴露为本地同步文件适配：
 
 - `sync.localFile.read`
 - `sync.localFile.save`

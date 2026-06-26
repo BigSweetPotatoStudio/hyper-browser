@@ -1,26 +1,15 @@
 import { hostLabel, isHttpUrl, type SyncSettings } from "./index";
 import {
   activeBookmarksFromState,
-  activeWebAppsFromState,
-  appendLocalSnapshotOperations,
-  appendOperation,
-  appendWebAppDelete,
-  appendWebAppUpsert,
-  canonicalJson,
-  findBookmarkByUrlInState,
-  findWebAppsByUrlInState,
   identityKeyForUrl,
   layoutFromState,
-  readSyncStateFromFiles,
   saveSyncStateToFiles,
-  syncV2,
   type SyncStateFileStorage,
   type SyncV2LocalSnapshot,
   type SyncV2Mode,
-  type SyncV2Result,
   type SyncV2State,
-  type SyncV2Store,
 } from "./op-log";
+import { createSyncStateService } from "./state-sync";
 import type { BookmarkRecord, WebAppRecord } from "./sync-json-types";
 
 export type BrowserSyncResult = {
@@ -133,8 +122,6 @@ export type BrowserSyncService = {
 export type BrowserSyncServiceOptions = {
   loadSettings: () => Promise<SyncSettings>;
   saveSettings: (settings: SyncSettings) => Promise<void>;
-  loadSyncV2Store: () => Promise<SyncV2Store>;
-  saveSyncV2Store: (store: SyncV2Store) => Promise<void>;
   syncFiles: SyncStateFileStorage;
   loadLauncherLayout: () => Promise<SyncV2LocalSnapshot["layout"] | undefined>;
   bookmarks: {
@@ -150,79 +137,41 @@ export type BrowserSyncServiceOptions = {
 const LOCAL_BOOKMARK_PROJECTION_QUIET_MS = 4000;
 
 export function createBrowserSyncService(options: BrowserSyncServiceOptions): BrowserSyncService {
-  let localLock: Promise<void> = Promise.resolve();
   let localBookmarkProjectionDepth = 0;
   let localBookmarkProjectionQuietUntil = 0;
 
+  const stateSync = createSyncStateService({
+    loadSettings: options.loadSettings,
+    ensureSettings: ensureBookmarkFolder,
+    toSyncSettings: (settings) => settings,
+    syncFiles: options.syncFiles,
+    loadLocalSnapshot: ({ syncSettings }, mode) => loadLocalSnapshot(syncSettings, mode),
+    saveSyncedState: ({ syncSettings }, state) => saveLocalState(syncSettings, state),
+    allowLocalOnlySync: true,
+    buildResult: ({ base, syncSettings }) => ({
+      ...base,
+      folderTitle: syncSettings.folderTitle,
+    }),
+  });
+
   async function syncNow(syncOptions: BrowserSyncRunOptions = {}): Promise<BrowserSyncResult> {
-    let settings = await options.loadSettings();
-    settings = await ensureBookmarkFolder(settings);
-    const before = await loadStateFiles();
-    const mode = syncOptions.mode || "merge";
-    let result = {
-      state: before,
-      stateChanged: false,
-      launcherChanged: false,
-      uploadedOperationCount: 0,
-      remoteOperationCount: 0,
-      pendingOperationCount: 0,
-      syncedAt: Date.now(),
-    };
-    if (settings.webDavUrl.trim()) {
-      result = await syncV2({
-        settings,
-        loadStore: options.loadSyncV2Store,
-        saveStore: options.saveSyncV2Store,
-        loadState: () => loadStateFiles(),
-        saveState: (state) => saveLocalState(settings, state),
-        loadLocalSnapshot: () => loadLocalSnapshot(settings, mode),
-        withLocalLock,
-        mode,
-      });
-    } else {
-      await withLocalLock(async () => {
-        const current = await options.loadSyncV2Store();
-        const currentState = await loadStateFiles();
-        const next = appendLocalSnapshotOperations(current, currentState, await loadLocalSnapshot(settings, "pushLocal"));
-        await options.saveSyncV2Store(next.store);
-        await saveLocalState(settings, next.state);
-        result = {
-          state: next.state,
-          stateChanged: canonicalJson(before) !== canonicalJson(next.state),
-          launcherChanged: false,
-          uploadedOperationCount: 0,
-          remoteOperationCount: 0,
-          pendingOperationCount: 0,
-          syncedAt: Date.now(),
-        };
-      });
-    }
-    return syncResultFromState(result.state, before, settings, result);
+    return stateSync.syncNow(syncOptions);
   }
 
   async function loadRemoteWebApps(): Promise<WebAppRecord[]> {
-    return activeWebAppsFromState(await loadStateFiles());
+    return stateSync.loadWebApps();
   }
 
   async function loadRemoteBookmarks(): Promise<BookmarkRecord[]> {
-    return activeBookmarksFromState(await loadStateFiles());
+    return stateSync.loadBookmarks();
   }
 
   async function loadLauncherLayout(): Promise<SyncV2LocalSnapshot["layout"]> {
-    return await options.loadLauncherLayout() || null;
+    return stateSync.loadLauncherLayout();
   }
 
   async function saveLauncherLayout(layout: SyncV2LocalSnapshot["layout"]): Promise<void> {
-    if (!layout) return;
-    await withLocalLock(async () => {
-      const current = await options.loadSyncV2Store();
-      const currentState = await loadStateFiles();
-      const next = appendLocalSnapshotOperations(current, currentState, { layout }, { forceLayout: true });
-      if (canonicalJson(current) !== canonicalJson(next.store) || canonicalJson(currentState) !== canonicalJson(next.state)) {
-        await options.saveSyncV2Store(next.store);
-        await saveStateFiles(next.state);
-      }
-    });
+    await stateSync.saveLauncherLayout(layout);
   }
 
   async function recordLocalBookmarkFolderSnapshot(events: BrowserBookmarkEvent[] = []): Promise<boolean | null> {
@@ -232,44 +181,24 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     const folder = await getBookmarkNode(settings.folderId).catch(() => null);
     if (!folder) return false;
     if (events.length > 0 && !(await hasBookmarkEventInFolder(settings.folderId, events))) return false;
-    let changed = false;
-    await withLocalLock(async () => {
-      const current = await options.loadSyncV2Store();
-      const currentState = await loadStateFiles();
-      const bookmarks = await collectLocalBookmarkRecords(settings, currentState);
-      const next = appendLocalSnapshotOperations(current, currentState, { bookmarks });
-      changed = canonicalJson(current) !== canonicalJson(next.store) || canonicalJson(currentState) !== canonicalJson(next.state);
-      if (changed) {
-        await options.saveSyncV2Store(next.store);
-        await saveStateFiles(next.state);
-      }
-    });
-    return changed;
+    const bookmarks = await collectLocalBookmarkRecords(settings, await stateSync.loadBookmarks());
+    return stateSync.saveBookmarkSnapshot(bookmarks);
   }
 
   async function findBookmarkByUrl(url: string): Promise<BookmarkRecord | null> {
     const normalizedUrl = url.trim();
     if (!isHttpUrl(normalizedUrl)) return null;
-    return findBookmarkByUrlInState(await loadStateFiles(), normalizedUrl);
+    return stateSync.findBookmarkByUrl(normalizedUrl);
   }
 
   async function findWebAppsByUrl(url: string): Promise<WebAppRecord[]> {
     const normalizedUrl = url.trim();
     if (!isHttpUrl(normalizedUrl)) return [];
-    return findWebAppsByUrlInState(await loadStateFiles(), normalizedUrl);
+    return stateSync.findWebAppsByUrl(normalizedUrl);
   }
 
   async function saveRemoteWebApp(input: Partial<WebAppRecord> & { name: string; startUrl: string }): Promise<WebAppRecord[]> {
-    const settings = await options.loadSettings();
-    await withLocalLock(async () => {
-      const current = await options.loadSyncV2Store();
-      const currentState = await loadStateFiles();
-      const next = appendWebAppUpsert(current, currentState, input);
-      await options.saveSyncV2Store(next.store);
-      await saveStateFiles(next.state);
-    });
-    if (settings.webDavUrl.trim()) await syncNow();
-    return activeWebAppsFromState(await loadStateFiles());
+    return stateSync.saveWebApp(input);
   }
 
   async function addBookmarkToSyncFolder(input: { title: string; url: string }): Promise<BrowserSyncResult> {
@@ -282,21 +211,7 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
       await syncNow();
       settings = await ensureBookmarkFolder(await options.loadSettings());
     }
-    await withLocalLock(async () => {
-      const current = await options.loadSyncV2Store();
-      const currentState = await loadStateFiles();
-      const existing = findBookmarkByUrlInState(currentState, url);
-      const now = Date.now();
-      const bookmark: BookmarkRecord = {
-        url,
-        title,
-        createdAt: existing?.createdAt || now,
-        updatedAt: now,
-      };
-      const next = appendOperation(current, currentState, { type: "bookmark.upsert", bookmark });
-      await options.saveSyncV2Store(next.store);
-      await saveStateFiles(next.state);
-    });
+    await stateSync.saveBookmark({ title, url });
     return syncNow();
   }
 
@@ -305,34 +220,12 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     const url = typeof input === "string" ? input.trim() : input?.url?.trim() || "";
     const record = url ? await findBookmarkByUrl(url) : null;
     if (!record) return syncNow();
-    await removeLocalBookmarksByUrl(settings.folderId, record.url);
-    await withLocalLock(async () => {
-      const current = await options.loadSyncV2Store();
-      const currentState = await loadStateFiles();
-      const next = appendOperation(current, currentState, {
-        type: "bookmark.delete",
-        url: record.url,
-        title: record.title,
-      });
-      await options.saveSyncV2Store(next.store);
-      await saveStateFiles(next.state);
-    });
+    await stateSync.deleteBookmark({ url: record.url });
     return syncNow();
   }
 
   async function deleteRemoteWebApp(input: string | Partial<WebAppRecord> | null | undefined): Promise<WebAppRecord[]> {
-    const settings = await options.loadSettings();
-    const id = typeof input === "string" ? input.trim() : input?.id?.trim();
-    if (!id) return activeWebAppsFromState(await loadStateFiles());
-    await withLocalLock(async () => {
-      const current = await options.loadSyncV2Store();
-      const currentState = await loadStateFiles();
-      const next = appendWebAppDelete(current, currentState, id);
-      await options.saveSyncV2Store(next.store);
-      await saveStateFiles(next.state);
-    });
-    if (settings.webDavUrl.trim()) await syncNow();
-    return activeWebAppsFromState(await loadStateFiles());
+    return stateSync.deleteWebApp(input);
   }
 
   async function loadLocalSnapshot(settings: SyncSettings, mode: SyncV2Mode): Promise<SyncV2LocalSnapshot> {
@@ -341,7 +234,7 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
       return { layout };
     }
     return {
-      bookmarks: await collectLocalBookmarkRecords(settings, await loadStateFiles()),
+      bookmarks: await collectLocalBookmarkRecords(settings, await stateSync.loadBookmarks()),
       layout,
     };
   }
@@ -352,26 +245,8 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     void layoutFromState(state);
   }
 
-  async function loadStateFiles(): Promise<SyncV2State> {
-    return readSyncStateFromFiles(options.syncFiles);
-  }
-
   async function saveStateFiles(state: SyncV2State): Promise<void> {
     await saveSyncStateToFiles(options.syncFiles, state);
-  }
-
-  async function withLocalLock<T>(operation: () => Promise<T>): Promise<T> {
-    const previous = localLock;
-    let release!: () => void;
-    localLock = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await previous;
-    try {
-      return await operation();
-    } finally {
-      release();
-    }
   }
 
   async function ensureBookmarkFolder(settings: SyncSettings): Promise<SyncSettings> {
@@ -416,35 +291,6 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     });
   }
 
-  function syncResultFromState(
-    state: SyncV2State,
-    previous: SyncV2State,
-    settings: SyncSettings,
-    sync: Pick<SyncV2Result, "stateChanged" | "launcherChanged" | "uploadedOperationCount" | "remoteOperationCount" | "pendingOperationCount" | "syncedAt">,
-  ): BrowserSyncResult {
-    const bookmarks = activeBookmarksFromState(state);
-    const webApps = activeWebAppsFromState(state);
-    const previousBookmarks = new Set(activeBookmarksFromState(previous).map((bookmark) => bookmark.url));
-    const previousWebApps = new Set(activeWebAppsFromState(previous).map((app) => app.id));
-    return {
-      stateChanged: sync.stateChanged,
-      launcherChanged: sync.launcherChanged,
-      bookmarkCount: bookmarks.length,
-      deletedBookmarkCount: Object.keys(state.bookmarkTombstones).length,
-      importedBookmarkCount: bookmarks.filter((bookmark) => !previousBookmarks.has(bookmark.url)).length,
-      removedBookmarkCount: [...previousBookmarks].filter((id) => !state.bookmarks[id]).length,
-      webAppCount: webApps.length,
-      deletedWebAppCount: Object.keys(state.appTombstones).length,
-      importedWebAppCount: webApps.filter((app) => !previousWebApps.has(app.id)).length,
-      removedWebAppCount: [...previousWebApps].filter((id) => !state.apps[id]).length,
-      syncedAt: sync.syncedAt,
-      folderTitle: settings.folderTitle,
-      uploadedOperationCount: sync.uploadedOperationCount,
-      remoteOperationCount: sync.remoteOperationCount,
-      pendingOperationCount: sync.pendingOperationCount,
-    };
-  }
-
   async function getBookmarkNode(id: string): Promise<BrowserBookmarkNode | null> {
     const nodes = await options.bookmarks.get(id);
     return nodes[0] || null;
@@ -455,9 +301,9 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
     return (root?.children || []).filter((node) => !!node.url);
   }
 
-  async function collectLocalBookmarkRecords(settings: SyncSettings, state: SyncV2State): Promise<BookmarkRecord[]> {
+  async function collectLocalBookmarkRecords(settings: SyncSettings, existingRecords: BookmarkRecord[]): Promise<BookmarkRecord[]> {
     const now = Date.now();
-    const existingByUrl = new Map(activeBookmarksFromState(state).map((bookmark) => [identityKeyForUrl(bookmark.url), bookmark]));
+    const existingByUrl = new Map(existingRecords.map((bookmark) => [identityKeyForUrl(bookmark.url), bookmark]));
     const selected = new Map<string, BookmarkRecord>();
     for (const node of await getFolderBookmarkNodes(settings.folderId)) {
       if (!node.url) continue;
@@ -511,16 +357,6 @@ export function createBrowserSyncService(options: BrowserSyncServiceOptions): Br
       if (localBookmarkProjectionDepth <= 0) {
         localBookmarkProjectionDepth = 0;
         localBookmarkProjectionQuietUntil = Date.now() + LOCAL_BOOKMARK_PROJECTION_QUIET_MS;
-      }
-    }
-  }
-
-  async function removeLocalBookmarksByUrl(folderId: string, url: string): Promise<void> {
-    const nodes = await getFolderBookmarkNodes(folderId);
-    for (const node of nodes) {
-      if (!node.url) continue;
-      if (identityKeyForUrl(node.url) === identityKeyForUrl(url)) {
-        await options.bookmarks.remove(node.id);
       }
     }
   }

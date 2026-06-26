@@ -14,7 +14,7 @@ const REMOTE_SYNC_ALARM_MINUTES = 1;
 let chromeBookmarkSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingChromeBookmarkEvents: BrowserBookmarkEvent[] = [];
 
-const syncBackground = createSyncBackgroundController<SyncResult>({
+const syncBackground = createSyncBackgroundController({
   debounceMs: AUTO_SYNC_DEBOUNCE_MS,
   syncNow: runBookmarkSyncNow,
   syncIfEnabled: syncIfConfigured,
@@ -23,7 +23,7 @@ const syncBackground = createSyncBackgroundController<SyncResult>({
   onError: (_scope, error) => console.error(error),
 });
 
-const hyperCommands = createHyperBackgroundCommandHandler<SyncResult>({
+const hyperCommands = createHyperBackgroundCommandHandler({
   sync: syncBackground,
   getSettings: loadSettings,
   getCurrentPage: getCurrentPageInfo,

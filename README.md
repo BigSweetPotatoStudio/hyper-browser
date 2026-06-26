@@ -115,7 +115,6 @@ Hyper Browser 是一个 Android 原生浏览器和 WebApp 容器项目，使用 
 │   ├── src/
 │   │   ├── background.ts
 │   │   ├── hyper-browser.ts
-│   │   ├── webdav-sync.ts
 │   │   └── pages/
 │   └── vite.config.ts
 ├── companion-extension/
@@ -158,8 +157,6 @@ Hyper Browser 是一个 Android 原生浏览器和 WebApp 容器项目，使用 
   WebDAV 同步、JSON 类型、LWW 合并、墓碑、background 命令处理和桌面/Android 共享同步逻辑。
 - `internal-pages/src/background.ts`
   Android 内置 WebExtension background，统一处理 `bookmarks.*`、`webapps.*`、`launcher.layout.*` 和 WebDAV 同步命令。
-- `internal-pages/src/webdav-sync.ts`
-  Android 内置页侧 WebDAV 同步适配器，通过 native bridge 读写本地三份同步 JSON。
 
 ## 环境要求
 

@@ -301,9 +301,8 @@ function normalizeLauncherLayout(layout: unknown): LauncherJson {
 
 function normalizeLauncherRevision(value: unknown): LauncherJson["rev"] {
   if (!isPlainObject(value)) return { updatedAt: 0, deviceId: "" };
-  const rawUpdatedAt = Number.isSafeInteger(value.updatedAt) ? value.updatedAt : value.counter;
   return {
-    updatedAt: Number.isSafeInteger(rawUpdatedAt) ? Number(rawUpdatedAt) : 0,
+    updatedAt: Number.isSafeInteger(value.updatedAt) ? Number(value.updatedAt) : 0,
     deviceId: typeof value.deviceId === "string" ? value.deviceId : "",
   };
 }

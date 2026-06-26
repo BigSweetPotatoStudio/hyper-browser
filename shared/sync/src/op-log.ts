@@ -42,7 +42,6 @@ type SyncV2BaseOperation<T extends string> = {
   schemaVersion: 2;
   opId: string;
   deviceId: string;
-  counter: number;
   createdAt: number;
   type: T;
 };
@@ -54,14 +53,8 @@ type SyncV2OperationInput =
   | { type: "app.delete"; appId: string }
   | { type: "layout.replace"; layout: LauncherJson };
 
-export type SyncV2Store = {
-  schemaVersion: 2;
-  deviceId: string;
-  counter: number;
-};
-
 export type SyncV2Mutation = {
-  store: SyncV2Store;
+  deviceId: string;
   state: SyncV2State;
 };
 
@@ -134,26 +127,6 @@ export function createEmptyState(): SyncV2State {
     layout: {
       rev: { updatedAt: 0, deviceId: "" },
     },
-  };
-}
-
-export function createEmptyStore(deviceId = ""): SyncV2Store {
-  return {
-    schemaVersion: SYNC_V2_SCHEMA_VERSION,
-    deviceId,
-    counter: 0,
-  };
-}
-
-export function ensureStore(value: unknown, deviceId: string): SyncV2Store {
-  if (!value || typeof value !== "object" || (value as Partial<SyncV2Store>).schemaVersion !== SYNC_V2_SCHEMA_VERSION) {
-    return createEmptyStore(deviceId);
-  }
-  const store = value as Partial<SyncV2Store>;
-  return {
-    schemaVersion: SYNC_V2_SCHEMA_VERSION,
-    deviceId: store.deviceId || deviceId,
-    counter: Number.isSafeInteger(store.counter) ? Number(store.counter) : 0,
   };
 }
 
@@ -292,23 +265,20 @@ export function reduceOperations(operations: SyncV2Operation[]): SyncV2State {
   return state;
 }
 
-export function appendOperation(store: SyncV2Store, state: SyncV2State, operation: SyncV2OperationInput): SyncV2Mutation {
-  const nextStore = cloneJson(store);
+export function appendOperation(deviceId: string, state: SyncV2State, operation: SyncV2OperationInput): SyncV2Mutation {
   const nextState = ensureState(state);
-  nextStore.counter += 1;
   const fullOperation = {
     schemaVersion: SYNC_V2_SCHEMA_VERSION,
     opId: crypto.randomUUID(),
-    deviceId: nextStore.deviceId,
-    counter: nextStore.counter,
+    deviceId,
     createdAt: Date.now(),
     ...operation,
   } as SyncV2Operation;
   applyOperationInPlace(nextState, fullOperation);
-  return { store: nextStore, state: nextState };
+  return { deviceId, state: nextState };
 }
 
-export function appendWebAppUpsert(store: SyncV2Store, state: SyncV2State, input: WebAppInput): SyncV2Mutation & { app: WebAppSyncRecord } {
+export function appendWebAppUpsert(deviceId: string, state: SyncV2State, input: WebAppInput): SyncV2Mutation & { app: WebAppSyncRecord } {
   const currentState = ensureState(state);
   const inputId = input.id?.trim() || "";
   const existing = inputId ? currentState.apps[inputId] : undefined;
@@ -328,26 +298,26 @@ export function appendWebAppUpsert(store: SyncV2Store, state: SyncV2State, input
     iconDataUrl: hasIconDataUrl ? input.iconDataUrl ?? null : existing?.iconDataUrl ?? null,
     iconSource: input.iconSource || (hasIconDataUrl ? (input.iconDataUrl ? "custom" : "title") : existing?.iconSource) || "title",
   };
-  const next = appendOperation(store, currentState, { type: "app.upsert", app });
+  const next = appendOperation(deviceId, currentState, { type: "app.upsert", app });
   return { ...next, app: next.state.apps[id] };
 }
 
-export function appendWebAppDelete(store: SyncV2Store, state: SyncV2State, appId: string): SyncV2Mutation {
+export function appendWebAppDelete(deviceId: string, state: SyncV2State, appId: string): SyncV2Mutation {
   const id = appId.trim();
-  if (!id) return { store: cloneJson(store), state: ensureState(state) };
-  return appendOperation(store, state, { type: "app.delete", appId: id });
+  if (!id) return { deviceId, state: ensureState(state) };
+  return appendOperation(deviceId, state, { type: "app.delete", appId: id });
 }
 
 export function appendLocalSnapshotOperations(
-  store: SyncV2Store,
+  deviceId: string,
   state: SyncV2State,
   snapshot: SyncV2LocalSnapshot,
   options: SnapshotAppendOptions = {},
 ): SyncV2Mutation {
-  let next: SyncV2Mutation = { store: cloneJson(store), state: ensureState(state) };
+  let next: SyncV2Mutation = { deviceId, state: ensureState(state) };
   if (snapshot.bookmarks) next = appendBookmarkSnapshotOperations(next, snapshot.bookmarks);
   if (snapshot.webApps) next = appendWebAppSnapshotOperations(next, snapshot.webApps);
-  if (snapshot.layout) next = appendLayoutSnapshotOperations(next.store, next.state, snapshot.layout, { force: options.forceLayout });
+  if (snapshot.layout) next = appendLayoutSnapshotOperations(next.deviceId, next.state, snapshot.layout, { force: options.forceLayout });
   return next;
 }
 
@@ -365,13 +335,13 @@ function appendBookmarkSnapshotOperations(
   local.forEach((bookmark, key) => {
     const current = next.state.bookmarks[key];
     if (!current || bookmarkFieldsChanged(current, bookmark)) {
-      next = appendOperation(next.store, next.state, { type: "bookmark.upsert", bookmark });
+      next = appendOperation(next.deviceId, next.state, { type: "bookmark.upsert", bookmark });
     }
   });
   activeBookmarksFromState(next.state).forEach((bookmark) => {
     const key = bookmarkRecordKey(bookmark);
     if (key && !local.has(key)) {
-      next = appendOperation(next.store, next.state, { type: "bookmark.delete", ...bookmarkDeleteInput(bookmark) });
+      next = appendOperation(next.deviceId, next.state, { type: "bookmark.delete", ...bookmarkDeleteInput(bookmark) });
     }
   });
   return next;
@@ -393,7 +363,7 @@ function appendWebAppSnapshotOperations(
     if (current && !snapshotCanOverrideRevision(app, current)) return;
     if (!current && tombstone && !snapshotCanOverrideRevision(app, tombstone)) return;
     if (!current || appFieldsChanged(current, app)) {
-      next = appendOperation(next.store, next.state, {
+      next = appendOperation(next.deviceId, next.state, {
         type: "app.upsert",
         app,
       });
@@ -411,18 +381,18 @@ function snapshotCanOverrideRevision(snapshot: { rev?: Partial<SyncRevision> }, 
 }
 
 export function appendLayoutSnapshotOperations(
-  store: SyncV2Store,
+  deviceId: string,
   state: SyncV2State,
   layout: LauncherJson,
   options: { force?: boolean } = {},
 ): SyncV2Mutation {
   const currentState = ensureState(state);
   const snapshot = normalizeLauncherJson(layout);
-  if (!layoutDocumentChanged(currentState.layout, snapshot)) return { store: cloneJson(store), state: currentState };
+  if (!layoutDocumentChanged(currentState.layout, snapshot)) return { deviceId, state: currentState };
   if (!options.force && snapshot.rev.updatedAt > 0 && compareRevision(snapshot.rev, currentState.layout.rev) <= 0) {
-    return { store: cloneJson(store), state: currentState };
+    return { deviceId, state: currentState };
   }
-  return appendOperation(store, currentState, { type: "layout.replace", layout: snapshot });
+  return appendOperation(deviceId, currentState, { type: "layout.replace", layout: snapshot });
 }
 
 export function activeBookmarksFromState(state: SyncV2State): BookmarkRecord[] {
@@ -468,8 +438,6 @@ export function layoutFromState(state: SyncV2State): LauncherJson {
 
 export async function syncV2(options: {
   settings: WebDavSettings & { deviceId: string };
-  loadStore: () => Promise<SyncV2Store>;
-  saveStore: (store: SyncV2Store) => Promise<void>;
   loadState: () => Promise<SyncV2State>;
   saveState: (state: SyncV2State) => Promise<void>;
   loadLocalSnapshot?: () => Promise<SyncV2LocalSnapshot>;
@@ -488,12 +456,10 @@ export async function syncV2(options: {
     let launcherChanged = false;
 
     await options.withLocalLock(async () => {
-      const store = ensureStore(await options.loadStore(), options.settings.deviceId);
       previousState = await options.loadState();
       state = ensureState(remote.state);
       stateChanged = canonicalJson(previousState) !== canonicalJson(state);
       launcherChanged = launcherStateSignature(previousState) !== launcherStateSignature(state);
-      await options.saveStore(store);
       await options.saveState(state);
     });
 
@@ -517,16 +483,14 @@ export async function syncV2(options: {
     let pendingOperationCount = 0;
 
     await options.withLocalLock(async () => {
-      let store = ensureStore(await options.loadStore(), options.settings.deviceId);
       const previousState = await options.loadState();
       let workingState = mode === "pushLocal"
         ? ensureState(previousState)
         : mergeSyncStates(previousState, remote.state);
       if (options.loadLocalSnapshot) {
-        const next = appendLocalSnapshotOperations(store, workingState, await options.loadLocalSnapshot(), {
+        const next = appendLocalSnapshotOperations(options.settings.deviceId, workingState, await options.loadLocalSnapshot(), {
           forceLayout: mode === "pushLocal",
         });
-        store = next.store;
         workingState = next.state;
       }
       uploadedOperationCount = 0;
@@ -536,7 +500,6 @@ export async function syncV2(options: {
       stateChanged = canonicalJson(previousState) !== canonicalJson(mergedState);
       launcherChanged = launcherStateSignature(previousState) !== launcherStateSignature(mergedState);
       pendingOperationCount = 0;
-      await options.saveStore(store);
       await options.saveState(mergedState);
     });
 
@@ -545,14 +508,12 @@ export async function syncV2(options: {
 
     if (changedFiles.length === 0) {
       await options.withLocalLock(async () => {
-        const latest = ensureStore(await options.loadStore(), options.settings.deviceId);
         const latestState = await options.loadState();
         if (canonicalJson(latestState) !== canonicalJson(mergedState)) {
           pendingOperationCount = 1;
           return;
         }
         pendingOperationCount = 0;
-        await options.saveStore(latest);
       });
       if (pendingOperationCount > 0) continue;
       return {
@@ -574,14 +535,12 @@ export async function syncV2(options: {
     }
 
     await options.withLocalLock(async () => {
-      const latest = ensureStore(await options.loadStore(), options.settings.deviceId);
       const latestState = await options.loadState();
       if (canonicalJson(latestState) !== canonicalJson(mergedState)) {
         pendingOperationCount = 1;
         return;
       }
       pendingOperationCount = 0;
-      await options.saveStore(latest);
     });
 
     if (pendingOperationCount > 0) continue;
@@ -825,10 +784,9 @@ function launcherCellCount(layout: LauncherJson): number {
 function normalizeRevision(value: unknown, fallbackDeviceId: unknown = ""): SyncRevision {
   const fallback = cleanOptionalString(fallbackDeviceId);
   if (!value || typeof value !== "object" || Array.isArray(value)) return { updatedAt: 0, deviceId: fallback };
-  const source = value as Partial<SyncRevision> & { counter?: unknown };
-  const rawUpdatedAt = Number.isSafeInteger(source.updatedAt) ? source.updatedAt : source.counter;
+  const source = value as Partial<SyncRevision>;
   return {
-    updatedAt: Number.isSafeInteger(rawUpdatedAt) ? Math.max(0, Number(rawUpdatedAt)) : 0,
+    updatedAt: Number.isSafeInteger(source.updatedAt) ? Math.max(0, Number(source.updatedAt)) : 0,
     deviceId: cleanOptionalString(source.deviceId) || fallback,
   };
 }
@@ -1191,7 +1149,7 @@ function revisionWithDevice(rev: SyncRevision, deviceId: unknown): SyncRevision 
 }
 
 function compareOperations(left: SyncV2Operation, right: SyncV2Operation): number {
-  return left.counter - right.counter ||
+  return left.createdAt - right.createdAt ||
     left.deviceId.localeCompare(right.deviceId) ||
     left.opId.localeCompare(right.opId);
 }
@@ -1210,7 +1168,6 @@ function isOperation(value: unknown): value is SyncV2Operation {
   return operation.schemaVersion === SYNC_V2_SCHEMA_VERSION &&
     typeof operation.opId === "string" &&
     typeof operation.deviceId === "string" &&
-    Number.isSafeInteger(operation.counter) &&
     Number.isSafeInteger(operation.createdAt) &&
     typeof operation.type === "string";
 }

@@ -5,7 +5,6 @@ import {
   mergeSyncStates,
   stateToSyncJsonFiles,
   syncV2,
-  type SyncV2Store,
 } from "../src/op-log";
 import type {
   BookmarkSyncRecord,
@@ -81,21 +80,6 @@ test("partial webapp and launcher files converge when merged together", () => {
 
   assert.equal(merged.apps["app-1"].name, "App");
   assert.deepEqual(merged.layout.pages?.[0]?.cells, [{ id: "app:app-1", index: 0 }]);
-});
-
-test("legacy rev.counter is read as rev.updatedAt and not written back", () => {
-  const legacyBookmark = {
-    ...bookmarkRecord({ title: "Legacy", updatedAt: 0, deviceId: "phone" }),
-    rev: { counter: 4_000, deviceId: "phone" },
-  } as unknown as BookmarkSyncRecord;
-
-  const merged = mergeSyncStates(
-    state({ bookmarks: { [bookmarkUrl]: legacyBookmark } }),
-    state(),
-  );
-
-  assert.equal(merged.bookmarks[bookmarkUrl].rev.updatedAt, 4_000);
-  assert.equal("counter" in merged.bookmarks[bookmarkUrl].rev, false);
 });
 
 test("pullRemote sync applies remote launcher without uploading local state", async () => {
@@ -203,23 +187,14 @@ function webAppRecord(input: { id: string; name: string; updatedAt: number; devi
 async function runFakeSync(
   initialState: SyncV2State,
   options: { mode?: "merge" | "pullRemote" | "pushLocal" } = {},
-): Promise<{ savedState: SyncV2State; store: SyncV2Store }> {
+): Promise<{ savedState: SyncV2State }> {
   let savedState = initialState;
-  let store: SyncV2Store = {
-    schemaVersion: 2,
-    deviceId: "phone",
-    counter: 0,
-  };
   await syncV2({
     settings: {
       webDavUrl: "https://example.com/dav",
       username: "",
       password: "",
       deviceId: "phone",
-    },
-    loadStore: async () => store,
-    saveStore: async (next) => {
-      store = next;
     },
     loadState: async () => savedState,
     saveState: async (next) => {
@@ -228,7 +203,7 @@ async function runFakeSync(
     withLocalLock: async (operation) => operation(),
     mode: options.mode,
   });
-  return { savedState, store };
+  return { savedState };
 }
 
 async function withFakeFetch<T>(server: FakeWebDavServer, operation: () => Promise<T>): Promise<T> {

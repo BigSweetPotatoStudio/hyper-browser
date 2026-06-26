@@ -1,17 +1,10 @@
 import { createSyncBackgroundController } from "@hyper-sync/background";
 import { createHyperBackgroundCommandHandler } from "@hyper-sync/hyper-background";
-import {
-  deleteAndroidBookmarkFromSync,
-  deleteAndroidWebAppFromSync,
-  runAndroidWebDavSync,
-  runAndroidWebDavSyncIfEnabled,
-  saveAndroidBookmarkToSync,
-  saveAndroidLauncherLayoutToSync,
-  saveAndroidWebAppToSync,
-} from "./webdav-sync";
-import type { BookmarkRecord, WebAppRecord } from "@hyper-sync";
-import type { LauncherJson } from "@hyper-sync/sync-json-types";
-import type { WebDavSyncResult } from "./hyper-browser";
+import { canonicalJson } from "@hyper-sync/op-log";
+import { createSyncStateService, type SyncStateRunOptions } from "@hyper-sync/state-sync";
+import type { BookmarkRecord, SyncSettings, WebAppRecord } from "@hyper-sync";
+import type { LauncherJson, SyncJsonByFileName, SyncJsonFileName } from "@hyper-sync/sync-json-types";
+import type { BrowserSettings, WebDavSyncResult, WebDavSyncSettings } from "./hyper-browser";
 
 const NATIVE_APP = "hyperBrowser";
 const BACKGROUND_TARGET = "hyper.internal.background";
@@ -19,6 +12,7 @@ const AUTO_SYNC_DEBOUNCE_MS = 1800;
 const REMOTE_SYNC_ALARM = "hyper-browser-android-remote-sync";
 const REMOTE_SYNC_ALARM_MINUTES = 1;
 const NATIVE_COMMAND_PORT_TARGET = "hyper.internal.nativeCommandPort";
+const ANDROID_SYNC_CLIENT_VERSION = "3";
 
 const internalPageMessageTypes = new Set([
   "data.home",
@@ -71,7 +65,22 @@ const contentScriptMessageTypes = new Set([
 let fallbackRemoteCheckTimer: ReturnType<typeof setInterval> | null = null;
 let commandQueue: Promise<unknown> = Promise.resolve();
 
-const syncBackground = createSyncBackgroundController<WebDavSyncResult>({
+const androidSyncService = createSyncStateService({
+  loadSettings: requestSettingsData,
+  ensureSettings: ensureAndroidDeviceId,
+  toSyncSettings: androidSyncSettings,
+  syncFiles: {
+    readFile: readAndroidSyncFile,
+    saveFile: saveAndroidSyncFile,
+  },
+  buildResult: ({ base, settings }) => ({
+    ...base,
+    deviceId: settings.webDavSyncDeviceId,
+    settings,
+  }),
+});
+
+const syncBackground = createSyncBackgroundController({
   debounceMs: AUTO_SYNC_DEBOUNCE_MS,
   syncNow: runAndroidWebDavSync,
   syncIfEnabled: runAndroidWebDavSyncIfEnabled,
@@ -80,7 +89,7 @@ const syncBackground = createSyncBackgroundController<WebDavSyncResult>({
   onError: (_scope, error) => console.warn("Launcher sync failed.", error),
 });
 
-const hyperCommands = createHyperBackgroundCommandHandler<WebDavSyncResult>({
+const hyperCommands = createHyperBackgroundCommandHandler({
   sync: syncBackground,
   listBookmarks,
   findBookmarkByUrl,
@@ -178,74 +187,112 @@ function ensureNativeCommandPort(): void {
 }
 
 async function requestLauncherLayout(): Promise<LauncherJson | null> {
-  const response = await requestNativeObject<{ layout?: object | null }>("data.launcherLayout");
-  return isLauncherJson(response.layout) ? response.layout : null;
+  return androidSyncService.loadLauncherLayout();
 }
 
 async function saveLauncherLayout(layout: unknown): Promise<void> {
   if (isLauncherJson(layout)) {
-    await saveAndroidLauncherLayoutToSync(layout);
+    await androidSyncService.saveLauncherLayout(layout);
   }
 }
 
 async function listBookmarks(): Promise<BookmarkRecord[]> {
-  return (await requestNativeItems("data.bookmarks")).filter(isBookmarkRecord);
+  return androidSyncService.loadBookmarks();
 }
 
 async function findBookmarkByUrl(input: { url: string }): Promise<unknown | null> {
-  const targetUrl = normalizeBookmarkUrlKey(input.url);
-  if (!targetUrl) return null;
-  const bookmarks = await listBookmarks();
-  return bookmarks.find((bookmark) => {
-    const candidate = normalizeBookmarkUrlKey(typeof bookmark.url === "string" ? bookmark.url : "");
-    return candidate === targetUrl;
-  }) || null;
+  return androidSyncService.findBookmarkByUrl(input.url);
 }
 
 async function saveBookmark(input: unknown): Promise<unknown[]> {
   if (!isPlainObject(input)) throw new Error("Invalid bookmark payload.");
-  await saveAndroidBookmarkToSync(input as Partial<BookmarkRecord> & { oldUrl?: string });
-  return requestNativeItems("data.bookmarks");
+  return androidSyncService.saveBookmark(input);
 }
 
 async function deleteBookmark(input: { url?: string }): Promise<unknown[]> {
-  await deleteAndroidBookmarkFromSync(input);
-  return requestNativeItems("data.bookmarks");
-}
-
-function isBookmarkRecord(value: unknown): value is BookmarkRecord {
-  if (!isPlainObject(value)) return false;
-  const url = stringFromUnknown(value.url);
-  return !!url;
-}
-
-function isWebAppRecord(value: unknown): value is WebAppRecord {
-  if (!isPlainObject(value)) return false;
-  return !!stringFromUnknown(value.id) && !!stringFromUnknown(value.startUrl);
+  return androidSyncService.deleteBookmark(input);
 }
 
 async function listWebApps(): Promise<unknown[]> {
-  return requestNativeItems("data.apps");
+  return androidSyncService.loadWebApps();
 }
 
 async function findWebAppsByUrl(input: { url: string }): Promise<WebAppRecord[]> {
-  const targetUrl = normalizeBookmarkUrlKey(input.url);
-  if (!targetUrl) return [];
-  const webApps = await listWebApps();
-  return webApps.filter((app): app is WebAppRecord => {
-    if (!isWebAppRecord(app)) return false;
-    return normalizeBookmarkUrlKey(app.startUrl) === targetUrl;
-  });
+  return androidSyncService.findWebAppsByUrl(input.url);
 }
 
 async function saveWebApp(input: Partial<WebAppRecord> & { name: string; startUrl: string }): Promise<unknown[]> {
-  await saveAndroidWebAppToSync(input);
-  return requestNativeItems("data.apps");
+  return androidSyncService.saveWebApp(input);
 }
 
 async function deleteWebApp(input: unknown): Promise<unknown[]> {
-  await deleteAndroidWebAppFromSync(input as string | Partial<WebAppRecord> | null | undefined);
-  return requestNativeItems("data.apps");
+  return androidSyncService.deleteWebApp(input as string | Partial<WebAppRecord> | null | undefined);
+}
+
+async function runAndroidWebDavSync(input?: SyncStateRunOptions<BrowserSettings>): Promise<WebDavSyncResult> {
+  return androidSyncService.syncNow(input);
+}
+
+async function runAndroidWebDavSyncIfEnabled(): Promise<WebDavSyncResult | null> {
+  const settings = await requestSettingsData();
+  if (!settings.webDavSyncEnabled || !settings.webDavSyncUrl.trim()) return null;
+  return androidSyncService.syncNow({ settings });
+}
+
+async function ensureAndroidDeviceId(settings: BrowserSettings): Promise<BrowserSettings> {
+  if (settings.webDavSyncDeviceId) return settings;
+  return updateWebDavSyncSettings({
+    webDavSyncEnabled: settings.webDavSyncEnabled,
+    webDavSyncUrl: settings.webDavSyncUrl,
+    webDavSyncUsername: settings.webDavSyncUsername,
+    webDavSyncPassword: settings.webDavSyncPassword,
+    webDavSyncDeviceName: settings.webDavSyncDeviceName,
+  });
+}
+
+function androidSyncSettings(settings: BrowserSettings): SyncSettings {
+  return {
+    webDavUrl: settings.webDavSyncUrl,
+    username: settings.webDavSyncUsername,
+    password: settings.webDavSyncPassword,
+    folderTitle: "Hyper Browser",
+    folderId: "",
+    deviceName: settings.webDavSyncDeviceName,
+    deviceId: settings.webDavSyncDeviceId,
+  };
+}
+
+async function requestSettingsData(): Promise<BrowserSettings> {
+  return requestNativeObject<BrowserSettings>("data.settings");
+}
+
+async function readAndroidSyncFile(path: SyncJsonFileName): Promise<unknown | null> {
+  const response = await requestNativeObject<{ content?: string | object | null }>("sync.localFile.read", {
+    syncClientVersion: ANDROID_SYNC_CLIENT_VERSION,
+    path,
+  });
+  const content = response.content;
+  if (typeof content !== "string") return content ?? null;
+  if (!content.trim()) return null;
+  return JSON.parse(content) as unknown;
+}
+
+async function saveAndroidSyncFile(path: SyncJsonFileName, data: SyncJsonByFileName[SyncJsonFileName]): Promise<void> {
+  await requestNativeObject("sync.localFile.save", {
+    syncClientVersion: ANDROID_SYNC_CLIENT_VERSION,
+    path,
+    content: canonicalJson(data),
+  });
+}
+
+async function updateWebDavSyncSettings(settings: WebDavSyncSettings): Promise<BrowserSettings> {
+  return requestNativeObject<BrowserSettings>("sync.webdav.update", {
+    enabled: settings.webDavSyncEnabled ? "true" : "false",
+    url: settings.webDavSyncUrl,
+    username: settings.webDavSyncUsername,
+    password: settings.webDavSyncPassword,
+    deviceName: settings.webDavSyncDeviceName,
+  });
 }
 
 async function requestNativeObject<T = unknown>(type: string, payload: Record<string, unknown> = {}): Promise<T> {
@@ -256,31 +303,6 @@ async function requestNativeObject<T = unknown>(type: string, payload: Record<st
     throw new Error(typeof response?.error === "string" ? response.error : "Hyper native bridge request failed.");
   }
   return response.data as T;
-}
-
-async function requestNativeItems<T = unknown>(type: string, payload: Record<string, unknown> = {}): Promise<T[]> {
-  const sendNativeMessage = browser?.runtime?.sendNativeMessage;
-  if (!sendNativeMessage) throw new Error("Hyper native bridge unavailable.");
-  const response = parseBridgeResponse(await sendNativeMessage(NATIVE_APP, { type, payload }));
-  if (!response || response.ok !== true) {
-    throw new Error(typeof response?.error === "string" ? response.error : "Hyper native bridge request failed.");
-  }
-  if (!response.itemsJson) return [];
-  const items = JSON.parse(response.itemsJson) as unknown;
-  return Array.isArray(items) ? items as T[] : [];
-}
-
-function normalizeBookmarkUrlKey(value: string): string {
-  try {
-    const url = new URL(value.trim());
-    return url.toString();
-  } catch {
-    return value.trim();
-  }
-}
-
-function stringFromUnknown(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
 }
 
 function isLauncherJson(value: unknown): value is LauncherJson {

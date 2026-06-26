@@ -1167,7 +1167,11 @@ export function LauncherPage({
     if (!entry || entry.kind !== "app" || !platform.deleteApp) return;
     Promise.resolve(platform.deleteApp(entry.app))
       .then((nextApps) => {
-        if (Array.isArray(nextApps)) setApps(nextApps);
+        if (Array.isArray(nextApps)) {
+          setApps(nextApps);
+        } else {
+          setApps((current) => current.filter((item) => item.id !== entry.app.id));
+        }
         commitLayout((current) => withLayoutParts(current, {
           cells: removeFromCells(desktopCellsFromLauncherLayout(current), itemId),
           dockIds: launcherCellIds(current.dock).filter((id) => id !== itemId),
@@ -2130,10 +2134,9 @@ function normalizeLauncherLayout(value: unknown): LauncherJson {
 
 function normalizeLauncherRevision(value: unknown): LauncherJson["rev"] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { updatedAt: 0, deviceId: "" };
-  const source = value as Partial<LauncherJson["rev"]> & { counter?: unknown };
-  const rawUpdatedAt = Number.isSafeInteger(source.updatedAt) ? source.updatedAt : source.counter;
+  const source = value as Partial<LauncherJson["rev"]>;
   return {
-    updatedAt: Number.isSafeInteger(rawUpdatedAt) ? Number(rawUpdatedAt) : 0,
+    updatedAt: Number.isSafeInteger(source.updatedAt) ? Number(source.updatedAt) : 0,
     deviceId: typeof source.deviceId === "string" ? source.deviceId : "",
   };
 }
