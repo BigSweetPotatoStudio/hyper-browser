@@ -8,8 +8,8 @@ import {
   type LauncherPlatform,
   type LauncherSystemEntryTheme,
 } from "@hyper-launcher";
-import { formatBrowserSyncResult, isBrowserSyncResult } from "@hyper-sync/browser-sync";
 import { createLauncherWebDavSyncLabels, useLauncherWebDavSync, type LauncherWebDavSyncEvent, type LauncherWebDavSyncOptions } from "@hyper-sync/launcher-webdav-sync";
+import { formatSyncResult, isSyncResultLike } from "@hyper-sync/sync-result";
 import type { SyncSettingsDialogValues } from "@hyper-sync/settings-dialog";
 import "../hyper-browser";
 import type { BrowserSettings, WebAppItem, WebDavSyncResult } from "../hyper-browser";
@@ -52,7 +52,7 @@ function HomePage() {
       if (message.type !== "remote.synced" && message.type !== "launcher.changed") return;
       listener({
         type: message.type,
-        syncResult: isBrowserSyncResult(message.syncResult) ? message.syncResult as WebDavSyncResult : null,
+        syncResult: isSyncResultLike(message.syncResult) ? message.syncResult as WebDavSyncResult : null,
       });
     };
     browser?.runtime?.onMessage?.addListener(onMessage);
@@ -175,7 +175,7 @@ function isHttpUrl(value: string) {
 }
 
 function webDavSyncSummary(result: WebDavSyncResult): string {
-  return formatBrowserSyncResult(result, {
+  return formatSyncResult(result, {
     complete: ({ bookmarks, webApps, deleted }) => t("settings.webDavSyncComplete", {
       bookmarks,
       webApps,

@@ -28,7 +28,7 @@ export type WebAppSaveInput = Partial<WebAppRecord> & {
   startUrl: string;
 };
 
-export type HyperBackgroundAdapter<TSyncResult extends SyncBackgroundSignal> = {
+export type BackgroundAdapter<TSyncResult extends SyncBackgroundSignal> = {
   sync: SyncBackgroundController<TSyncResult>;
   getSettings?: () => Promise<unknown>;
   getCurrentPage?: () => Promise<CurrentPageInfo>;
@@ -46,13 +46,57 @@ export type HyperBackgroundAdapter<TSyncResult extends SyncBackgroundSignal> = {
   shouldScheduleAfterMutation?: boolean | ((type: string) => boolean);
 };
 
+export type SyncStateBackgroundService = {
+  loadBookmarks: () => Promise<unknown>;
+  findBookmarkByUrl: (url: string) => Promise<unknown>;
+  saveBookmark: (input: BookmarkUpdateInput) => Promise<unknown>;
+  deleteBookmark: (input: { url?: string }) => Promise<unknown>;
+  loadWebApps: () => Promise<unknown>;
+  findWebAppsByUrl: (url: string) => Promise<unknown>;
+  saveWebApp: (input: WebAppSaveInput) => Promise<unknown>;
+  deleteWebApp: (input: string | Partial<WebAppRecord> | null | undefined) => Promise<unknown>;
+  loadLauncherLayout: () => Promise<unknown>;
+  saveLauncherLayout: (layout: LauncherJson | null | undefined) => Promise<unknown>;
+};
+
+export type SyncStateBackgroundAdapterOptions<TSyncResult extends SyncBackgroundSignal> = {
+  sync: SyncBackgroundController<TSyncResult>;
+  state: SyncStateBackgroundService;
+  getSettings?: () => Promise<unknown>;
+  getCurrentPage?: () => Promise<CurrentPageInfo>;
+  notifyLauncherChanged?: (result?: TSyncResult) => void;
+  shouldScheduleAfterMutation?: boolean | ((type: string) => boolean);
+};
+
+export function createSyncStateBackgroundAdapter<TSyncResult extends SyncBackgroundSignal>(
+  options: SyncStateBackgroundAdapterOptions<TSyncResult>,
+): BackgroundAdapter<TSyncResult> {
+  return {
+    sync: options.sync,
+    getSettings: options.getSettings,
+    getCurrentPage: options.getCurrentPage,
+    listBookmarks: options.state.loadBookmarks,
+    findBookmarkByUrl: ({ url }) => options.state.findBookmarkByUrl(url),
+    saveBookmark: options.state.saveBookmark,
+    deleteBookmark: options.state.deleteBookmark,
+    listWebApps: options.state.loadWebApps,
+    findWebAppsByUrl: ({ url }) => options.state.findWebAppsByUrl(url),
+    saveWebApp: options.state.saveWebApp,
+    deleteWebApp: (input) => options.state.deleteWebApp(input as string | Partial<WebAppRecord> | null | undefined),
+    loadLauncherLayout: options.state.loadLauncherLayout,
+    saveLauncherLayout: (layout) => options.state.saveLauncherLayout(layout as LauncherJson),
+    notifyLauncherChanged: options.notifyLauncherChanged,
+    shouldScheduleAfterMutation: options.shouldScheduleAfterMutation,
+  };
+}
+
 type LauncherLayoutMutation = {
   changed: boolean;
   layout: LauncherJson;
 };
 
-export function createHyperBackgroundCommandHandler<TSyncResult extends SyncBackgroundSignal>(
-  adapter: HyperBackgroundAdapter<TSyncResult>,
+export function createBackgroundCommandHandler<TSyncResult extends SyncBackgroundSignal>(
+  adapter: BackgroundAdapter<TSyncResult>,
 ) {
   async function handle(command: HyperBackgroundCommand): Promise<HyperBackgroundCommandResult> {
     switch (command.type) {

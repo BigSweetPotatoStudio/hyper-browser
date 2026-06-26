@@ -29,7 +29,7 @@ export function createSyncBackgroundController<TSyncResult extends SyncBackgroun
   syncNow: (runOptions?: SyncBackgroundRunOptions) => Promise<TSyncResult>;
   syncIfEnabled: () => Promise<TSyncResult | null>;
   notifyLauncherChanged?: (result: TSyncResult) => void;
-  notifyRemoteSynced?: (updatedAt: number, result: TSyncResult) => void;
+  notifySyncResult?: (updatedAt: number, result: TSyncResult) => void;
   onError?: (scope: string, error: unknown) => void;
 }): SyncBackgroundController<TSyncResult> {
   let syncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -63,7 +63,7 @@ export function createSyncBackgroundController<TSyncResult extends SyncBackgroun
     }
     syncPending = false;
     const result = await runExclusive(() => options.syncNow(runOptions));
-    options.notifyRemoteSynced?.(Date.now(), result);
+    options.notifySyncResult?.(Date.now(), result);
     return result;
   }
 
@@ -83,7 +83,7 @@ export function createSyncBackgroundController<TSyncResult extends SyncBackgroun
         syncResult: result,
       };
       if (response.changed && checkOptions.notifyPages) {
-        options.notifyRemoteSynced?.(updatedAt, result);
+        options.notifySyncResult?.(updatedAt, result);
       }
       return response;
     } finally {

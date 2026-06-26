@@ -38,6 +38,8 @@ export type SyncV2Operation =
   | SyncV2BaseOperation<"app.delete"> & { appId: string }
   | SyncV2BaseOperation<"layout.replace"> & { layout: LauncherJson };
 
+type BookmarkDeleteOperation = Extract<SyncV2Operation, { type: "bookmark.delete" }>;
+
 type SyncV2BaseOperation<T extends string> = {
   schemaVersion: 2;
   opId: string;
@@ -1083,7 +1085,7 @@ function applyOperationInPlace(state: SyncV2State, operation: SyncV2Operation): 
     return;
   }
   if (operation.type === "bookmark.delete") {
-    const key = bookmarkDeleteOperationKey(state, operation);
+    const key = bookmarkDeleteOperationKey(operation);
     if (!key) return;
     const matches = bookmarkRecordsForTombstoneKey(state.bookmarks, key);
     if (matches.some((current) => compareRevision(current.rev, rev) > 0)) return;
@@ -1325,12 +1327,8 @@ function bookmarkDeleteInput(bookmark: BookmarkRecord): BookmarkDeleteInput {
   };
 }
 
-function bookmarkDeleteOperationKey(_state: SyncV2State, operation: SyncV2Operation): string {
-  const legacy = operation as unknown as Record<string, unknown>;
-  const url = typeof legacy.url === "string"
-    ? legacy.url.trim()
-    : "";
-  return bookmarkUrlKey(url);
+function bookmarkDeleteOperationKey(operation: BookmarkDeleteOperation): string {
+  return bookmarkUrlKey(operation.url?.trim() || "");
 }
 
 function bookmarkRecordKey(bookmark: Pick<BookmarkRecord, "url">): string {

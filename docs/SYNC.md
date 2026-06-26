@@ -6,9 +6,13 @@
 - `shared/sync/src/op-log.ts`
 - `shared/sync/src/state-sync.ts`
 - `shared/sync/src/background.ts`
-- `shared/sync/src/hyper-background.ts`
-- `shared/sync/src/browser-sync.ts`
+- `shared/sync/src/background-adapter.ts`
+- `shared/sync/src/sync-result.ts`
+- `internal-pages/src/android-sync.ts`
 - `internal-pages/src/background.ts`
+- `companion-extension/src/companion-bookmarks.ts`
+- `companion-extension/src/companion-sync.ts`
+- `companion-extension/src/background.ts`
 - `app/src/main/java/com/dadigua/hyperbrowser/sync/WebDavLocalSyncAdapter.kt`
 
 ## 文件模型
@@ -74,11 +78,20 @@ Android 本地也保留同形态业务文件：
 页面 / popup
   -> window.hyperBrowser 或 browser.runtime.sendMessage(...)
   -> internal-pages/src/background.ts 或 companion-extension/src/background.ts
-  -> shared/sync/src/hyper-background.ts
-  -> shared/sync/src/state-sync.ts 或 shared/sync/src/browser-sync.ts
+  -> shared/sync/src/background-adapter.ts
+  -> internal-pages/src/android-sync.ts 或 companion-extension/src/companion-sync.ts
+  -> shared/sync/src/state-sync.ts
   -> shared/sync/src/op-log.ts
   -> 本地 JSON / WebDAV
 ```
+
+`shared/sync/src/background-adapter.ts` 定义通用命令处理、`BackgroundAdapter` 接口，以及
+`createSyncStateBackgroundAdapter`。Android 侧在 `internal-pages/src/android-sync.ts` 复用同一个适配器构造，
+`internal-pages/src/background.ts` 只接入 `androidSync`；通用的 `bookmarks.*`、`webapps.*` 和
+`launcher.layout.*` 映射都留在 shared。
+companion 侧在 `companion-extension/src/companion-sync.ts` 复用同一个适配器构造，只覆盖 Chrome/Firefox
+书签文件夹投影这类浏览器专用差异。具体书签文件夹读写放在
+`companion-extension/src/companion-bookmarks.ts`，不放进 `shared/sync`。
 
 统一命令包括：
 
@@ -101,7 +114,8 @@ Android 本地也保留同形态业务文件：
 
 ## Android 本地桥
 
-Android 内置页 background 通过 `shared/sync/src/state-sync.ts` 执行业务合并和同步；`internal-pages/src/background.ts` 只把 native bridge 暴露为本地同步文件适配：
+Android 内置页 background 通过 `internal-pages/src/android-sync.ts` 接入 `shared/sync/src/state-sync.ts`
+执行业务合并和同步；`internal-pages/src/background.ts` 只负责接收页面命令、转发 native bridge 和通知页面：
 
 - `sync.localFile.read`
 - `sync.localFile.save`

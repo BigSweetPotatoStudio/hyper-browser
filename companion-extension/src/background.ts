@@ -1,10 +1,10 @@
 import { browser, type Browser } from "wxt/browser";
-import type { BrowserBookmarkEvent } from "@hyper-sync/browser-sync";
 import { createSyncBackgroundController, type SyncBackgroundRunOptions } from "@hyper-sync/background";
-import { createHyperBackgroundCommandHandler } from "@hyper-sync/hyper-background";
+import { createBackgroundCommandHandler } from "@hyper-sync/background-adapter";
+import type { BrowserBookmarkEvent } from "./companion-bookmarks";
+import { companionSync } from "./companion-sync";
 import { loadSettings } from "./storage";
-import { browserSyncService } from "./sync";
-import type { SyncResult, WebAppRecord } from "./types";
+import type { SyncResult } from "./types";
 
 const MAX_CAPTURED_ICON_BYTES = 1024 * 1024;
 const CAPTURED_ICON_SIZE = 128;
@@ -19,32 +19,18 @@ const syncBackground = createSyncBackgroundController({
   syncNow: runBookmarkSyncNow,
   syncIfEnabled: syncIfConfigured,
   notifyLauncherChanged,
-  notifyRemoteSynced,
+  notifySyncResult,
   onError: (_scope, error) => console.error(error),
 });
 
-const hyperCommands = createHyperBackgroundCommandHandler({
+const backgroundAdapter = companionSync.createBackgroundAdapter({
   sync: syncBackground,
   getSettings: loadSettings,
   getCurrentPage: getCurrentPageInfo,
-  listBookmarks: browserSyncService.loadRemoteBookmarks,
-  findBookmarkByUrl: ({ url }) => browserSyncService.findBookmarkByUrl(url),
-  saveBookmark: (input) => browserSyncService.addBookmarkToSyncFolder({
-    title: input.title || input.url || "",
-    url: input.url || "",
-  }),
-  deleteBookmark: browserSyncService.deleteRemoteBookmark,
-  listWebApps: browserSyncService.loadRemoteWebApps,
-  findWebAppsByUrl: ({ url }) => browserSyncService.findWebAppsByUrl(url),
-  saveWebApp: browserSyncService.saveRemoteWebApp,
-  deleteWebApp: (input) => browserSyncService.deleteRemoteWebApp(input as string | Partial<WebAppRecord>),
-  loadLauncherLayout: browserSyncService.loadLauncherLayout,
-  saveLauncherLayout: (layout) => browserSyncService.saveLauncherLayout(layout as Parameters<typeof browserSyncService.saveLauncherLayout>[0]),
   notifyLauncherChanged,
-  shouldScheduleAfterMutation: (type) =>
-    type.startsWith("webapps.") ||
-    type.startsWith("launcher.layout."),
 });
+
+const hyperCommands = createBackgroundCommandHandler(backgroundAdapter);
 
 export function startBackground(): void {
   browser.runtime.onInstalled.addListener(() => {
@@ -124,7 +110,7 @@ function ensureRemoteSyncAlarm() {
 }
 
 async function runBookmarkSyncNow(options?: SyncBackgroundRunOptions) {
-  return browserSyncService.syncNow(options);
+  return companionSync.syncNow(options);
 }
 
 async function syncIfConfigured(): Promise<SyncResult | null> {
@@ -145,7 +131,7 @@ function scheduleChromeBookmarkSnapshot(event?: BrowserBookmarkEvent): void {
 async function flushChromeBookmarkSnapshot(): Promise<void> {
   const events = pendingChromeBookmarkEvents;
   pendingChromeBookmarkEvents = [];
-  const changed = await browserSyncService.recordLocalBookmarkFolderSnapshot(events);
+  const changed = await companionSync.recordLocalBookmarkFolderSnapshot(events);
   if (changed === null) {
     pendingChromeBookmarkEvents.push(...events);
     scheduleChromeBookmarkSnapshot();
@@ -154,7 +140,7 @@ async function flushChromeBookmarkSnapshot(): Promise<void> {
   if (changed) syncBackground.scheduleSync();
 }
 
-function notifyRemoteSynced(updatedAt: number, syncResult: SyncResult): void {
+function notifySyncResult(updatedAt: number, syncResult: SyncResult): void {
   browser.runtime.sendMessage({ type: "remote.synced", updatedAt, syncResult }).catch(() => undefined);
 }
 

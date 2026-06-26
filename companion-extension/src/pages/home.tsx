@@ -8,13 +8,13 @@ import {
   defaultLauncherSystemEntries,
   type LauncherPlatform,
 } from "@hyper-launcher";
-import { formatBrowserSyncResult, isBrowserSyncResult } from "@hyper-sync/browser-sync";
 import {
   defaultLauncherWebDavSyncLabels,
   useLauncherWebDavSync,
   type LauncherWebDavSyncEvent,
   type LauncherWebDavSyncOptions,
 } from "@hyper-sync/launcher-webdav-sync";
+import { formatSyncResult, isSyncResultLike } from "@hyper-sync/sync-result";
 import type { SyncSettingsDialogValues } from "@hyper-sync/settings-dialog";
 import { DEFAULT_DEVICE_NAME } from "../identity";
 import { getDefaultSettings, loadSettings, saveSettings } from "../storage";
@@ -71,7 +71,7 @@ function CompanionHomePage() {
       if (message?.type !== "remote.synced" && message?.type !== "launcher.changed") return;
       listener({
         type: message.type,
-        syncResult: isBrowserSyncResult(message.syncResult) ? message.syncResult as SyncResult : null,
+        syncResult: isSyncResultLike(message.syncResult) ? message.syncResult as SyncResult : null,
       });
     };
     browser.runtime.onMessage.addListener(onMessage);
@@ -90,7 +90,7 @@ function CompanionHomePage() {
       options?.mode ? { mode: options.mode } : undefined,
     ),
     scheduleSyncSoon: () => sendCommand("sync.soon"),
-    summarizeResult: formatBrowserSyncResult,
+    summarizeResult: formatSyncResult,
     subscribeSyncEvents,
   }), [saveSyncSettings, subscribeSyncEvents]);
   const webDavSync = useLauncherWebDavSync(webDavOptions);

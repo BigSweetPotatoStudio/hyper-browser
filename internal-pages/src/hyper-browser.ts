@@ -1,4 +1,5 @@
 import type { BookmarkRecord, WebAppRecord } from "@hyper-sync";
+import type { SyncStateResultBase } from "@hyper-sync/state-sync";
 import type { LauncherJson } from "@hyper-sync/sync-json-types";
 import { sendBackgroundCommand } from "./background-command";
 
@@ -73,22 +74,8 @@ type WebDavSyncSettings = Pick<BrowserSettings,
   "webDavSyncDeviceName"
 >;
 
-type WebDavSyncResult = {
-  stateChanged: boolean;
-  launcherChanged: boolean;
-  bookmarkCount: number;
-  webAppCount: number;
-  deletedBookmarkCount: number;
-  deletedWebAppCount: number;
-  importedBookmarkCount: number;
-  removedBookmarkCount: number;
-  importedWebAppCount: number;
-  removedWebAppCount: number;
-  syncedAt: number;
+type WebDavSyncResult = SyncStateResultBase & {
   deviceId: string;
-  uploadedOperationCount: number;
-  remoteOperationCount: number;
-  pendingOperationCount: number;
   settings?: BrowserSettings;
 };
 
