@@ -1305,7 +1305,7 @@ export function LauncherPage({
               <header className="desktop-folder-header">
                 <h2>{openFolder.title}</h2>
                 <div className="desktop-folder-actions">
-                  {editMode && <button type="button" onClick={() => renameFolder(openFolder.id)}>{labels.renameFolder}</button>}
+                  <button type="button" onClick={() => renameFolder(openFolder.id)}>{labels.renameFolder}</button>
                   <button type="button" onClick={() => setOpenFolderId(null)}>{labels.done}</button>
                 </div>
               </header>

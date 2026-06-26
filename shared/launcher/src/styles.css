@@ -647,13 +647,18 @@
 
 .desktop-folder-actions {
   display: flex;
+  flex: 0 0 auto;
   gap: 8px;
 }
 
 .desktop-folder-header h2 {
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
   font-size: 20px;
   font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .desktop-menu-scrim {
