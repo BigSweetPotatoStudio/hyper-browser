@@ -43,10 +43,10 @@ function CompanionHomePage() {
     deprecatedEntryIds: DEPRECATED_ENTRY_IDS,
     loadApps: () => sendCommand<WebAppRecord[]>("webapps.list"),
     openApp: (app) => {
-      openTab(app.startUrl);
+      openCurrentTab(app.startUrl);
     },
     openSystem: (action) => {
-      openTab(systemUrl(action));
+      openCurrentTab(systemUrl(action));
     },
     deleteApp: (app) => sendCommand<WebAppRecord[]>("webapps.delete", { id: app.id }),
     saveApp: (app, changes) => sendCommand<WebAppRecord[]>("webapps.save", {
@@ -154,9 +154,9 @@ function normalizeSettings(settings: SyncSettings): SyncSettings {
   };
 }
 
-function openTab(url: string): void {
-  browser.tabs.create({ url }).catch((error) => {
-    console.warn("Unable to open tab.", error);
+function openCurrentTab(url: string): void {
+  browser.tabs.update({ url }).catch((error) => {
+    console.warn("Unable to open in current tab.", error);
   });
 }
 

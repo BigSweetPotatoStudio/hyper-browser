@@ -17,6 +17,11 @@ export default defineConfig({
     description: "Desktop launcher and WebDAV companion for Hyper Browser WebApps and bookmarks.",
     permissions: ["activeTab", "alarms", "bookmarks", "scripting", "storage"],
     host_permissions: ["http://*/*", "https://*/*"],
+    chrome_url_overrides: browser === "chrome"
+      ? {
+          newtab: "home.html",
+        }
+      : undefined,
     icons: iconSet,
     action: {
       default_icon: iconSet,
