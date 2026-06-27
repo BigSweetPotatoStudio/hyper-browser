@@ -78,9 +78,6 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
   if (shared.handled) return shared.data;
 
   switch (message.type) {
-    case "open.options":
-      await browser.runtime.openOptionsPage();
-      return null;
     case "open.home":
       await browser.tabs.create({ url: browser.runtime.getURL("/home.html") });
       return null;

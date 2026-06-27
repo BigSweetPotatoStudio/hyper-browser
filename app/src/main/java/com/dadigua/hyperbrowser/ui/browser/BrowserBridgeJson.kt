@@ -19,7 +19,6 @@ internal fun ok(data: JSONObject? = null): JSONObject {
     if (data != null) response.put("data", data)
     return response
 }
-
 internal fun okData(data: JSONObject): JSONObject =
     JSONObject().put("ok", true).put("data", data)
 
@@ -130,47 +129,6 @@ internal fun List<WebAppDefinition>.toWebAppsJsonString(app: HyperBrowserApp): S
                 .put("createdAt", webApp.createdAt)
                 .put("lastOpenedAt", webApp.lastOpenedAt)
         )
-    }
-    return array.toString()
-}
-
-internal fun searchSuggestionsJsonString(
-    bookmarks: List<BrowserBookmark>,
-    history: List<BrowserHistoryEntry>,
-    webApps: List<WebAppDefinition>
-): String {
-    val seen = mutableSetOf<String>()
-    val array = JSONArray()
-    bookmarks.forEach { bookmark ->
-        if (seen.add(bookmark.url)) {
-            array.put(
-                JSONObject()
-                    .put("title", bookmark.title)
-                    .put("url", bookmark.url)
-                    .put("source", "bookmark")
-            )
-        }
-    }
-    webApps.forEach { webApp ->
-        if (webApp.id.isNotBlank() && webApp.startUrl.isNotBlank()) {
-            array.put(
-                JSONObject()
-                    .put("id", webApp.id)
-                    .put("title", webApp.name)
-                    .put("url", webApp.startUrl)
-                    .put("source", "app")
-            )
-        }
-    }
-    history.filterNot { GeckoSessionController.isInternalUrl(it.url) }.forEach { entry ->
-        if (seen.add(entry.url)) {
-            array.put(
-                JSONObject()
-                    .put("title", entry.title)
-                    .put("url", entry.url)
-                    .put("source", "history")
-            )
-        }
     }
     return array.toString()
 }

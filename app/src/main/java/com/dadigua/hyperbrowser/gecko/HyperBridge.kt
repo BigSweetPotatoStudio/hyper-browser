@@ -16,13 +16,11 @@ object HyperBridge {
     private const val NATIVE_COMMAND_PORT_TARGET = "hyper.internal.nativeCommandPort"
     private val INTERNAL_PAGE_MESSAGE_TYPES = setOf(
         "data.home",
-        "data.search",
         "data.bookmarks",
         "data.history",
         "data.apps",
         "data.settings",
         "data.launcherLayout",
-        "search.submit",
         "settings.searchEngine.update",
         "settings.toolbarPosition.update",
         "settings.websiteDisplayMode.update",

@@ -38,13 +38,6 @@ type WebAppItem = {
   lastOpenedAt: number;
 };
 
-type SearchSuggestionItem = {
-  id?: string;
-  title?: string;
-  url: string;
-  source: "bookmark" | "history" | "app";
-};
-
 type BrowserSettings = {
   searchEngineId: "google" | "bing" | "custom";
   searchEngineName: string;
@@ -123,14 +116,12 @@ type BackupActionResult = {
 
 type HyperBridgeMessageType =
   | "data.home"
-  | "data.search"
   | "data.bookmarks"
   | "data.history"
   | "data.apps"
   | "data.settings"
   | "data.launcherLayout"
   | "launcher.layout.save"
-  | "search.submit"
   | "settings.searchEngine.update"
   | "settings.toolbarPosition.update"
   | "settings.websiteDisplayMode.update"
@@ -203,15 +194,12 @@ declare global {
 }
 
 type HyperBrowserApi = {
-  open(input: string): void;
   showBookmarks(): void;
   showHistory(): void;
-  showApps(): void;
   showSettings(): void;
   showExtensions(): void;
   requestHomeData(): Promise<HistoryItem[]>;
   requestAppsData(): Promise<WebAppItem[]>;
-  requestSearchData(): Promise<SearchSuggestionItem[]>;
   requestSettingsData(): Promise<BrowserSettings>;
   requestLauncherLayout(): Promise<LauncherJson | null>;
   saveLauncherLayout(layout: LauncherJson): Promise<void>;
@@ -302,17 +290,11 @@ function isLauncherJson(value: unknown): value is LauncherJson {
 }
 
 window.hyperBrowser = {
-  open(input) {
-    command("search.submit", { query: input });
-  },
   showBookmarks() {
     window.location.href = "hyper://bookmarks";
   },
   showHistory() {
     window.location.href = "hyper://history";
-  },
-  showApps() {
-    window.location.href = "hyper://apps";
   },
   showSettings() {
     window.location.href = "hyper://settings";
@@ -325,9 +307,6 @@ window.hyperBrowser = {
   },
   requestAppsData() {
     return requestData<WebAppItem>("data.apps");
-  },
-  requestSearchData() {
-    return requestData<SearchSuggestionItem>("data.search");
   },
   requestSettingsData() {
     return requestObject<BrowserSettings>("data.settings");
@@ -465,4 +444,4 @@ window.hyperBrowser = {
   }
 };
 
-export type { AvailableUpdate, BackupActionResult, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, SearchSuggestionItem, UpdateCheckResult, UpdateDownloadState, WebAppItem, WebDavSyncResult, WebDavSyncSettings };
+export type { AvailableUpdate, BackupActionResult, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, UpdateCheckResult, UpdateDownloadState, WebAppItem, WebDavSyncResult, WebDavSyncSettings };

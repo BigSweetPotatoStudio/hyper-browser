@@ -12,14 +12,12 @@ const NATIVE_COMMAND_PORT_TARGET = "hyper.internal.nativeCommandPort";
 
 const internalPageMessageTypes = new Set([
   "data.home",
-  "data.search",
   "data.bookmarks",
   "data.history",
   "data.apps",
   "data.settings",
   "data.launcherLayout",
   "launcher.layout.save",
-  "search.submit",
   "settings.searchEngine.update",
   "settings.toolbarPosition.update",
   "settings.websiteDisplayMode.update",

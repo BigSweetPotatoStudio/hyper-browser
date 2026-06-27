@@ -639,13 +639,6 @@ private fun BrowserScreen(
         val payload = bridgeMessage.optJSONObject("payload") ?: JSONObject()
         val response = when (bridgeMessage.optString("type")) {
             "data.home" -> okItems(profileStore.observeHistory().value.toHistoryJsonString(faviconStore))
-            "data.search" -> okItems(
-                searchSuggestionsJsonString(
-                    bookmarks = profileStore.observeBookmarks().value,
-                    history = profileStore.observeHistory().value,
-                    webApps = app.webApps.observeAll().value
-                )
-            )
             "data.bookmarks" -> okItems(profileStore.observeBookmarks().value.toBookmarksJsonString(faviconStore))
             "data.history" -> okItems(profileStore.observeHistory().value.toHistoryJsonString(faviconStore))
             "data.apps" -> okItems(app.webApps.observeAll().value.toWebAppsJsonString(app))
@@ -653,10 +646,6 @@ private fun BrowserScreen(
             "data.launcherLayout" -> okData(
                 JSONObject().put("layout", profileStore.loadLauncherLayout() ?: JSONObject.NULL)
             )
-            "search.submit" -> {
-                pendingHyperCommand = HyperCommand.Search.Submit(payload.optString("query"))
-                ok()
-            }
             "settings.searchEngine.update" -> {
                 profileStore.updateSearchEngine(
                     searchEngineId = payload.optString("searchEngineId"),
@@ -1066,7 +1055,6 @@ private fun BrowserScreen(
     val controller = tab.ensureController()
     val pageState by controller.state.collectAsState()
     val pageFullScreen by controller.fullScreen.collectAsState()
-    val onSearchPage = GeckoSessionController.isSearchUrl(pageState.url)
     val history by profileStore.observeHistory().collectAsState()
     val bookmarks by profileStore.observeBookmarks().collectAsState()
     val downloads by downloadStore.observeDownloads().collectAsState()
@@ -1102,8 +1090,7 @@ private fun BrowserScreen(
     val toolbarCollapseRangePx = with(density) { ToolbarAutoHideDragRange.toPx() }
     val canAutoCollapseToolbar = !pageFullScreen &&
         activePanel == BrowserPanel.None &&
-        BrowserSettings.isDynamicBottomToolbarPosition(settings.toolbarPosition) &&
-        !onSearchPage
+        BrowserSettings.isDynamicBottomToolbarPosition(settings.toolbarPosition)
     val animatedToolbarCollapseFraction by animateFloatAsState(
         targetValue = toolbarCollapseFraction,
         label = "toolbar-collapse"
@@ -1499,16 +1486,9 @@ private fun BrowserScreen(
                 tab.input = GeckoSessionController.HOME_URL
                 controller.loadHome()
             }
-            HyperRoute.Search -> {
-                controller.loadSearch()
-            }
             HyperRoute.Settings -> {
                 tab.input = GeckoSessionController.SETTINGS_URL
                 controller.loadSettings()
-            }
-            HyperRoute.Apps -> {
-                tab.input = GeckoSessionController.APPS_URL
-                controller.loadApps()
             }
             HyperRoute.Bookmarks -> {
                 tab.input = GeckoSessionController.BOOKMARKS_URL
@@ -1525,10 +1505,6 @@ private fun BrowserScreen(
     LaunchedEffect(pendingHyperCommand) {
         when (val command = pendingHyperCommand) {
             null -> return@LaunchedEffect
-            is HyperCommand.Search.Submit -> {
-                tab.input = command.query
-                controller.load(command.query, settings.searchUrlTemplate)
-            }
             is HyperCommand.Bookmarks.Open -> {
                 tab.input = command.url
                 controller.load(command.url)
@@ -1781,7 +1757,7 @@ private fun BrowserScreen(
                         closePanel()
                     }
                 )
-            } else if (!onSearchPage) {
+            } else {
                 val toolbar = @Composable {
                     val currentPageUrl = pageState.url.ifBlank { tab.input }
                     val currentPageIsInternal = GeckoSessionController.isInternalUrl(currentPageUrl)
@@ -1945,15 +1921,6 @@ private fun BrowserScreen(
                         onContentScrollDelta = ::handlePageContentScrollDelta
                     )
                 }
-            } else {
-                BrowserContent(
-                    controller = controller,
-                    tabId = tab.id,
-                    extensionPopup = extensionPopup,
-                    onClosePopup = app.extensions::closePopup,
-                    onContentTouchStarted = ::handlePageContentTouchStarted,
-                    onContentScrollDelta = ::handlePageContentScrollDelta
-                )
             }
         }
         pageContextMenu?.let { menu ->

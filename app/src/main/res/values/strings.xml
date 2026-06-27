@@ -238,9 +238,7 @@
     <string name="shortcut_request_create">Tap Create shortcut in the system prompt.</string>
     <string name="shortcut_request_unsupported">Home screen shortcuts are not supported by this launcher.</string>
     <string name="shortcut_request_failed">Shortcut request failed.</string>
-    <string name="internal_title_search">Search</string>
     <string name="internal_title_settings">Settings</string>
-    <string name="internal_title_apps">Apps</string>
     <string name="internal_title_bookmarks">Bookmarks</string>
     <string name="internal_title_history">History</string>
     <string name="shortcut_created">Shortcut created: %1$s</string>

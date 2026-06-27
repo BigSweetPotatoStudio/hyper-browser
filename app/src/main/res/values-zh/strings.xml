@@ -233,9 +233,7 @@
     <string name="shortcut_request_create">请在系统提示中点击创建快捷方式。</string>
     <string name="shortcut_request_unsupported">当前桌面启动器不支持快捷方式。</string>
     <string name="shortcut_request_failed">快捷方式请求失败。</string>
-    <string name="internal_title_search">搜索</string>
     <string name="internal_title_settings">设置</string>
-    <string name="internal_title_apps">Apps</string>
     <string name="internal_title_bookmarks">书签</string>
     <string name="internal_title_history">历史记录</string>
     <string name="shortcut_created">快捷方式已创建：%1$s</string>
