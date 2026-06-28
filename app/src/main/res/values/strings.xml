@@ -141,6 +141,9 @@
     <string name="menu_back">Back</string>
     <string name="menu_forward">Forward</string>
     <string name="menu_reload">Reload</string>
+    <string name="floating_action_home">Home</string>
+    <string name="floating_action_tabs">Tabs</string>
+    <string name="floating_action_more">More</string>
     <string name="menu_extensions_enabled">%1$d enabled</string>
     <string name="menu_extensions_installed_none_enabled">%1$d installed, none enabled</string>
     <string name="menu_no_extensions_enabled">No extensions enabled</string>

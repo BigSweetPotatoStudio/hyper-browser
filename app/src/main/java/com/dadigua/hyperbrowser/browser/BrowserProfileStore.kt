@@ -46,6 +46,8 @@ data class BrowserSettings(
     val searchEngineId: String = SEARCH_ENGINE_GOOGLE,
     val customSearchUrl: String = "",
     val toolbarPosition: String = TOOLBAR_POSITION_DYNAMIC_BOTTOM,
+    val floatingDotXRatio: Float = FLOATING_DOT_POSITION_UNSET,
+    val floatingDotYRatio: Float = FLOATING_DOT_POSITION_UNSET,
     val websiteDisplayMode: String = WEBSITE_DISPLAY_MOBILE,
     val backgroundVideoEnhancementEnabled: Boolean = false,
     val openNewTabsInCurrentTab: Boolean = false,
@@ -90,6 +92,8 @@ data class BrowserSettings(
         const val TOOLBAR_POSITION_TOP = "top"
         const val TOOLBAR_POSITION_BOTTOM = "bottom"
         const val TOOLBAR_POSITION_DYNAMIC_BOTTOM = "dynamic_bottom"
+        const val TOOLBAR_POSITION_FLOATING_DOT = "floating_dot"
+        const val FLOATING_DOT_POSITION_UNSET = -1f
         const val DEFAULT_DOH_PROVIDER_URL = "https://mozilla.cloudflare-dns.com/dns-query"
         const val PRIVACY_PROTECTION_NONE = "none"
         const val PRIVACY_PROTECTION_STANDARD = "standard"
@@ -113,6 +117,7 @@ data class BrowserSettings(
                 TOOLBAR_POSITION_TOP -> TOOLBAR_POSITION_TOP
                 TOOLBAR_POSITION_BOTTOM -> TOOLBAR_POSITION_BOTTOM
                 TOOLBAR_POSITION_DYNAMIC_BOTTOM -> TOOLBAR_POSITION_DYNAMIC_BOTTOM
+                TOOLBAR_POSITION_FLOATING_DOT -> TOOLBAR_POSITION_FLOATING_DOT
                 else -> TOOLBAR_POSITION_DYNAMIC_BOTTOM
             }
 
@@ -121,6 +126,12 @@ data class BrowserSettings(
 
         fun isDynamicBottomToolbarPosition(value: String): Boolean =
             value == TOOLBAR_POSITION_DYNAMIC_BOTTOM
+
+        fun isFloatingDotToolbarPosition(value: String): Boolean =
+            value == TOOLBAR_POSITION_FLOATING_DOT
+
+        fun normalizedFloatingDotRatio(value: Float): Float =
+            if (value.isFinite() && value in 0f..1f) value else FLOATING_DOT_POSITION_UNSET
 
         fun normalizedWebsiteDisplayMode(value: String?): String =
             when (value) {
@@ -363,6 +374,15 @@ class BrowserProfileStore(context: Context) {
         saveSettings(next)
     }
 
+    fun updateFloatingDotPosition(xRatio: Float, yRatio: Float) {
+        val next = settingsState.value.copy(
+            floatingDotXRatio = BrowserSettings.normalizedFloatingDotRatio(xRatio),
+            floatingDotYRatio = BrowserSettings.normalizedFloatingDotRatio(yRatio)
+        )
+        settingsState.value = next
+        saveSettings(next)
+    }
+
     fun updateWebsiteDisplayMode(mode: String) {
         val next = settingsState.value.copy(
             websiteDisplayMode = BrowserSettings.normalizedWebsiteDisplayMode(mode)
@@ -518,6 +538,8 @@ class BrowserProfileStore(context: Context) {
                 .put("searchEngineId", settings.searchEngineId)
                 .put("customSearchUrl", settings.customSearchUrl)
                 .put("toolbarPosition", settings.toolbarPosition)
+                .put("floatingDotXRatio", settings.floatingDotXRatio)
+                .put("floatingDotYRatio", settings.floatingDotYRatio)
                 .put("websiteDisplayMode", BrowserSettings.normalizedWebsiteDisplayMode(settings.websiteDisplayMode))
                 .put("backgroundVideoEnhancementEnabled", settings.backgroundVideoEnhancementEnabled)
                 .put("openNewTabsInCurrentTab", settings.openNewTabsInCurrentTab)
@@ -681,6 +703,12 @@ class BrowserProfileStore(context: Context) {
                     customSearchUrl = item.optString("customSearchUrl"),
                     toolbarPosition = BrowserSettings.normalizedToolbarPosition(
                         item.optString("toolbarPosition", BrowserSettings.TOOLBAR_POSITION_DYNAMIC_BOTTOM)
+                    ),
+                    floatingDotXRatio = BrowserSettings.normalizedFloatingDotRatio(
+                        item.optDouble("floatingDotXRatio", BrowserSettings.FLOATING_DOT_POSITION_UNSET.toDouble()).toFloat()
+                    ),
+                    floatingDotYRatio = BrowserSettings.normalizedFloatingDotRatio(
+                        item.optDouble("floatingDotYRatio", BrowserSettings.FLOATING_DOT_POSITION_UNSET.toDouble()).toFloat()
                     ),
                     websiteDisplayMode = BrowserSettings.normalizedWebsiteDisplayMode(
                         item.optString("websiteDisplayMode", BrowserSettings.WEBSITE_DISPLAY_MOBILE)

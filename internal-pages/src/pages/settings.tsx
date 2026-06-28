@@ -281,6 +281,7 @@ function SettingsPage() {
   }
 
   function toolbarPositionLabel(toolbarPosition?: BrowserSettings["toolbarPosition"]) {
+    if (toolbarPosition === "floating_dot") return t("settings.floatingDot");
     if (toolbarPosition === "bottom") return t("settings.bottom");
     if (toolbarPosition === "top") return t("settings.top");
     return t("settings.dynamicBottom");
@@ -595,6 +596,14 @@ function SettingsPage() {
                 >
                   <span>{t("settings.dynamicBottom")}</span>
                   <span>{t("settings.toolbarDynamicBottomHelp")}</span>
+                </button>
+                <button
+                  className={settings?.toolbarPosition === "floating_dot" ? "settings-option selected" : "settings-option"}
+                  type="button"
+                  onClick={() => updateToolbarPosition("floating_dot")}
+                >
+                  <span>{t("settings.floatingDot")}</span>
+                  <span>{t("settings.toolbarFloatingDotHelp")}</span>
                 </button>
               </div>
             )}

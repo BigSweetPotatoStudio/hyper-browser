@@ -1785,6 +1785,8 @@ private fun BrowserScreen(
                         installedExtensions = installedExtensions,
                         extensionActions = extensionActions,
                         toolbarPosition = settings.toolbarPosition,
+                        floatingDotXRatio = settings.floatingDotXRatio,
+                        floatingDotYRatio = settings.floatingDotYRatio,
                         websiteDisplayModeAvailable = !currentPageIsInternal,
                         websiteDisplayMode = tab.currentWebsiteDisplayMode(settings.websiteDisplayMode),
                         temporaryWebsiteDisplayMode = tab.temporaryWebsiteDisplayMode,
@@ -1856,6 +1858,7 @@ private fun BrowserScreen(
                                     .onFailure { message = it.message ?: context.getString(R.string.extensions_popup_unavailable) }
                             }
                         },
+                        onFloatingDotPositionChange = profileStore::updateFloatingDotPosition,
                         onInstall = install@{
                             installedWebApp?.let { webApp ->
                                 deleteWebAppThroughBackground(webApp)
@@ -1871,7 +1874,24 @@ private fun BrowserScreen(
                         }
                     )
                 }
-                if (canAutoCollapseToolbar) {
+                if (BrowserSettings.isFloatingDotToolbarPosition(settings.toolbarPosition)) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    ) {
+                        BrowserContent(
+                            controller = controller,
+                            tabId = tab.id,
+                            extensionPopup = extensionPopup,
+                            onClosePopup = app.extensions::closePopup,
+                            modifier = Modifier.fillMaxSize(),
+                            onContentTouchStarted = ::handlePageContentTouchStarted,
+                            onContentScrollDelta = ::handlePageContentScrollDelta
+                        )
+                        toolbar()
+                    }
+                } else if (canAutoCollapseToolbar) {
                     Box(
                         modifier = Modifier
                             .weight(1f)

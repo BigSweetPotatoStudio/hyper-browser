@@ -42,7 +42,9 @@ type BrowserSettings = {
   searchEngineId: "google" | "bing" | "custom";
   searchEngineName: string;
   customSearchUrl: string;
-  toolbarPosition: "top" | "bottom" | "dynamic_bottom";
+  toolbarPosition: "top" | "bottom" | "dynamic_bottom" | "floating_dot";
+  floatingDotXRatio: number;
+  floatingDotYRatio: number;
   websiteDisplayMode: "mobile" | "tablet" | "desktop";
   backgroundVideoEnhancementEnabled: boolean;
   openNewTabsInCurrentTab: boolean;
