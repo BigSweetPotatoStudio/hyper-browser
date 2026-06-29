@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -17,6 +18,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.AddToHomeScreen
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Bookmarks
 import androidx.compose.material.icons.outlined.BookmarkAdd
@@ -25,6 +28,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Icon
@@ -49,6 +53,10 @@ import com.dadigua.hyperbrowser.browser.DownloadStatus
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.extensions.ExtensionMenuActionState
 
+private val MenuNavButtonHeight = 46.dp
+private val MenuNavIconSlotSize = 24.dp
+private val MenuNavIconSize = 22.dp
+
 @Composable
 internal fun BrowserMenuPanel(
     bookmarked: Boolean,
@@ -64,7 +72,6 @@ internal fun BrowserMenuPanel(
     temporaryWebsiteDisplayMode: String?,
     displayModeExpanded: Boolean,
     onDisplayModeExpandedChange: (Boolean) -> Unit,
-    onNewTab: () -> Unit,
     onBack: () -> Unit,
     onForward: () -> Unit,
     onReload: () -> Unit,
@@ -85,17 +92,13 @@ internal fun BrowserMenuPanel(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         MenuNavRow(
+            bookmarked = bookmarked,
             onBack = onBack,
             onForward = onForward,
-            onReload = onReload
+            onReload = onReload,
+            onToggleBookmark = onToggleBookmark
         )
         MenuGroupBox {
-            BrowserMenuRow(label = stringResource(R.string.menu_new_tab), leadingIconVector = Icons.Outlined.Add, onClick = onNewTab)
-            BrowserMenuRow(
-                label = if (bookmarked) stringResource(R.string.menu_remove_bookmark) else stringResource(R.string.menu_bookmark_page),
-                leadingIconVector = if (bookmarked) Icons.Outlined.BookmarkRemove else Icons.Outlined.BookmarkAdd,
-                onClick = onToggleBookmark
-            )
             BrowserMenuRow(
                 label = if (webAppInstalled) stringResource(R.string.menu_uninstall_webapp) else stringResource(R.string.menu_install_webapp),
                 leadingIconVector = if (webAppInstalled) Icons.Outlined.Delete else Icons.AutoMirrored.Outlined.AddToHomeScreen,
@@ -254,39 +257,80 @@ private fun MenuGroupBox(content: @Composable () -> Unit) {
 
 @Composable
 private fun MenuNavRow(
+    bookmarked: Boolean,
     onBack: () -> Unit,
     onForward: () -> Unit,
-    onReload: () -> Unit
+    onReload: () -> Unit,
+    onToggleBookmark: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(18.dp))
             .background(Color(0xFFF1F3F8))
-            .padding(horizontal = 6.dp, vertical = 10.dp),
+            .padding(horizontal = 6.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        MenuNavButton(label = stringResource(R.string.menu_back), icon = "‹", onClick = onBack, modifier = Modifier.weight(1f))
-        MenuNavButton(label = stringResource(R.string.menu_forward), icon = "›", onClick = onForward, modifier = Modifier.weight(1f))
-        MenuNavButton(label = stringResource(R.string.menu_reload), icon = "↻", onClick = onReload, modifier = Modifier.weight(1f))
+        MenuNavButton(
+            label = stringResource(R.string.menu_back),
+            iconVector = Icons.AutoMirrored.Outlined.ArrowBack,
+            onClick = onBack,
+            modifier = Modifier.weight(1f)
+        )
+        MenuNavButton(
+            label = stringResource(R.string.menu_forward),
+            iconVector = Icons.AutoMirrored.Outlined.ArrowForward,
+            onClick = onForward,
+            modifier = Modifier.weight(1f)
+        )
+        MenuNavButton(
+            label = stringResource(R.string.menu_reload),
+            iconVector = Icons.Outlined.Refresh,
+            onClick = onReload,
+            modifier = Modifier.weight(1f)
+        )
+        MenuNavButton(
+            label = if (bookmarked) stringResource(R.string.menu_remove_bookmark) else stringResource(R.string.menu_bookmark_page),
+            iconVector = if (bookmarked) Icons.Outlined.BookmarkRemove else Icons.Outlined.BookmarkAdd,
+            onClick = onToggleBookmark,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
 @Composable
 private fun MenuNavButton(
     label: String,
-    icon: String,
+    iconVector: ImageVector,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier
+            .height(MenuNavButtonHeight)
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        Text(icon, fontSize = 24.sp, color = Color(0xFF202124))
-        Text(label, fontSize = 11.sp, color = Color(0xFF5F6368), maxLines = 1)
+        Box(
+            modifier = Modifier.size(MenuNavIconSlotSize),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = iconVector,
+                contentDescription = null,
+                modifier = Modifier.size(MenuNavIconSize),
+                tint = Color(0xFF202124)
+            )
+        }
+        Text(
+            label,
+            fontSize = 10.sp,
+            lineHeight = 12.sp,
+            color = Color(0xFF5F6368),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
