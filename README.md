@@ -87,7 +87,11 @@ Hyper Browser 是一个 Android 原生浏览器和 WebApp 容器项目，使用 
 ├── app/
 │   └── src/main/
 │       ├── assets/
+│       │   ├── apps.html
+│       │   ├── bookmarks.html
+│       │   ├── history.html
 │       │   ├── home.html
+│       │   ├── search.html
 │       │   ├── settings.html
 │       │   └── internal/
 │       └── java/com/dadigua/hyperbrowser/
@@ -232,16 +236,22 @@ com.dadigua.hyperbrowser/.ui.browser.BrowserActivity
 
 - `background.html`
 - `home.html`
+- `search.html`
 - `settings.html`
+- `apps.html`
+- `bookmarks.html`
+- `history.html`
 
 语义路由：
 
 - `hyper://home`
+- `hyper://search`
 - `hyper://settings`
+- `hyper://apps`
 - `hyper://bookmarks`
 - `hyper://history`
 
-`hyper://home` 和 `hyper://settings` 通过内置 WebExtension 的 `moz-extension://...` base URL 加载。`hyper://bookmarks` 和 `hyper://history` 保留为兼容语义入口，打开原生 Compose 面板。
+运行时页面通过内置 WebExtension 的 `moz-extension://...` base URL 加载，地址栏和历史展示仍映射为用户可读的 `hyper://...` URL。
 
 不要手改这些生成文件：
 
@@ -277,6 +287,8 @@ pnpm --dir internal-pages build
 内置页面通过页面生命周期主动请求数据：
 
 - `requestHomeData()`
+- `requestBookmarksData()`
+- `requestHistoryData()`
 
 业务写入统一走 background 命令：
 
@@ -403,7 +415,7 @@ adb shell dumpsys window | Select-String -Pattern "mCurrentFocus|mFocusedApp"
 5. 打开三点菜单，确认导航、下载、扩展、书签、历史、设置入口可用。
 6. 展开三点菜单里的 `Extensions`，确认已启用扩展作为子项显示。
 7. 打开标签页，确认 Card/List 模式可切换。
-8. 打开 `hyper://home`、`hyper://settings`，确认内置页可以加载和返回；打开 `hyper://bookmarks`、`hyper://history`，确认会进入原生面板。
+8. 打开 `hyper://home`、`hyper://bookmarks`、`hyper://history`、`hyper://apps`、`hyper://settings`，确认内置页可以加载和返回。
 9. 点击带 `target=_blank` 的链接，确认不会自动新开标签，而是在当前标签页跳转。
 10. 长按普通链接，确认菜单里可以选择“在新标签页打开”。
 11. 在普通页面测试返回键：搜索页、书签页、历史页、扩展页、标签页应先关闭面板；普通网页页应优先执行网页后退。

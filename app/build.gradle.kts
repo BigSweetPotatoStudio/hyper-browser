@@ -68,6 +68,8 @@ val buildInternalPages = tasks.register<Exec>("buildInternalPages") {
     inputs.dir(internalPagesDir.dir("src"))
     inputs.dir(internalPagesDir.dir("public"))
     inputs.file(internalPagesDir.file("home.html"))
+    inputs.file(internalPagesDir.file("bookmarks.html"))
+    inputs.file(internalPagesDir.file("history.html"))
     inputs.file(internalPagesDir.file("vite.config.ts"))
     inputs.file(internalPagesDir.file("tsconfig.json"))
     outputs.dir(layout.projectDirectory.dir("src/main/assets"))

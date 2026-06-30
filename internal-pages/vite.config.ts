@@ -26,7 +26,9 @@ export default defineConfig({
       input: {
         background: resolve(__dirname, "background.html"),
         home: resolve(__dirname, "home.html"),
-        settings: resolve(__dirname, "settings.html")
+        settings: resolve(__dirname, "settings.html"),
+        bookmarks: resolve(__dirname, "bookmarks.html"),
+        history: resolve(__dirname, "history.html")
       }
     }
   }

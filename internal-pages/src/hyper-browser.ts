@@ -1,3 +1,4 @@
+import type { BookmarkRecord, WebAppRecord } from "@hyper-sync";
 import type { SyncStateResultBase } from "@hyper-sync/state-sync";
 import type { LauncherJson } from "@hyper-sync/sync-json-types";
 import { sendBackgroundCommand } from "./background-command";
@@ -7,6 +8,13 @@ type BridgeResponse = {
   error?: string;
   itemsJson?: string;
   data?: unknown;
+};
+
+type BookmarkItem = {
+  title?: string;
+  url: string;
+  createdAt?: number;
+  iconDataUrl?: string | null;
 };
 
 type HistoryItem = {
@@ -110,6 +118,8 @@ type BackupActionResult = {
 
 type HyperBridgeMessageType =
   | "data.home"
+  | "data.bookmarks"
+  | "data.history"
   | "data.apps"
   | "data.settings"
   | "data.launcherLayout"
@@ -133,12 +143,14 @@ type HyperBridgeMessageType =
   | "update.clearSkip"
   | "update.downloadState"
   | "update.install"
+  | "bookmarks.open"
+  | "history.open"
+  | "history.remove"
+  | "history.clear"
   | "apps.open"
   | "apps.openStandalone"
   | "apps.pin"
   | "apps.icon.choose"
-  | "panel.bookmarks"
-  | "panel.history"
   | "panel.extensions";
 
 type BridgePayload = Record<string, string>;
@@ -210,6 +222,12 @@ type HyperBrowserApi = {
   requestUpdateDownloadState(): Promise<UpdateDownloadState>;
   skipUpdate(versionCode: number): Promise<void>;
   clearSkippedUpdate(): Promise<void>;
+  requestBookmarksData(): Promise<BookmarkItem[]>;
+  requestHistoryData(): Promise<HistoryItem[]>;
+  openBookmark(url: string): void;
+  openHistory(url: string): void;
+  removeHistory(url: string): void;
+  clearHistory(): void;
   openApp(id: string): void;
   openStandaloneApp(id: string): void;
   pinApp(id: string): void;
@@ -275,10 +293,10 @@ function isLauncherJson(value: unknown): value is LauncherJson {
 
 window.hyperBrowser = {
   showBookmarks() {
-    command("panel.bookmarks");
+    window.location.href = "hyper://bookmarks";
   },
   showHistory() {
-    command("panel.history");
+    window.location.href = "hyper://history";
   },
   showSettings() {
     window.location.href = "hyper://settings";
@@ -372,6 +390,24 @@ window.hyperBrowser = {
   clearSkippedUpdate() {
     return send("update.clearSkip").then(() => undefined);
   },
+  requestBookmarksData() {
+    return requestData<BookmarkItem>("data.bookmarks");
+  },
+  requestHistoryData() {
+    return requestData<HistoryItem>("data.history");
+  },
+  openBookmark(url) {
+    command("bookmarks.open", { url });
+  },
+  openHistory(url) {
+    command("history.open", { url });
+  },
+  removeHistory(url) {
+    command("history.remove", { url });
+  },
+  clearHistory() {
+    command("history.clear");
+  },
   openApp(id) {
     command("apps.open", { id });
   },
@@ -410,4 +446,4 @@ window.hyperBrowser = {
   }
 };
 
-export type { AvailableUpdate, BackupActionResult, BatteryOptimizationState, BrowserSettings, HistoryItem, UpdateCheckResult, UpdateDownloadState, WebAppItem, WebDavSyncResult, WebDavSyncSettings };
+export type { AvailableUpdate, BackupActionResult, BatteryOptimizationState, BookmarkItem, BrowserSettings, HistoryItem, UpdateCheckResult, UpdateDownloadState, WebAppItem, WebDavSyncResult, WebDavSyncSettings };

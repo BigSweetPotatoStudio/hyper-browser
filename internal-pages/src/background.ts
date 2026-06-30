@@ -12,6 +12,8 @@ const NATIVE_COMMAND_PORT_TARGET = "hyper.internal.nativeCommandPort";
 
 const internalPageMessageTypes = new Set([
   "data.home",
+  "data.bookmarks",
+  "data.history",
   "data.apps",
   "data.settings",
   "data.launcherLayout",
@@ -35,12 +37,14 @@ const internalPageMessageTypes = new Set([
   "update.clearSkip",
   "update.downloadState",
   "update.install",
+  "bookmarks.open",
+  "history.open",
+  "history.remove",
+  "history.clear",
   "apps.open",
   "apps.openStandalone",
   "apps.pin",
   "apps.icon.choose",
-  "panel.bookmarks",
-  "panel.history",
   "panel.extensions",
 ]);
 

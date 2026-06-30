@@ -639,6 +639,8 @@ private fun BrowserScreen(
         val payload = bridgeMessage.optJSONObject("payload") ?: JSONObject()
         val response = when (bridgeMessage.optString("type")) {
             "data.home" -> okItems(profileStore.observeHistory().value.toHistoryJsonString(faviconStore))
+            "data.bookmarks" -> okItems(profileStore.observeBookmarks().value.toBookmarksJsonString(faviconStore))
+            "data.history" -> okItems(profileStore.observeHistory().value.toHistoryJsonString(faviconStore))
             "data.apps" -> okItems(app.webApps.observeAll().value.toWebAppsJsonString(app))
             "data.settings" -> okData(profileStore.observeSettings().value.toJson())
             "data.launcherLayout" -> okData(
@@ -788,6 +790,22 @@ private fun BrowserScreen(
                     okData(beginUpdateInstall(update).toJson())
                 }
             }
+            "bookmarks.open" -> {
+                pendingHyperCommand = HyperCommand.Bookmarks.Open(payload.optString("url"))
+                ok()
+            }
+            "history.open" -> {
+                pendingHyperCommand = HyperCommand.History.Open(payload.optString("url"))
+                ok()
+            }
+            "history.remove" -> {
+                pendingHyperCommand = HyperCommand.History.Remove(payload.optString("url"))
+                ok()
+            }
+            "history.clear" -> {
+                pendingHyperCommand = HyperCommand.History.Clear
+                ok()
+            }
             "apps.open" -> {
                 pendingHyperCommand = HyperCommand.Apps.Open(payload.optString("id"))
                 ok()
@@ -813,14 +831,6 @@ private fun BrowserScreen(
                 pendingWebAppIconPickKey = webApp.id.ifBlank { webApp.startUrl }
                 scope.launch { webAppIconBridgeLauncher.launch("image/*") }
                 return result
-            }
-            "panel.bookmarks" -> {
-                pendingHyperCommand = HyperCommand.Panel.Bookmarks
-                ok()
-            }
-            "panel.history" -> {
-                pendingHyperCommand = HyperCommand.Panel.History
-                ok()
             }
             "panel.extensions" -> {
                 pendingHyperCommand = HyperCommand.Panel.Extensions
@@ -1482,11 +1492,11 @@ private fun BrowserScreen(
             }
             HyperRoute.Bookmarks -> {
                 tab.input = GeckoSessionController.BOOKMARKS_URL
-                showPanel(BrowserPanel.Bookmarks)
+                controller.loadBookmarks()
             }
             HyperRoute.History -> {
                 tab.input = GeckoSessionController.HISTORY_URL
-                showPanel(BrowserPanel.History)
+                controller.loadHistory()
             }
         }
         pendingHyperRoute = null
@@ -1495,6 +1505,20 @@ private fun BrowserScreen(
     LaunchedEffect(pendingHyperCommand) {
         when (val command = pendingHyperCommand) {
             null -> return@LaunchedEffect
+            is HyperCommand.Bookmarks.Open -> {
+                tab.input = command.url
+                controller.load(command.url)
+            }
+            is HyperCommand.History.Open -> {
+                tab.input = command.url
+                controller.load(command.url)
+            }
+            is HyperCommand.History.Remove -> {
+                profileStore.removeHistoryEntry(command.url)
+            }
+            HyperCommand.History.Clear -> {
+                profileStore.clearHistory()
+            }
             is HyperCommand.Apps.Open -> {
                 if (command.id.isNotBlank()) {
                     openWebAppInCurrentTab(command.id)
@@ -1512,8 +1536,6 @@ private fun BrowserScreen(
                         .onFailure { message = it.message ?: context.getString(R.string.shortcut_request_failed) }
                 }
             }
-            HyperCommand.Panel.Bookmarks -> showPanel(BrowserPanel.Bookmarks)
-            HyperCommand.Panel.History -> showPanel(BrowserPanel.History)
             HyperCommand.Panel.Extensions -> showPanel(BrowserPanel.Extensions)
         }
         pendingHyperCommand = null
@@ -1814,8 +1836,16 @@ private fun BrowserScreen(
                                 }
                             }
                         },
-                        onShowBookmarks = { showPanel(BrowserPanel.Bookmarks) },
-                        onShowHistory = { showPanel(BrowserPanel.History) },
+                        onShowBookmarks = {
+                            tab.input = GeckoSessionController.BOOKMARKS_URL
+                            controller.loadBookmarks()
+                            message = null
+                        },
+                        onShowHistory = {
+                            tab.input = GeckoSessionController.HISTORY_URL
+                            controller.loadHistory()
+                            message = null
+                        },
                         onShowSettings = {
                             tab.input = GeckoSessionController.SETTINGS_URL
                             controller.loadSettings()
