@@ -24,7 +24,7 @@ function BookmarksPage() {
 
   function loadBookmarks() {
     setFailed(false);
-    sendBackgroundCommand<BookmarkItem[]>("bookmarks.list")
+    window.hyperBrowser.requestBookmarksData()
       .then((items) => {
         setBookmarks(normalizeBookmarkItems(items));
         setFailed(false);
@@ -43,7 +43,7 @@ function BookmarksPage() {
     setEditingId((current) => current === bookmark.url ? null : current);
     setPendingRemove(null);
     sendBackgroundCommand<BookmarkItem[]>("bookmarks.delete", { url: bookmark.url })
-      .then((items) => setBookmarks(normalizeBookmarkItems(items)))
+      .then(() => loadBookmarks())
       .catch((error) => {
         console.warn("Unable to remove bookmark.", error);
         loadBookmarks();
@@ -70,7 +70,7 @@ function BookmarksPage() {
     )));
     setEditingId(null);
     sendBackgroundCommand<BookmarkItem[]>("bookmarks.save", payload)
-      .then((items) => setBookmarks(normalizeBookmarkItems(items)))
+      .then(() => loadBookmarks())
       .catch((error) => {
         console.warn("Unable to save bookmark.", error);
         loadBookmarks();
