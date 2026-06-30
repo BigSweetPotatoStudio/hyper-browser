@@ -442,7 +442,7 @@ internal fun SettingsPage(
     }
 }
 
-private data class SettingsSectionInfo(
+internal data class SettingsSectionInfo(
     val key: String,
     val terms: List<String>
 )
@@ -455,22 +455,165 @@ private fun settingsSections(
     query: String
 ): List<SettingsSectionInfo> {
     val sections = listOf(
-        SettingsSectionInfo("search", listOf(stringResource(R.string.settings_search_engine), settings.searchEngineName, "google", "bing", "custom")),
-        SettingsSectionInfo("toolbar", listOf(stringResource(R.string.settings_toolbar_position), toolbarPositionLabel(settings.toolbarPosition))),
-        SettingsSectionInfo("display", listOf(stringResource(R.string.settings_website_display_mode), websiteDisplayModeLabel(settings.websiteDisplayMode))),
-        SettingsSectionInfo("language", listOf(stringResource(R.string.settings_language), localePreferenceLabel(settings.localePreference))),
-        SettingsSectionInfo("tabs", listOf(stringResource(R.string.settings_new_tab), tabBehaviorLabel(settings.openNewTabsInCurrentTab))),
-        SettingsSectionInfo("dns", listOf(stringResource(R.string.settings_http_dns), "dns", "doh", "https")),
-        SettingsSectionInfo("privacy", listOf(stringResource(R.string.settings_privacy), privacyProtectionLabel(settings.privacyProtectionLevel))),
-        SettingsSectionInfo("backup", listOf(stringResource(R.string.settings_backup), "json", "backup")),
-        SettingsSectionInfo("background", listOf(stringResource(R.string.settings_background_runtime), if (ignoringBatteryOptimizations) stringResource(R.string.settings_battery_allowed) else stringResource(R.string.settings_battery_restricted), "video", "battery")),
-        SettingsSectionInfo("update", listOf(stringResource(R.string.settings_update), checkedUpdate?.versionName.orEmpty(), "github", "release", "apk"))
+        SettingsSectionInfo(
+            "search",
+            listOf(
+                stringResource(R.string.settings_search_engine),
+                settings.searchEngineName,
+                stringResource(R.string.settings_custom_search),
+                stringResource(R.string.settings_custom_search_help),
+                stringResource(R.string.settings_custom_search_url),
+                "google",
+                "bing",
+                "custom",
+                "search url"
+            )
+        ),
+        SettingsSectionInfo(
+            "toolbar",
+            listOf(
+                stringResource(R.string.settings_toolbar_position),
+                stringResource(R.string.settings_toolbar_top),
+                stringResource(R.string.settings_toolbar_top_help),
+                stringResource(R.string.settings_toolbar_bottom),
+                stringResource(R.string.settings_toolbar_bottom_help),
+                stringResource(R.string.settings_toolbar_dynamic_bottom),
+                stringResource(R.string.settings_toolbar_dynamic_bottom_help),
+                stringResource(R.string.settings_toolbar_floating_dot),
+                stringResource(R.string.settings_toolbar_floating_dot_help),
+                "address bar",
+                "toolbar",
+                "auto hide",
+                "floating"
+            )
+        ),
+        SettingsSectionInfo(
+            "display",
+            listOf(
+                stringResource(R.string.settings_website_display_mode),
+                stringResource(R.string.browser_website_display_mobile),
+                stringResource(R.string.settings_display_mobile_help),
+                stringResource(R.string.browser_website_display_tablet),
+                stringResource(R.string.settings_display_tablet_help),
+                stringResource(R.string.browser_website_display_desktop),
+                stringResource(R.string.settings_display_desktop_help),
+                "ua",
+                "user agent",
+                "pc"
+            )
+        ),
+        SettingsSectionInfo(
+            "language",
+            listOf(
+                stringResource(R.string.settings_language),
+                stringResource(R.string.settings_language_default),
+                stringResource(R.string.settings_language_chinese),
+                stringResource(R.string.settings_language_english),
+                "locale",
+                "translation"
+            )
+        ),
+        SettingsSectionInfo(
+            "tabs",
+            listOf(
+                stringResource(R.string.settings_new_tab),
+                stringResource(R.string.settings_new_tab_value),
+                stringResource(R.string.settings_new_tab_help),
+                stringResource(R.string.settings_current_tab_value),
+                stringResource(R.string.settings_current_tab_help),
+                "popup",
+                "window open",
+                "login redirect"
+            )
+        ),
+        SettingsSectionInfo(
+            "dns",
+            listOf(
+                stringResource(R.string.settings_http_dns),
+                stringResource(R.string.settings_http_dns_active),
+                stringResource(R.string.settings_http_dns_disabled),
+                stringResource(R.string.settings_doh_help),
+                stringResource(R.string.settings_doh_address),
+                stringResource(R.string.settings_https_only_help),
+                "dns",
+                "doh",
+                "https",
+                "https-only",
+                "security"
+            )
+        ),
+        SettingsSectionInfo(
+            "privacy",
+            listOf(
+                stringResource(R.string.settings_privacy),
+                stringResource(R.string.settings_privacy_none),
+                stringResource(R.string.settings_privacy_none_help),
+                stringResource(R.string.settings_privacy_standard),
+                stringResource(R.string.settings_privacy_standard_help),
+                stringResource(R.string.settings_privacy_strict),
+                stringResource(R.string.settings_privacy_strict_help),
+                "tracking",
+                "fingerprint",
+                "cookie"
+            )
+        ),
+        SettingsSectionInfo(
+            "backup",
+            listOf(
+                stringResource(R.string.settings_backup),
+                stringResource(R.string.settings_backup_value),
+                stringResource(R.string.settings_export_json),
+                stringResource(R.string.settings_import_json),
+                stringResource(R.string.settings_backup_help),
+                "json",
+                "restore",
+                "webapp"
+            )
+        ),
+        SettingsSectionInfo(
+            "background",
+            listOf(
+                stringResource(R.string.settings_background_runtime),
+                stringResource(R.string.settings_battery_allowed),
+                stringResource(R.string.settings_battery_restricted),
+                stringResource(R.string.settings_background_video),
+                stringResource(R.string.settings_background_video_help),
+                stringResource(R.string.settings_battery_help),
+                if (ignoringBatteryOptimizations) stringResource(R.string.settings_battery_allowed) else stringResource(R.string.settings_battery_restricted),
+                "video",
+                "battery",
+                "music",
+                "playback",
+                "lock screen"
+            )
+        ),
+        SettingsSectionInfo(
+            "update",
+            listOf(
+                stringResource(R.string.settings_update),
+                stringResource(R.string.settings_update_github_release),
+                stringResource(R.string.settings_check_update),
+                checkedUpdate?.versionName.orEmpty(),
+                "github",
+                "release",
+                "apk",
+                "version"
+            )
+        )
     )
+    return filterSettingsSections(sections, query)
+}
+
+internal fun filterSettingsSections(
+    sections: List<SettingsSectionInfo>,
+    query: String
+): List<SettingsSectionInfo> =
+    sections.filter { settingsSectionMatchesQuery(it.terms, query) }
+
+internal fun settingsSectionMatchesQuery(terms: List<String>, query: String): Boolean {
     val normalizedQuery = query.trim().lowercase()
-    if (normalizedQuery.isBlank()) return sections
-    return sections.filter { section ->
-        section.terms.any { it.lowercase().contains(normalizedQuery) }
-    }
+    if (normalizedQuery.isBlank()) return true
+    return terms.any { it.lowercase().contains(normalizedQuery) }
 }
 
 @Composable
