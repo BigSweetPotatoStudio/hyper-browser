@@ -1605,7 +1605,12 @@ private fun BrowserScreen(
                         closePanel()
                         message = null
                     },
-                    onRemove = ::removeBookmarkAndSync
+                    onRemove = ::removeBookmarkAndSync,
+                    onEdit = ::editBookmarkAndSync,
+                    iconPathFor = { bookmark ->
+                        faviconStore.existingIconPath(bookmark.iconPath)
+                            ?: faviconStore.cachedIconPath(bookmark.url)
+                    }
                 )
             } else if (showHistory) {
                 HistoryPage(
@@ -1618,7 +1623,11 @@ private fun BrowserScreen(
                         message = null
                     },
                     onRemove = profileStore::removeHistoryEntry,
-                    onClear = profileStore::clearHistory
+                    onClear = profileStore::clearHistory,
+                    iconPathFor = { entry ->
+                        faviconStore.existingIconPath(entry.iconPath)
+                            ?: faviconStore.cachedIconPath(entry.url)
+                    }
                 )
             } else if (showDownloads) {
                 DownloadsPage(

@@ -1,7 +1,9 @@
 package com.dadigua.hyperbrowser.ui.browser
 
 import android.content.ClipData
+import android.graphics.BitmapFactory
 import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -26,13 +28,13 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -46,6 +48,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -54,6 +58,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,6 +68,7 @@ import com.dadigua.hyperbrowser.browser.BrowserDownloadEntry
 import com.dadigua.hyperbrowser.browser.BrowserHistoryEntry
 import com.dadigua.hyperbrowser.browser.DownloadStatus
 import kotlinx.coroutines.launch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -86,23 +92,87 @@ internal fun BookmarksPage(
     bookmarks: List<BrowserBookmark>,
     onBack: () -> Unit,
     onOpen: (String) -> Unit,
-    onRemove: (String) -> Unit
+    onRemove: (String) -> Unit,
+    onEdit: (oldUrl: String, title: String, url: String) -> Unit,
+    iconPathFor: (BrowserBookmark) -> String?
 ) {
-    val savedLabel = stringResource(R.string.library_bookmarks_saved)
-    BrowserLibraryPage(
+    var query by remember { mutableStateOf("") }
+    var editingUrl by remember { mutableStateOf<String?>(null) }
+    var pendingRemove by remember { mutableStateOf<BrowserBookmark?>(null) }
+    val orderedBookmarks = remember(bookmarks) { sortBookmarksByAddedOrder(bookmarks) }
+    val visibleBookmarks = remember(orderedBookmarks, query) { filterBookmarks(orderedBookmarks, query) }
+
+    BrowserLibraryScaffold(
         title = stringResource(R.string.library_bookmarks_title),
-        emptyTitle = stringResource(R.string.library_bookmarks_empty_title),
-        emptyBody = stringResource(R.string.library_bookmarks_empty_body),
-        items = bookmarks,
         onBack = onBack,
-        onOpen = { onOpen(it.url) },
-        onRemove = { onRemove(it.url) },
-        itemTitle = { it.title },
-        itemUrl = { it.url },
-        itemMeta = { savedLabel },
-        leading = "★",
         action = null
-    )
+    ) {
+        when {
+            orderedBookmarks.isEmpty() -> LibraryEmptyState(
+                title = stringResource(R.string.library_bookmarks_empty_title),
+                body = stringResource(R.string.library_bookmarks_empty_body),
+                leading = "★"
+            )
+            else -> Column(modifier = Modifier.fillMaxSize()) {
+                LibrarySearchField(
+                    query = query,
+                    onQueryChange = { query = it },
+                    label = stringResource(R.string.library_bookmarks_search_label),
+                    placeholder = stringResource(R.string.library_bookmarks_search_placeholder)
+                )
+                if (visibleBookmarks.isEmpty()) {
+                    LibraryNoMatches(message = stringResource(R.string.library_bookmarks_no_matches))
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        items(visibleBookmarks, key = { it.url }) { bookmark ->
+                            BookmarkRow(
+                                bookmark = bookmark,
+                                editing = editingUrl == bookmark.url,
+                                iconPath = iconPathFor(bookmark),
+                                onOpen = { onOpen(bookmark.url) },
+                                onEdit = { editingUrl = bookmark.url },
+                                onCancelEdit = { editingUrl = null },
+                                onSave = { title, url ->
+                                    onEdit(bookmark.url, title, url)
+                                    editingUrl = null
+                                },
+                                onRemove = { pendingRemove = bookmark }
+                            )
+                            HorizontalDivider(color = Color(0xFFE8EAED))
+                        }
+                        item { Spacer(modifier = Modifier.height(36.dp)) }
+                    }
+                }
+            }
+        }
+    }
+
+    pendingRemove?.let { bookmark ->
+        AlertDialog(
+            onDismissRequest = { pendingRemove = null },
+            title = { Text(stringResource(R.string.library_bookmarks_remove_label)) },
+            text = { Text(bookmark.title.ifBlank { bookmark.url }) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRemove(bookmark.url)
+                        if (editingUrl == bookmark.url) editingUrl = null
+                        pendingRemove = null
+                    }
+                ) {
+                    Text(stringResource(R.string.common_action_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemove = null }) {
+                    Text(stringResource(R.string.common_action_cancel))
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -111,23 +181,57 @@ internal fun HistoryPage(
     onBack: () -> Unit,
     onOpen: (String) -> Unit,
     onRemove: (String) -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    iconPathFor: (BrowserHistoryEntry) -> String?
 ) {
     var pendingClearHistory by remember { mutableStateOf(false) }
-    BrowserLibraryPage(
+    var query by remember { mutableStateOf("") }
+    val visibleHistory = remember(history, query) { filterHistory(history, query) }
+
+    BrowserLibraryScaffold(
         title = stringResource(R.string.library_history_title),
-        emptyTitle = stringResource(R.string.library_history_empty_title),
-        emptyBody = stringResource(R.string.library_history_empty_body),
-        items = history,
         onBack = onBack,
-        onOpen = { onOpen(it.url) },
-        onRemove = { onRemove(it.url) },
-        itemTitle = { it.title },
-        itemUrl = { it.url },
-        itemMeta = { formatVisitTime(it.visitedAt) },
-        leading = "◷",
         action = if (history.isEmpty()) null else stringResource(R.string.common_action_clear) to { pendingClearHistory = true }
-    )
+    ) {
+        when {
+            history.isEmpty() -> LibraryEmptyState(
+                title = stringResource(R.string.library_history_empty_title),
+                body = stringResource(R.string.library_history_empty_body),
+                leading = "◷"
+            )
+            else -> Column(modifier = Modifier.fillMaxSize()) {
+                LibrarySearchField(
+                    query = query,
+                    onQueryChange = { query = it },
+                    label = stringResource(R.string.library_history_search_label),
+                    placeholder = stringResource(R.string.library_history_search_placeholder)
+                )
+                if (visibleHistory.isEmpty()) {
+                    LibraryNoMatches(message = stringResource(R.string.library_history_no_matches))
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        items(visibleHistory, key = { "${it.url}:${it.visitedAt}" }) { entry ->
+                            LibraryRow(
+                                title = entry.title,
+                                url = entry.url,
+                                meta = formatVisitTime(entry.visitedAt),
+                                leading = "◷",
+                                iconPath = iconPathFor(entry),
+                                removeContentDescription = stringResource(R.string.library_history_remove_label),
+                                onOpen = { onOpen(entry.url) },
+                                onRemove = { onRemove(entry.url) }
+                            )
+                            HorizontalDivider(color = Color(0xFFE8EAED))
+                        }
+                        item { Spacer(modifier = Modifier.height(36.dp)) }
+                    }
+                }
+            }
+        }
+    }
 
     if (pendingClearHistory) {
         AlertDialog(
@@ -509,19 +613,11 @@ private fun DownloadSearchField(
 }
 
 @Composable
-private fun <T> BrowserLibraryPage(
+private fun BrowserLibraryScaffold(
     title: String,
-    emptyTitle: String,
-    emptyBody: String,
-    items: List<T>,
     onBack: () -> Unit,
-    onOpen: (T) -> Unit,
-    onRemove: (T) -> Unit,
-    itemTitle: (T) -> String,
-    itemUrl: (T) -> String,
-    itemMeta: (T) -> String,
-    leading: String,
-    action: (Pair<String, () -> Unit>)?
+    action: (Pair<String, () -> Unit>)?,
+    content: @Composable () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -550,43 +646,184 @@ private fun <T> BrowserLibraryPage(
             }
         }
         HorizontalDivider(color = Color(0xFFDADCE3))
+        content()
+    }
+}
 
-        if (items.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(
-                    modifier = Modifier.padding(28.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(74.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFE1E4EC)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(leading, fontSize = 36.sp, color = Color(0xFF5F6368))
-                    }
-                    Text(emptyTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(emptyBody, color = Color(0xFF5F6368))
-                }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
+@Composable
+private fun LibraryEmptyState(
+    title: String,
+    body: String,
+    leading: String
+) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier.padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(74.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFE1E4EC)),
+                contentAlignment = Alignment.Center
             ) {
-                items(items) { item ->
-                    LibraryRow(
-                        title = itemTitle(item),
-                        url = itemUrl(item),
-                        meta = itemMeta(item),
-                        leading = leading,
-                        onOpen = { onOpen(item) },
-                        onRemove = { onRemove(item) }
+                Text(leading, fontSize = 36.sp, color = Color(0xFF5F6368))
+            }
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(body, color = Color(0xFF5F6368))
+        }
+    }
+}
+
+@Composable
+private fun LibraryNoMatches(message: String) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            message,
+            modifier = Modifier.padding(28.dp),
+            color = Color(0xFF5F6368)
+        )
+    }
+}
+
+@Composable
+private fun LibrarySearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    label: String,
+    placeholder: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp, vertical = 12.dp)
+            .height(48.dp)
+            .clip(CircleShape)
+            .background(Color(0xFFE7E9F1))
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Search,
+            contentDescription = null,
+            tint = Color(0xFF5F6368),
+            modifier = Modifier.size(20.dp)
+        )
+        BasicTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            textStyle = MaterialTheme.typography.titleMedium.copy(color = Color(0xFF202124)),
+            modifier = Modifier
+                .weight(1f)
+                .semantics { contentDescription = label },
+            decorationBox = { inner ->
+                if (query.isBlank()) {
+                    Text(
+                        placeholder,
+                        color = Color(0xFF6F737B),
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                item { Spacer(modifier = Modifier.height(36.dp)) }
+                inner()
+            }
+        )
+        if (query.isNotBlank()) {
+            Text(
+                "×",
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable { onQueryChange("") }
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                fontSize = 24.sp,
+                color = Color(0xFF5F6368)
+            )
+        }
+    }
+}
+
+@Composable
+private fun BookmarkRow(
+    bookmark: BrowserBookmark,
+    editing: Boolean,
+    iconPath: String?,
+    onOpen: () -> Unit,
+    onEdit: () -> Unit,
+    onCancelEdit: () -> Unit,
+    onSave: (title: String, url: String) -> Unit,
+    onRemove: () -> Unit
+) {
+    var title by remember(bookmark.title) { mutableStateOf(bookmark.title) }
+    var url by remember(bookmark.url) { mutableStateOf(bookmark.url) }
+    val editLabel = stringResource(R.string.library_bookmarks_edit_label)
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        LibraryRow(
+            title = bookmark.title,
+            url = bookmark.url,
+            meta = null,
+            leading = "★",
+            iconPath = iconPath,
+            removeContentDescription = stringResource(R.string.library_bookmarks_remove_label),
+            onOpen = onOpen,
+            onRemove = onRemove,
+            trailing = {
+                TextButton(
+                    onClick = onEdit,
+                    shape = RectangleShape,
+                    modifier = Modifier.semantics {
+                        contentDescription = editLabel
+                    }
+                ) {
+                    Text("✎", fontSize = 20.sp, color = Color(0xFF5F6368))
+                }
+            }
+        )
+        if (editing) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.White)
+                    .padding(start = 66.dp, end = 18.dp, bottom = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.library_bookmarks_title_placeholder)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+                    label = { Text(stringResource(R.string.library_bookmarks_url_label)) },
+                    isError = url.trim().isBlank(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onCancelEdit) {
+                        Text(stringResource(R.string.common_action_cancel))
+                    }
+                    TextButton(
+                        enabled = url.trim().isNotBlank(),
+                        onClick = { onSave(title.trim(), url.trim()) }
+                    ) {
+                        Text(stringResource(R.string.common_action_save))
+                    }
+                }
             }
         }
     }
@@ -596,10 +833,13 @@ private fun <T> BrowserLibraryPage(
 private fun LibraryRow(
     title: String,
     url: String,
-    meta: String,
+    meta: String?,
     leading: String,
+    iconPath: String?,
+    removeContentDescription: String,
     onOpen: () -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    trailing: @Composable (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
@@ -616,9 +856,9 @@ private fun LibraryRow(
                 .background(Color(0xFFE8EAED)),
             contentAlignment = Alignment.Center
         ) {
-            Text(leading, color = Color(0xFF5F6368), fontSize = 20.sp)
+            LibraryFavicon(iconPath = iconPath, fallback = leading)
         }
-        Column(modifier = Modifier.weight(1f)) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
                 title.ifBlank { url },
                 fontWeight = FontWeight.Medium,
@@ -627,14 +867,72 @@ private fun LibraryRow(
                 color = Color(0xFF202124)
             )
             Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color(0xFF5F6368), fontSize = 13.sp)
-            Text(meta, color = Color(0xFF80868B), fontSize = 12.sp)
+            if (!meta.isNullOrBlank()) {
+                Text(meta, color = Color(0xFF80868B), fontSize = 12.sp)
+            }
         }
-        TextButton(onClick = onRemove, shape = RectangleShape) {
-            Text("×", fontSize = 30.sp, color = Color(0xFF5F6368))
+        trailing?.invoke()
+        IconButton(onClick = onRemove) {
+            Text(
+                "×",
+                fontSize = 30.sp,
+                color = Color(0xFF5F6368),
+                modifier = Modifier.semantics { contentDescription = removeContentDescription }
+            )
         }
     }
 }
 
+@Composable
+private fun LibraryFavicon(iconPath: String?, fallback: String) {
+    val bitmap = remember(iconPath) {
+        iconPath
+            ?.takeIf { it.isNotBlank() }
+            ?.let { File(it) }
+            ?.takeIf { it.exists() && it.length() > 0L && it.length() <= 1_500_000L }
+            ?.let { runCatching { BitmapFactory.decodeFile(it.absolutePath) }.getOrNull() }
+    }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+        )
+    } else {
+        Text(fallback, color = Color(0xFF5F6368), fontSize = 20.sp)
+    }
+}
+
+private fun sortBookmarksByAddedOrder(items: List<BrowserBookmark>): List<BrowserBookmark> =
+    items
+        .mapIndexed { index, item -> item to index }
+        .sortedWith(
+            compareByDescending<Pair<BrowserBookmark, Int>> { it.first.createdAt.takeIf { createdAt -> createdAt > 0L } ?: Long.MIN_VALUE }
+                .thenBy { it.second }
+        )
+        .map { it.first }
+
+private fun filterBookmarks(items: List<BrowserBookmark>, query: String): List<BrowserBookmark> {
+    val normalizedQuery = query.trim().lowercase(Locale.getDefault())
+    if (normalizedQuery.isBlank()) return items
+    return items.filter { item ->
+        item.title.lowercase(Locale.getDefault()).contains(normalizedQuery) ||
+            item.url.lowercase(Locale.getDefault()).contains(normalizedQuery)
+    }
+}
+
+private fun filterHistory(items: List<BrowserHistoryEntry>, query: String): List<BrowserHistoryEntry> {
+    val normalizedQuery = query.trim().lowercase(Locale.getDefault())
+    if (normalizedQuery.isBlank()) return items
+    return items.filter { item ->
+        item.title.lowercase(Locale.getDefault()).contains(normalizedQuery) ||
+            item.url.lowercase(Locale.getDefault()).contains(normalizedQuery) ||
+            formatVisitTime(item.visitedAt).lowercase(Locale.getDefault()).contains(normalizedQuery)
+    }
+}
 private fun formatVisitTime(timestamp: Long): String {
     if (timestamp <= 0L) return ""
     val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
