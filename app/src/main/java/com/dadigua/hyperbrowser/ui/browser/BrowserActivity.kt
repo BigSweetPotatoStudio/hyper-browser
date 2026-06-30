@@ -187,6 +187,7 @@ class BrowserActivity : ComponentActivity() {
 private enum class BrowserPanel {
     None,
     Search,
+    Settings,
     Bookmarks,
     History,
     Downloads,
@@ -230,6 +231,7 @@ private fun BrowserScreen(
     var updateDownloadState by remember { mutableStateOf(UpdateDownloadState.idle()) }
     var updateDownloadEntry by remember { mutableStateOf<BrowserDownloadEntry?>(null) }
     var updateInstallInFlight by remember { mutableStateOf(false) }
+    var settingsUpdateMessage by remember { mutableStateOf<String?>(null) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
@@ -1044,6 +1046,7 @@ private fun BrowserScreen(
         mutableStateOf(if (initialShowDownloads) BrowserPanel.Downloads else BrowserPanel.None)
     }
     val showSearch = activePanel == BrowserPanel.Search
+    val showSettings = activePanel == BrowserPanel.Settings
     val showBookmarks = activePanel == BrowserPanel.Bookmarks
     val showHistory = activePanel == BrowserPanel.History
     val showDownloads = activePanel == BrowserPanel.Downloads
@@ -1409,8 +1412,8 @@ private fun BrowserScreen(
         }
     }
 
-    LaunchedEffect(showDownloads, updateDownloadState.status) {
-        while (showDownloads || isActiveUpdateDownload(updateDownloadState)) {
+    LaunchedEffect(showDownloads, showSettings, updateDownloadState.status) {
+        while (showDownloads || showSettings || isActiveUpdateDownload(updateDownloadState)) {
             updateDownloadState = updateManager.refreshDownloadState()
             updateDownloadEntry = updateManager.currentDownloadEntry()
             delay(1000)
@@ -1487,8 +1490,8 @@ private fun BrowserScreen(
                 controller.loadHome()
             }
             HyperRoute.Settings -> {
-                tab.input = GeckoSessionController.SETTINGS_URL
-                controller.loadSettings()
+                showPanel(BrowserPanel.Settings)
+                message = null
             }
             HyperRoute.Bookmarks -> {
                 showPanel(BrowserPanel.Bookmarks)
@@ -1593,6 +1596,81 @@ private fun BrowserScreen(
                     },
                     onOpenWebApp = { webAppId ->
                         openWebAppInCurrentTab(webAppId, closeCurrentPanel = true)
+                    }
+                )
+            } else if (showSettings) {
+                SettingsPage(
+                    settings = settings,
+                    checkedUpdate = checkedUpdate,
+                    updateDownloadState = updateDownloadState,
+                    ignoringBatteryOptimizations = isIgnoringBatteryOptimizations(),
+                    updateMessage = settingsUpdateMessage,
+                    onBack = ::closePanel,
+                    onUpdateSearchEngine = { searchEngineId, customSearchUrl ->
+                        profileStore.updateSearchEngine(searchEngineId, customSearchUrl)
+                    },
+                    onUpdateToolbarPosition = profileStore::updateToolbarPosition,
+                    onUpdateWebsiteDisplayMode = profileStore::updateWebsiteDisplayMode,
+                    onUpdateBackgroundVideoEnhancement = profileStore::updateBackgroundVideoEnhancement,
+                    onUpdateOpenNewTabsInCurrentTab = profileStore::updateOpenNewTabsInCurrentTab,
+                    onUpdateLocalePreference = { localePreference ->
+                        val previousLocalePreference = profileStore.observeSettings().value.localePreference
+                        profileStore.updateLocalePreference(localePreference)
+                        if (profileStore.observeSettings().value.localePreference != previousLocalePreference) {
+                            activity.window.decorView.post { activity.recreate() }
+                        }
+                    },
+                    onUpdatePrivacySettings = { dohEnabled, dohProviderUrl, httpsOnlyEnabled, privacyProtectionLevel ->
+                        profileStore.updatePrivacySettings(
+                            dohEnabled = dohEnabled,
+                            dohProviderUrl = dohProviderUrl,
+                            httpsOnlyEnabled = httpsOnlyEnabled,
+                            privacyProtectionLevel = privacyProtectionLevel
+                        )
+                        GeckoRuntimeProvider.applyBrowserSettings(app, profileStore.observeSettings().value)
+                    },
+                    onOpenBatteryOptimizationSettings = {
+                        if (!openBatteryOptimizationSettings()) {
+                            message = context.getString(R.string.settings_battery_manual_help)
+                        }
+                    },
+                    onExportBackup = { exportBackupLauncher.launch(defaultBackupFileName()) },
+                    onImportBackup = {
+                        importBackupLauncher.launch(arrayOf("application/json", "text/json", "application/octet-stream", "*/*"))
+                    },
+                    onCheckUpdate = {
+                        scope.launch {
+                            settingsUpdateMessage = context.getString(R.string.settings_update_checking)
+                            runCatching { updateManager.check(ignoreSkipped = false) }
+                                .onSuccess { result ->
+                                    checkedUpdate = result.update
+                                    settingsUpdateMessage = result.message.ifBlank {
+                                        if (result.update == null) {
+                                            context.getString(R.string.settings_update_up_to_date)
+                                        } else {
+                                            context.getString(R.string.settings_update_available)
+                                        }
+                                    }
+                                    updateDownloadState = updateManager.refreshDownloadState()
+                                    updateDownloadEntry = updateManager.currentDownloadEntry()
+                                }
+                                .onFailure { throwable ->
+                                    settingsUpdateMessage = throwable.message ?: context.getString(R.string.settings_update_check_failed)
+                                }
+                        }
+                    },
+                    onInstallUpdate = { update ->
+                        updateDownloadState = beginUpdateInstall(update)
+                        settingsUpdateMessage = updateDownloadState.message
+                    },
+                    onSkipUpdate = { update ->
+                        updateManager.skip(update.versionCode)
+                        checkedUpdate = null
+                        settingsUpdateMessage = context.getString(R.string.settings_update_skipped)
+                    },
+                    onClearSkippedUpdate = {
+                        updateManager.clearSkip()
+                        settingsUpdateMessage = context.getString(R.string.settings_update_skip_cleared)
                     }
                 )
             } else if (showBookmarks) {
@@ -1854,8 +1932,8 @@ private fun BrowserScreen(
                             message = null
                         },
                         onShowSettings = {
-                            tab.input = GeckoSessionController.SETTINGS_URL
-                            controller.loadSettings()
+                            showPanel(BrowserPanel.Settings)
+                            message = null
                         },
                         onShowDownloads = { showPanel(BrowserPanel.Downloads) },
                         onShowExtensions = { showPanel(BrowserPanel.Extensions) },
