@@ -105,7 +105,7 @@ com.dadigua.hyperbrowser/.ui.browser.BrowserActivity
 - `app/src/main/java/com/dadigua/hyperbrowser/extensions/ExtensionRepository.kt`
   - AMO 搜索、XPI 下载、GeckoView WebExtension 安装/启停/卸载
 - `app/src/main/assets/`
-  - Vite 生成的内置页面产物：`home.html`、`bookmarks.html`、`history.html`、`internal/`
+  - Vite 生成的内置页面产物：`home.html`、`settings.html`、`internal/`
 - `internal-pages/`
   - 内置页面源码：React + TypeScript/TSX、Vite、WebExtension bridge 包装
 
@@ -145,7 +145,7 @@ Card/List 的展示行为必须分开：
 
 ## 内置 HTML 页面与 HyperCommand
 
-首页、搜索页、设置页、WebApp 管理页、书签页、历史页优先作为 GeckoView 内置页面开发，而不是 Compose 面板。源码使用 React + TypeScript/TSX，放在：
+首页和设置页作为 GeckoView 内置 WebExtension 页面开发。书签页、历史页、搜索页、扩展页、下载页、标签页优先使用原生 Compose 面板。内置页面源码使用 React + TypeScript/TSX，放在：
 
 ```text
 internal-pages/
@@ -168,13 +168,11 @@ Android 构建也会通过 Gradle 自动执行 `internal-pages` 的 pnpm install
 语义路由包括：
 
 - `hyper://home`
-- `hyper://search`
 - `hyper://settings`
-- `hyper://apps`
 - `hyper://bookmarks`
 - `hyper://history`
 
-实际页面通过内置 WebExtension 的 `moz-extension://.../*.html` 加载。地址栏必须显示语义 URL，例如 `hyper://home`、`hyper://bookmarks`、`hyper://history`，不要向用户暴露 `moz-extension://...` 或 `resource://android/assets/...`。
+`hyper://home` 和 `hyper://settings` 通过内置 WebExtension 的 `moz-extension://.../*.html` 加载；`hyper://bookmarks` 和 `hyper://history` 是兼容语义入口，进入原生 Compose 面板。地址栏必须显示语义 URL，不要向用户暴露 `moz-extension://...` 或 `resource://android/assets/...`。
 
 内置页面中的浏览器操作通过 `window.hyperBrowser` 发出，bridge 源码统一放在：
 
@@ -188,13 +186,13 @@ internal-pages/src/hyper-browser.ts
 
 Kotlin 侧要把页面路由和页面命令分开：
 
-- `HyperRoute` 只表示可进入 Gecko 历史栈的内置页面：`Home`、`Bookmarks`、`History`
-- `HyperCommand` 只表示内置页面发给浏览器壳的动作，并按功能域分组：`Search`、`Bookmarks`、`History`、`Panel`
+- `HyperRoute` 表示语义入口：`Home`、`Settings`、`Bookmarks`、`History`；其中书签和历史路由打开原生面板
+- `HyperCommand` 只表示内置页面发给浏览器壳的动作，并按功能域分组，例如 `Apps`、`Panel`
 
 `GeckoSessionController` 只负责安全校验和解析：
 
 - `hyper://home`、`hyper://bookmarks`、`hyper://history` 解析为 `HyperRoute`
-- 内置页面加载真实 URL 时使用内置 WebExtension 的 `moz-extension://.../home.html`、`bookmarks.html`、`history.html`
+- 内置页面加载真实 URL 时使用内置 WebExtension 的 `moz-extension://.../home.html`、`settings.html`
 - 地址栏和历史语义仍映射为 `hyper://home`、`hyper://bookmarks`、`hyper://history`，不要把 `moz-extension://...` 暴露给用户
 - bridge 消息必须校验 sender：只接受 URL 属于内置 WebExtension baseUrl 的 sender
 - 普通网页、第三方扩展页、`https://`、`http://` 页面不能调用或伪造 `window.hyperBrowser` 的 native bridge
@@ -204,9 +202,7 @@ Kotlin 侧要把页面路由和页面命令分开：
 内置 HTML 页面必须由页面生命周期主动请求数据，不要依赖外层 Compose 猜时机预塞数据：
 
 - `home.tsx` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestHomeData()`
-- `bookmarks.tsx` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestBookmarksData()`
-- `history.tsx` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestHistoryData()`
-- `apps.tsx` 初次加载时，如果 URL hash 里没有 `data`，调用 `window.hyperBrowser.requestAppsData()`
+- `settings.tsx` 初次加载时，调用 `window.hyperBrowser.requestSettingsData()`
 - `request*Data()` 必须返回 Promise，并由 bridge 直接返回 JSON 数据；不要通过 URL 跳转、hash 二次加载或 fallback 到旧协议取数据
 - 内置页面的数据修改必须由页面通过 `window.hyperBrowser` bridge 发起，并由页面自己更新 React state / DOM；Kotlin/native 只负责持久化、系统能力和返回 JSON 结果
 - 需要原生 UI 参与的异步流程，例如 WebApp 编辑弹窗，必须通过 bridge Promise / `GeckoResult` 在保存、取消或失败后返回结果；不要用 `session.loadUri("javascript:...")`、focus/pageshow 轮询、重新 load 内置页或 hash reload 来刷新页面
@@ -222,8 +218,8 @@ Kotlin 侧要把页面路由和页面命令分开：
 书签和历史数据变化后不能通过重载页面刷新：
 
 - 不要使用 `?v=<timestamp>` 这类 cache busting 刷新方案
-- 书签删除、编辑，历史删除、清空，都应由 HTML 页面更新本地 JS state 和 DOM，保留滚动位置
-- Kotlin 收到对应 bridge 消息后只更新 JSON/store，不要重新 `loadBookmarks()` 或 `loadHistory()`
+- 书签删除、编辑，历史删除、清空，都应由原生 Compose 页面更新本地 state，保留滚动位置
+- 不要重新引入 `bookmarks.html`、`history.html`、`loadBookmarks()` 或 `loadHistory()`
 - 如果需要跨页面实时同步，后续再设计专门通道；v1 只要求下次进入页面时读取最新 JSON
 
 ## Iceraven 菜单复刻要点

@@ -639,8 +639,6 @@ private fun BrowserScreen(
         val payload = bridgeMessage.optJSONObject("payload") ?: JSONObject()
         val response = when (bridgeMessage.optString("type")) {
             "data.home" -> okItems(profileStore.observeHistory().value.toHistoryJsonString(faviconStore))
-            "data.bookmarks" -> okItems(profileStore.observeBookmarks().value.toBookmarksJsonString(faviconStore))
-            "data.history" -> okItems(profileStore.observeHistory().value.toHistoryJsonString(faviconStore))
             "data.apps" -> okItems(app.webApps.observeAll().value.toWebAppsJsonString(app))
             "data.settings" -> okData(profileStore.observeSettings().value.toJson())
             "data.launcherLayout" -> okData(
@@ -789,22 +787,6 @@ private fun BrowserScreen(
                 } else {
                     okData(beginUpdateInstall(update).toJson())
                 }
-            }
-            "bookmarks.open" -> {
-                pendingHyperCommand = HyperCommand.Bookmarks.Open(payload.optString("url"))
-                ok()
-            }
-            "history.open" -> {
-                pendingHyperCommand = HyperCommand.History.Open(payload.optString("url"))
-                ok()
-            }
-            "history.remove" -> {
-                pendingHyperCommand = HyperCommand.History.Remove(payload.optString("url"))
-                ok()
-            }
-            "history.clear" -> {
-                pendingHyperCommand = HyperCommand.History.Clear
-                ok()
             }
             "apps.open" -> {
                 pendingHyperCommand = HyperCommand.Apps.Open(payload.optString("id"))
@@ -1500,11 +1482,11 @@ private fun BrowserScreen(
             }
             HyperRoute.Bookmarks -> {
                 tab.input = GeckoSessionController.BOOKMARKS_URL
-                controller.loadBookmarks()
+                showPanel(BrowserPanel.Bookmarks)
             }
             HyperRoute.History -> {
                 tab.input = GeckoSessionController.HISTORY_URL
-                controller.loadHistory()
+                showPanel(BrowserPanel.History)
             }
         }
         pendingHyperRoute = null
@@ -1513,20 +1495,6 @@ private fun BrowserScreen(
     LaunchedEffect(pendingHyperCommand) {
         when (val command = pendingHyperCommand) {
             null -> return@LaunchedEffect
-            is HyperCommand.Bookmarks.Open -> {
-                tab.input = command.url
-                controller.load(command.url)
-            }
-            is HyperCommand.History.Open -> {
-                tab.input = command.url
-                controller.load(command.url)
-            }
-            is HyperCommand.History.Remove -> {
-                profileStore.removeHistoryEntry(command.url)
-            }
-            HyperCommand.History.Clear -> {
-                profileStore.clearHistory()
-            }
             is HyperCommand.Apps.Open -> {
                 if (command.id.isNotBlank()) {
                     openWebAppInCurrentTab(command.id)
