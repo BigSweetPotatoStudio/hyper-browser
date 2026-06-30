@@ -61,6 +61,7 @@ import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
 import com.dadigua.hyperbrowser.browser.SavedBrowserTabs
+import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
 import com.dadigua.hyperbrowser.gecko.GeckoAuthPromptRequest
@@ -1776,24 +1777,35 @@ private fun BrowserScreen(
                     onBack = ::closePanel,
                     onSearch = {
                         scope.launch {
-                            extensionMessage = context.getString(R.string.extensions_searching_amo)
+                            extensionSearchStartedState(context.getString(R.string.extensions_searching_amo)).also { state ->
+                                extensionResults = state.results
+                                extensionMessage = state.message
+                            }
                             val syncedInstalled = runCatching { app.extensions.refreshInstalledFromRuntime() }
                                 .getOrDefault(installedExtensions)
                             runCatching { app.extensions.searchAndroidAddons(extensionQuery) }
                                 .onSuccess { results ->
-                                    extensionResults = results
-                                    val installedMatches = results.count { result ->
-                                        syncedInstalled.any { it.guid == result.guid }
-                                    }
-                                    val installableCount = results.size - installedMatches
-                                    extensionMessage = when {
-                                        results.isEmpty() -> context.getString(R.string.extensions_no_android_addons)
-                                        installableCount == 0 -> context.getString(R.string.extensions_all_matches_installed)
-                                        installedMatches > 0 -> context.getString(R.string.extensions_found_with_installed, installableCount, installedMatches)
-                                        else -> null
+                                    extensionSearchCompletedState(
+                                        results = results,
+                                        installed = syncedInstalled,
+                                        noAndroidAddonsMessage = context.getString(R.string.extensions_no_android_addons),
+                                        allMatchesInstalledMessage = context.getString(R.string.extensions_all_matches_installed),
+                                        foundWithInstalledMessage = { installableCount, installedMatches ->
+                                            context.getString(R.string.extensions_found_with_installed, installableCount, installedMatches)
+                                        }
+                                    ).also { state ->
+                                        extensionResults = state.results
+                                        extensionMessage = state.message
                                     }
                                 }
-                                .onFailure { extensionMessage = it.message ?: context.getString(R.string.extensions_amo_search_failed) }
+                                .onFailure {
+                                    extensionSearchFailedState(
+                                        it.message ?: context.getString(R.string.extensions_amo_search_failed)
+                                    ).also { state ->
+                                        extensionResults = state.results
+                                        extensionMessage = state.message
+                                    }
+                                }
                         }
                     },
                     onInstall = { addon ->
@@ -2080,6 +2092,36 @@ private fun BrowserScreen(
             )
         }
     }
+}
+
+internal data class ExtensionSearchUiState(
+    val results: List<AmoAddonListing>,
+    val message: String?
+)
+
+internal fun extensionSearchStartedState(message: String): ExtensionSearchUiState =
+    ExtensionSearchUiState(results = emptyList(), message = message)
+
+internal fun extensionSearchFailedState(message: String): ExtensionSearchUiState =
+    ExtensionSearchUiState(results = emptyList(), message = message)
+
+internal fun extensionSearchCompletedState(
+    results: List<AmoAddonListing>,
+    installed: List<InstalledExtensionState>,
+    noAndroidAddonsMessage: String,
+    allMatchesInstalledMessage: String,
+    foundWithInstalledMessage: (installableCount: Int, installedMatches: Int) -> String
+): ExtensionSearchUiState {
+    val installedGuids = installed.map { it.guid }.toSet()
+    val installedMatches = results.count { it.guid in installedGuids }
+    val installableCount = results.size - installedMatches
+    val message = when {
+        results.isEmpty() -> noAndroidAddonsMessage
+        installableCount == 0 -> allMatchesInstalledMessage
+        installedMatches > 0 -> foundWithInstalledMessage(installableCount, installedMatches)
+        else -> null
+    }
+    return ExtensionSearchUiState(results = results, message = message)
 }
 
 private fun shortcutRequestMessage(context: Context, result: PinnedShortcutRequestResult): String =
