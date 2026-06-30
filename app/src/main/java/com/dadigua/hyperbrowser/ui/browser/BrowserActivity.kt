@@ -832,6 +832,14 @@ private fun BrowserScreen(
                 scope.launch { webAppIconBridgeLauncher.launch("image/*") }
                 return result
             }
+            "panel.bookmarks" -> {
+                pendingHyperCommand = HyperCommand.Panel.Bookmarks
+                ok()
+            }
+            "panel.history" -> {
+                pendingHyperCommand = HyperCommand.Panel.History
+                ok()
+            }
             "panel.extensions" -> {
                 pendingHyperCommand = HyperCommand.Panel.Extensions
                 ok()
@@ -1536,6 +1544,8 @@ private fun BrowserScreen(
                         .onFailure { message = it.message ?: context.getString(R.string.shortcut_request_failed) }
                 }
             }
+            HyperCommand.Panel.Bookmarks -> showPanel(BrowserPanel.Bookmarks)
+            HyperCommand.Panel.History -> showPanel(BrowserPanel.History)
             HyperCommand.Panel.Extensions -> showPanel(BrowserPanel.Extensions)
         }
         pendingHyperCommand = null
@@ -1836,16 +1846,8 @@ private fun BrowserScreen(
                                 }
                             }
                         },
-                        onShowBookmarks = {
-                            tab.input = GeckoSessionController.BOOKMARKS_URL
-                            controller.loadBookmarks()
-                            message = null
-                        },
-                        onShowHistory = {
-                            tab.input = GeckoSessionController.HISTORY_URL
-                            controller.loadHistory()
-                            message = null
-                        },
+                        onShowBookmarks = { showPanel(BrowserPanel.Bookmarks) },
+                        onShowHistory = { showPanel(BrowserPanel.History) },
                         onShowSettings = {
                             tab.input = GeckoSessionController.SETTINGS_URL
                             controller.loadSettings()

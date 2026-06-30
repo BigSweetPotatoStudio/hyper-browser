@@ -1,85 +1,88 @@
 package com.dadigua.hyperbrowser.ui.browser
 
-import com.dadigua.hyperbrowser.browser.BrowserBookmark
-import com.dadigua.hyperbrowser.browser.BrowserHistoryEntry
-import com.dadigua.hyperbrowser.data.WebAppDefinition
+import com.dadigua.hyperbrowser.browser.BrowserSettings
+import com.dadigua.hyperbrowser.update.UpdateDownloadState
 import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BrowserBridgeJsonTest {
     @Test
-    fun searchSuggestionsIncludeWebAppsBetweenBookmarksAndHistory() {
-        val suggestions = JSONArray(
-            searchSuggestionsJsonString(
-                bookmarks = listOf(BrowserBookmark("https://docs.example", "Docs", 1L)),
-                history = listOf(BrowserHistoryEntry("https://blog.example", "Blog", 2L)),
-                webApps = listOf(
-                    WebAppDefinition(
-                        id = "mail",
-                        name = "Mail",
-                        startUrl = "https://mail.example",
-                        iconPath = null,
-                        themeColor = 0,
-                        displayMode = "standalone",
-                        createdAt = 3L,
-                        lastOpenedAt = 4L
-                    )
-                )
-            )
-        )
+    fun okItemsKeepsItemsJsonAsString() {
+        val itemsJson = JSONArray()
+            .put(JSONObject().put("title", "Docs"))
+            .toString()
 
-        assertEquals("bookmark", suggestions.getJSONObject(0).getString("source"))
-        assertEquals("app", suggestions.getJSONObject(1).getString("source"))
-        assertEquals("mail", suggestions.getJSONObject(1).getString("id"))
-        assertEquals("history", suggestions.getJSONObject(2).getString("source"))
+        val response = okItems(itemsJson)
+
+        assertTrue(response.getBoolean("ok"))
+        assertEquals(itemsJson, response.getString("itemsJson"))
     }
 
     @Test
-    fun searchSuggestionsIgnoreInternalHistoryUrls() {
-        val suggestions = JSONArray(
-            searchSuggestionsJsonString(
-                bookmarks = emptyList(),
-                history = listOf(BrowserHistoryEntry("hyper://settings", "Settings", 1L)),
-                webApps = emptyList()
-            )
-        )
+    fun browserSettingsJsonIncludesBrowserAndSyncFields() {
+        val json = BrowserSettings(
+            searchEngineId = BrowserSettings.SEARCH_ENGINE_CUSTOM,
+            customSearchUrl = "https://search.example?q=%s",
+            toolbarPosition = BrowserSettings.TOOLBAR_POSITION_FLOATING_DOT,
+            floatingDotXRatio = 0.25f,
+            floatingDotYRatio = 0.75f,
+            websiteDisplayMode = BrowserSettings.WEBSITE_DISPLAY_DESKTOP,
+            backgroundVideoEnhancementEnabled = true,
+            openNewTabsInCurrentTab = true,
+            dohEnabled = true,
+            dohProviderUrl = "https://resolver.example/dns-query",
+            httpsOnlyEnabled = true,
+            privacyProtectionLevel = BrowserSettings.PRIVACY_PROTECTION_STRICT,
+            localePreference = BrowserSettings.LOCALE_CHINESE,
+            webDavSyncEnabled = true,
+            webDavSyncUrl = "https://dav.example/HyperBrowserSync",
+            webDavSyncUsername = "user",
+            webDavSyncPassword = "password",
+            webDavSyncDeviceName = "phone",
+            webDavSyncDeviceId = "device-1"
+        ).toJson()
 
-        assertEquals(0, suggestions.length())
+        assertEquals(BrowserSettings.SEARCH_ENGINE_CUSTOM, json.getString("searchEngineId"))
+        assertEquals("自定义", json.getString("searchEngineName"))
+        assertEquals("https://search.example?q=%s", json.getString("customSearchUrl"))
+        assertEquals(BrowserSettings.TOOLBAR_POSITION_FLOATING_DOT, json.getString("toolbarPosition"))
+        assertEquals(0.25, json.getDouble("floatingDotXRatio"), 0.001)
+        assertEquals(0.75, json.getDouble("floatingDotYRatio"), 0.001)
+        assertEquals(BrowserSettings.WEBSITE_DISPLAY_DESKTOP, json.getString("websiteDisplayMode"))
+        assertTrue(json.getBoolean("backgroundVideoEnhancementEnabled"))
+        assertTrue(json.getBoolean("openNewTabsInCurrentTab"))
+        assertTrue(json.getBoolean("dohEnabled"))
+        assertEquals("https://resolver.example/dns-query", json.getString("dohProviderUrl"))
+        assertTrue(json.getBoolean("httpsOnlyEnabled"))
+        assertEquals(BrowserSettings.PRIVACY_PROTECTION_STRICT, json.getString("privacyProtectionLevel"))
+        assertEquals(BrowserSettings.LOCALE_CHINESE, json.getString("localePreference"))
+        assertTrue(json.getBoolean("webDavSyncEnabled"))
+        assertEquals("https://dav.example/HyperBrowserSync", json.getString("webDavSyncUrl"))
+        assertEquals("user", json.getString("webDavSyncUsername"))
+        assertEquals("password", json.getString("webDavSyncPassword"))
+        assertEquals("phone", json.getString("webDavSyncDeviceName"))
+        assertEquals("device-1", json.getString("webDavSyncDeviceId"))
     }
 
     @Test
-    fun searchSuggestionsSkipBlankWebApps() {
-        val suggestions = JSONArray(
-            searchSuggestionsJsonString(
-                bookmarks = emptyList(),
-                history = emptyList(),
-                webApps = listOf(
-                    WebAppDefinition(
-                        id = "",
-                        name = "Broken",
-                        startUrl = "https://broken.example",
-                        iconPath = null,
-                        themeColor = 0,
-                        displayMode = "standalone",
-                        createdAt = 1L,
-                        lastOpenedAt = 1L
-                    ),
-                    WebAppDefinition(
-                        id = "blank-url",
-                        name = "Blank",
-                        startUrl = "",
-                        iconPath = null,
-                        themeColor = 0,
-                        displayMode = "standalone",
-                        createdAt = 1L,
-                        lastOpenedAt = 1L
-                    )
-                )
-            )
-        )
+    fun updateDownloadStateJsonIncludesProgressAndMessage() {
+        val json = UpdateDownloadState(
+            status = UpdateDownloadState.STATUS_DOWNLOADING,
+            versionCode = 17L,
+            versionName = "0.1.8-beta.3",
+            bytesDownloaded = 1024L,
+            totalBytes = 2048L,
+            message = "Downloading"
+        ).toJson()
 
-        assertFalse(suggestions.length() > 0)
+        assertEquals(UpdateDownloadState.STATUS_DOWNLOADING, json.getString("status"))
+        assertEquals(17L, json.getLong("versionCode"))
+        assertEquals("0.1.8-beta.3", json.getString("versionName"))
+        assertEquals(1024L, json.getLong("bytesDownloaded"))
+        assertEquals(2048L, json.getLong("totalBytes"))
+        assertEquals("Downloading", json.getString("message"))
     }
 }

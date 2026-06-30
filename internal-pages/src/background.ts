@@ -45,6 +45,8 @@ const internalPageMessageTypes = new Set([
   "apps.openStandalone",
   "apps.pin",
   "apps.icon.choose",
+  "panel.bookmarks",
+  "panel.history",
   "panel.extensions",
 ]);
 

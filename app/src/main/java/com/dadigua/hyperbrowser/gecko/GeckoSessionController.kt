@@ -1610,6 +1610,8 @@ sealed interface HyperCommand {
     }
 
     sealed interface Panel : HyperCommand {
+        data object Bookmarks : Panel
+        data object History : Panel
         data object Extensions : Panel
     }
 }

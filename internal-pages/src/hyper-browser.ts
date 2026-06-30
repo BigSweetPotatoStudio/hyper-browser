@@ -151,6 +151,8 @@ type HyperBridgeMessageType =
   | "apps.openStandalone"
   | "apps.pin"
   | "apps.icon.choose"
+  | "panel.bookmarks"
+  | "panel.history"
   | "panel.extensions";
 
 type BridgePayload = Record<string, string>;
@@ -293,10 +295,10 @@ function isLauncherJson(value: unknown): value is LauncherJson {
 
 window.hyperBrowser = {
   showBookmarks() {
-    window.location.href = "hyper://bookmarks";
+    command("panel.bookmarks");
   },
   showHistory() {
-    window.location.href = "hyper://history";
+    command("panel.history");
   },
   showSettings() {
     window.location.href = "hyper://settings";

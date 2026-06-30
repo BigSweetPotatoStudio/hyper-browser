@@ -48,6 +48,8 @@ object HyperBridge {
         "apps.openStandalone",
         "apps.pin",
         "apps.icon.choose",
+        "panel.bookmarks",
+        "panel.history",
         "panel.extensions"
     )
     private val CONTENT_SCRIPT_MESSAGE_TYPES = setOf(
