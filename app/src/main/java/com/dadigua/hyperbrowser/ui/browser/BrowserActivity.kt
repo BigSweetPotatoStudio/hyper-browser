@@ -1491,12 +1491,12 @@ private fun BrowserScreen(
                 controller.loadSettings()
             }
             HyperRoute.Bookmarks -> {
-                tab.input = GeckoSessionController.BOOKMARKS_URL
-                controller.loadBookmarks()
+                showPanel(BrowserPanel.Bookmarks)
+                message = null
             }
             HyperRoute.History -> {
-                tab.input = GeckoSessionController.HISTORY_URL
-                controller.loadHistory()
+                showPanel(BrowserPanel.History)
+                message = null
             }
         }
         pendingHyperRoute = null
@@ -1846,13 +1846,11 @@ private fun BrowserScreen(
                             }
                         },
                         onShowBookmarks = {
-                            tab.input = GeckoSessionController.BOOKMARKS_URL
-                            controller.loadBookmarks()
+                            showPanel(BrowserPanel.Bookmarks)
                             message = null
                         },
                         onShowHistory = {
-                            tab.input = GeckoSessionController.HISTORY_URL
-                            controller.loadHistory()
+                            showPanel(BrowserPanel.History)
                             message = null
                         },
                         onShowSettings = {
