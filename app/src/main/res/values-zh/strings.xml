@@ -103,6 +103,10 @@
     <string name="library_downloads_empty_body">下载过的文件会显示在这里。</string>
     <string name="library_downloads_search_label">搜索下载内容</string>
     <string name="library_downloads_search_placeholder">搜索文件、网址、状态或错误</string>
+    <string name="library_downloads_filter_all">全部</string>
+    <string name="library_downloads_filter_active">下载中</string>
+    <string name="library_downloads_filter_completed">已完成</string>
+    <string name="library_downloads_filter_failed_canceled">失败/已取消</string>
     <string name="library_downloads_no_matches">没有匹配的下载内容。</string>
     <string name="library_downloads_url_copied">已复制下载地址</string>
     <string name="library_downloads_delete_title">删除下载</string>

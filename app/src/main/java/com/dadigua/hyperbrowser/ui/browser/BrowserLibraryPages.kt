@@ -8,6 +8,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +31,7 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -86,6 +89,13 @@ internal data class DownloadMetaLabels(
     val unknownSize: String,
     val unknown: String
 )
+
+internal enum class DownloadStatusFilter {
+    All,
+    Active,
+    Completed,
+    FailedOrCanceled
+}
 
 @Composable
 internal fun BookmarksPage(
@@ -277,6 +287,7 @@ internal fun DownloadsPage(
     val scope = rememberCoroutineScope()
     val orderedDownloads = remember(downloads) { downloads.sortedByDescending { it.createdAt } }
     var query by remember { mutableStateOf("") }
+    var statusFilter by remember { mutableStateOf(DownloadStatusFilter.All) }
     val downloadMetaLabels = DownloadMetaLabels(
         queued = stringResource(R.string.download_status_queued),
         downloading = stringResource(R.string.download_status_downloading),
@@ -286,8 +297,8 @@ internal fun DownloadsPage(
         unknownSize = stringResource(R.string.download_unknown_size),
         unknown = stringResource(R.string.download_unknown)
     )
-    val visibleDownloads = remember(orderedDownloads, query, downloadMetaLabels) {
-        orderedDownloads.filter { downloadMatchesQuery(it, query, downloadMetaLabels) }
+    val visibleDownloads = remember(orderedDownloads, query, statusFilter, downloadMetaLabels) {
+        filterDownloads(orderedDownloads, query, statusFilter, downloadMetaLabels)
     }
     val clearableCount = orderedDownloads.count {
         canClear(it) &&
@@ -354,6 +365,10 @@ internal fun DownloadsPage(
                 DownloadSearchField(
                     query = query,
                     onQueryChange = { query = it }
+                )
+                DownloadStatusFilterRow(
+                    selectedFilter = statusFilter,
+                    onFilterSelected = { statusFilter = it }
                 )
                 if (visibleDownloads.isEmpty()) {
                     Box(
@@ -549,6 +564,35 @@ private fun DownloadRow(
         }
         IconButton(onClick = onRemove) {
             Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.library_downloads_remove_content_description))
+        }
+    }
+}
+
+@Composable
+private fun DownloadStatusFilterRow(
+    selectedFilter: DownloadStatusFilter,
+    onFilterSelected: (DownloadStatusFilter) -> Unit
+) {
+    val labels = listOf(
+        DownloadStatusFilter.All to stringResource(R.string.library_downloads_filter_all),
+        DownloadStatusFilter.Active to stringResource(R.string.library_downloads_filter_active),
+        DownloadStatusFilter.Completed to stringResource(R.string.library_downloads_filter_completed),
+        DownloadStatusFilter.FailedOrCanceled to stringResource(R.string.library_downloads_filter_failed_canceled)
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        labels.forEach { (filter, label) ->
+            FilterChip(
+                selected = selectedFilter == filter,
+                onClick = { onFilterSelected(filter) },
+                label = { Text(label) }
+            )
         }
     }
 }
@@ -956,6 +1000,28 @@ private fun downloadMeta(entry: BrowserDownloadEntry, labels: DownloadMetaLabels
     val error = entry.error?.takeIf { it.isNotBlank() }
     return listOfNotNull(status, size, time, error).joinToString(" · ")
 }
+
+internal fun filterDownloads(
+    items: List<BrowserDownloadEntry>,
+    query: String,
+    statusFilter: DownloadStatusFilter,
+    labels: DownloadMetaLabels
+): List<BrowserDownloadEntry> =
+    items.filter { entry ->
+        downloadMatchesStatusFilter(entry, statusFilter) &&
+            downloadMatchesQuery(entry, query, labels)
+    }
+
+internal fun downloadMatchesStatusFilter(
+    entry: BrowserDownloadEntry,
+    statusFilter: DownloadStatusFilter
+): Boolean =
+    when (statusFilter) {
+        DownloadStatusFilter.All -> true
+        DownloadStatusFilter.Active -> entry.status == DownloadStatus.Queued || entry.status == DownloadStatus.Running
+        DownloadStatusFilter.Completed -> entry.status == DownloadStatus.Completed
+        DownloadStatusFilter.FailedOrCanceled -> entry.status == DownloadStatus.Failed || entry.status == DownloadStatus.Canceled
+    }
 
 internal fun downloadMatchesQuery(
     entry: BrowserDownloadEntry,
