@@ -211,6 +211,8 @@
     <string name="backup_import_result">Restored %1$d bookmarks and %2$d WebApps.</string>
     <string name="backup_import_failed">Backup import failed.</string>
     <string name="backup_read_failed">Unable to read backup file.</string>
+    <string name="backup_import_confirm_title">Import backup?</string>
+    <string name="backup_import_confirm_message">This will replace your current bookmarks, WebApps, and launcher layout with %1$d bookmarks and %2$d WebApps from the backup.</string>
     <string name="backup_choose_save_location">Choose where to save the JSON backup.</string>
     <string name="backup_choose_file">Choose a Hyper Browser JSON backup.</string>
     <string name="webdav_sync_failed">WebDAV sync failed.</string>
