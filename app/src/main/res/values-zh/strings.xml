@@ -94,6 +94,8 @@
     <string name="library_history_search_placeholder">搜索标题、网址或时间</string>
     <string name="library_history_no_matches">没有匹配的历史记录。</string>
     <string name="library_history_remove_label">删除历史记录</string>
+    <string name="library_history_remove_title">删除这条历史记录？</string>
+    <string name="library_history_remove_message">要从历史记录中删除 %1$s 吗？</string>
     <string name="library_history_clear_title">清空历史记录？</string>
     <string name="library_history_clear_message">这会删除此设备上保存的全部浏览历史，书签和 WebApp 不会受影响。</string>
     <string name="library_history_clear_action">清空历史记录</string>
