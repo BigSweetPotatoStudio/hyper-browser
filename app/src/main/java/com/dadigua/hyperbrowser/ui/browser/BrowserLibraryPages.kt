@@ -270,6 +270,7 @@ internal fun DownloadsPage(
     onClearFinished: () -> Unit,
     canRetry: (BrowserDownloadEntry) -> Boolean,
     canCancel: (BrowserDownloadEntry) -> Boolean,
+    canDeleteFile: (BrowserDownloadEntry) -> Boolean,
     canClear: (BrowserDownloadEntry) -> Boolean
 ) {
     val context = LocalContext.current
@@ -297,7 +298,7 @@ internal fun DownloadsPage(
     }
     var pendingDelete by remember { mutableStateOf<BrowserDownloadEntry?>(null) }
     var pendingClearFinished by remember { mutableStateOf(false) }
-    var deleteFile by remember { mutableStateOf(true) }
+    var deleteFile by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -395,7 +396,7 @@ internal fun DownloadsPage(
                                 },
                                 onRemove = {
                                     pendingDelete = entry
-                                    deleteFile = true
+                                    deleteFile = canDeleteFile(entry)
                                 },
                                 onRetry = if (canRetry(entry)) {
                                     { onRetry(entry) }
@@ -421,28 +422,37 @@ internal fun DownloadsPage(
     }
 
     pendingDelete?.let { entry ->
+        val fileDeleteAvailable = canDeleteFile(entry)
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text(stringResource(R.string.library_downloads_delete_title)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(stringResource(R.string.library_downloads_delete_message, entry.name))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { deleteFile = !deleteFile },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Checkbox(checked = deleteFile, onCheckedChange = { deleteFile = it })
-                        Text(stringResource(R.string.library_downloads_delete_file))
+                    if (fileDeleteAvailable) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { deleteFile = !deleteFile },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Checkbox(checked = deleteFile, onCheckedChange = { deleteFile = it })
+                            Text(stringResource(R.string.library_downloads_delete_file))
+                        }
+                    } else {
+                        Text(
+                            stringResource(R.string.library_downloads_delete_record_only),
+                            color = Color(0xFF5F6368),
+                            fontSize = 13.sp
+                        )
                     }
                 }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        onRemove(entry, deleteFile)
+                        onRemove(entry, fileDeleteAvailable && deleteFile)
                         pendingDelete = null
                     }
                 ) {
@@ -970,6 +980,9 @@ internal fun downloadMatchesQuery(
         downloadMeta(entry, labels)
     ).any { field -> field.lowercase(Locale.ROOT).contains(normalizedQuery) }
 }
+
+internal fun downloadHasSavedFile(entry: BrowserDownloadEntry): Boolean =
+    entry.status == DownloadStatus.Completed && !entry.contentUri.isNullOrBlank()
 
 private fun formatBytes(bytes: Long, unknownLabel: String): String {
     if (bytes < 0L) return unknownLabel

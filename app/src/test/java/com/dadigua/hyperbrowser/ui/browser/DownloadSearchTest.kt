@@ -48,16 +48,61 @@ class DownloadSearchTest {
         assertFalse(downloadMatchesQuery(completedDownload, "presentation", labels))
     }
 
+    @Test
+    fun completedDownloadWithSavedUriCanOfferFileDelete() {
+        assertTrue(
+            downloadHasSavedFile(
+                download(
+                    name = "installer.apk",
+                    status = DownloadStatus.Completed,
+                    contentUri = "content://downloads/my_downloads/42"
+                )
+            )
+        )
+    }
+
+    @Test
+    fun unfinishedOrMissingUriDownloadsDoNotOfferFileDelete() {
+        assertFalse(
+            downloadHasSavedFile(
+                download(
+                    name = "failed.apk",
+                    status = DownloadStatus.Failed,
+                    contentUri = "content://downloads/my_downloads/42"
+                )
+            )
+        )
+        assertFalse(
+            downloadHasSavedFile(
+                download(
+                    name = "canceled.apk",
+                    status = DownloadStatus.Canceled,
+                    contentUri = "content://downloads/my_downloads/42"
+                )
+            )
+        )
+        assertFalse(
+            downloadHasSavedFile(
+                download(
+                    name = "missing-uri.apk",
+                    status = DownloadStatus.Completed,
+                    contentUri = null
+                )
+            )
+        )
+    }
+
     private fun download(
         name: String,
         sourceUrl: String = "https://example.com/download",
         status: DownloadStatus = DownloadStatus.Completed,
-        error: String? = null
+        error: String? = null,
+        contentUri: String? = null
     ): BrowserDownloadEntry = BrowserDownloadEntry(
         id = "download-1",
         name = name,
         sourceUrl = sourceUrl,
-        contentUri = null,
+        contentUri = contentUri,
         downloadManagerId = null,
         status = status,
         bytesDownloaded = 1024L,

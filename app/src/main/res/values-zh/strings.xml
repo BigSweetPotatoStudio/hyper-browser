@@ -108,6 +108,7 @@
     <string name="library_downloads_delete_title">删除下载</string>
     <string name="library_downloads_delete_message">是否删除 %1$s？</string>
     <string name="library_downloads_delete_file">同时删除文件</string>
+    <string name="library_downloads_delete_record_only">只会移除下载记录；当前没有可删除的已保存文件。</string>
     <string name="library_downloads_clear_title">清理下载记录</string>
     <string name="library_downloads_clear_message">从列表移除已完成、失败和已取消的下载记录，不删除已保存的文件；正在下载的项目会保留。</string>
     <string name="library_downloads_clear_action">清理</string>
