@@ -71,7 +71,9 @@ import com.dadigua.hyperbrowser.browser.DownloadStatus
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
+import java.util.LinkedHashMap
 import java.util.Locale
 
 private val LibraryActionBarHeight = 48.dp
@@ -91,6 +93,17 @@ internal data class DownloadMetaLabels(
 internal data class BookmarkEditPayload(
     val title: String,
     val url: String
+)
+
+internal data class HistoryDayLabels(
+    val today: String,
+    val yesterday: String,
+    val unknownDate: String
+)
+
+internal data class HistoryDaySection(
+    val label: String,
+    val entries: List<BrowserHistoryEntry>
 )
 
 @Composable
@@ -210,6 +223,14 @@ internal fun HistoryPage(
     var query by remember { mutableStateOf("") }
     val pageUrlCopied = stringResource(R.string.library_page_url_copied)
     val visibleHistory = remember(history, query) { filterHistory(history, query) }
+    val historyDayLabels = HistoryDayLabels(
+        today = stringResource(R.string.library_history_today),
+        yesterday = stringResource(R.string.library_history_yesterday),
+        unknownDate = stringResource(R.string.library_history_unknown_date)
+    )
+    val groupedHistory = remember(visibleHistory, historyDayLabels) {
+        groupHistoryByDay(visibleHistory, historyDayLabels)
+    }
 
     fun copyPageUrl(url: String) {
         scope.launch {
@@ -243,19 +264,24 @@ internal fun HistoryPage(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        items(visibleHistory, key = { "${it.url}:${it.visitedAt}" }) { entry ->
-                            LibraryRow(
-                                title = entry.title,
-                                url = entry.url,
-                                meta = formatVisitTime(entry.visitedAt),
-                                leading = "◷",
-                                iconPath = iconPathFor(entry),
-                                removeContentDescription = stringResource(R.string.library_history_remove_label),
-                                onOpen = { onOpen(entry.url) },
-                                onRemove = { pendingRemoveHistory = entry },
-                                onCopyUrl = { copyPageUrl(entry.url) }
-                            )
-                            HorizontalDivider(color = Color(0xFFE8EAED))
+                        groupedHistory.forEach { section ->
+                            item(key = "header:${section.label}") {
+                                HistoryDateHeader(section.label)
+                            }
+                            items(section.entries, key = { "${it.url}:${it.visitedAt}" }) { entry ->
+                                LibraryRow(
+                                    title = entry.title,
+                                    url = entry.url,
+                                    meta = formatVisitTime(entry.visitedAt),
+                                    leading = "◷",
+                                    iconPath = iconPathFor(entry),
+                                    removeContentDescription = stringResource(R.string.library_history_remove_label),
+                                    onOpen = { onOpen(entry.url) },
+                                    onRemove = { pendingRemoveHistory = entry },
+                                    onCopyUrl = { copyPageUrl(entry.url) }
+                                )
+                                HorizontalDivider(color = Color(0xFFE8EAED))
+                            }
                         }
                         item { Spacer(modifier = Modifier.height(36.dp)) }
                     }
@@ -760,6 +786,20 @@ private fun LibraryNoMatches(message: String) {
 }
 
 @Composable
+private fun HistoryDateHeader(label: String) {
+    Text(
+        text = label,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFF7F8FC))
+            .padding(horizontal = 18.dp, vertical = 8.dp),
+        color = Color(0xFF5F6368),
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.SemiBold
+    )
+}
+
+@Composable
 private fun LibrarySearchField(
     query: String,
     onQueryChange: (String) -> Unit,
@@ -1023,6 +1063,46 @@ private fun filterHistory(items: List<BrowserHistoryEntry>, query: String): List
             formatVisitTime(item.visitedAt).lowercase(Locale.getDefault()).contains(normalizedQuery)
     }
 }
+
+internal fun groupHistoryByDay(
+    items: List<BrowserHistoryEntry>,
+    labels: HistoryDayLabels,
+    nowMillis: Long = System.currentTimeMillis(),
+    locale: Locale = Locale.getDefault()
+): List<HistoryDaySection> {
+    if (items.isEmpty()) return emptyList()
+    val formatter = SimpleDateFormat("yyyy-MM-dd", locale)
+    val sections = LinkedHashMap<String, MutableList<BrowserHistoryEntry>>()
+    items.forEach { entry ->
+        val label = historyDayLabel(entry.visitedAt, nowMillis, labels, formatter)
+        sections.getOrPut(label) { mutableListOf() }.add(entry)
+    }
+    return sections.map { (label, entries) -> HistoryDaySection(label = label, entries = entries) }
+}
+
+private fun historyDayLabel(
+    timestamp: Long,
+    nowMillis: Long,
+    labels: HistoryDayLabels,
+    formatter: SimpleDateFormat
+): String {
+    if (timestamp <= 0L) return labels.unknownDate
+    val entryDay = Calendar.getInstance().apply { timeInMillis = timestamp }
+    val today = Calendar.getInstance().apply { timeInMillis = nowMillis }
+    if (isSameCalendarDay(entryDay, today)) return labels.today
+    val yesterday = Calendar.getInstance().apply {
+        timeInMillis = nowMillis
+        add(Calendar.DAY_OF_YEAR, -1)
+    }
+    if (isSameCalendarDay(entryDay, yesterday)) return labels.yesterday
+    return formatter.format(Date(timestamp))
+}
+
+private fun isSameCalendarDay(left: Calendar, right: Calendar): Boolean =
+    left.get(Calendar.ERA) == right.get(Calendar.ERA) &&
+        left.get(Calendar.YEAR) == right.get(Calendar.YEAR) &&
+        left.get(Calendar.DAY_OF_YEAR) == right.get(Calendar.DAY_OF_YEAR)
+
 private fun formatVisitTime(timestamp: Long): String {
     if (timestamp <= 0L) return ""
     val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())

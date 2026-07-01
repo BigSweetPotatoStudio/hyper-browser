@@ -96,6 +96,9 @@
     <string name="library_history_remove_label">Remove history entry</string>
     <string name="library_history_remove_title">Remove history entry?</string>
     <string name="library_history_remove_message">Remove %1$s from history?</string>
+    <string name="library_history_today">Today</string>
+    <string name="library_history_yesterday">Yesterday</string>
+    <string name="library_history_unknown_date">Unknown date</string>
     <string name="library_history_clear_title">Clear history?</string>
     <string name="library_history_clear_message">This removes all saved browsing history from this device. Bookmarks and WebApps are kept.</string>
     <string name="library_history_clear_action">Clear history</string>
