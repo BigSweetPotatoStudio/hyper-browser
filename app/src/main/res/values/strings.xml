@@ -109,6 +109,10 @@
     <string name="library_downloads_empty_body">Files you download will appear here.</string>
     <string name="library_downloads_search_label">Search downloads</string>
     <string name="library_downloads_search_placeholder">Search file, address, status, or error</string>
+    <string name="library_downloads_filter_all">All</string>
+    <string name="library_downloads_filter_active">Active</string>
+    <string name="library_downloads_filter_completed">Complete</string>
+    <string name="library_downloads_filter_failed_canceled">Failed/canceled</string>
     <string name="library_downloads_no_matches">No matching downloads.</string>
     <string name="library_downloads_url_copied">Download address copied</string>
     <string name="library_downloads_delete_title">Delete download</string>

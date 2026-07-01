@@ -2,6 +2,7 @@ package com.dadigua.hyperbrowser.ui.browser
 
 import com.dadigua.hyperbrowser.browser.BrowserDownloadEntry
 import com.dadigua.hyperbrowser.browser.DownloadStatus
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -62,6 +63,30 @@ class DownloadSearchTest {
     }
 
     @Test
+    fun statusFilterGroupsActiveCompletedAndFailedOrCanceledDownloads() {
+        val downloads = listOf(
+            download(id = "queued", name = "queued.apk", status = DownloadStatus.Queued),
+            download(id = "running", name = "running.apk", status = DownloadStatus.Running),
+            download(id = "complete", name = "complete.apk", status = DownloadStatus.Completed),
+            download(id = "failed", name = "failed.apk", status = DownloadStatus.Failed),
+            download(id = "canceled", name = "canceled.apk", status = DownloadStatus.Canceled)
+        )
+
+        assertEquals(
+            listOf("queued", "running"),
+            filterDownloads(downloads, "", DownloadStatusFilter.Active, labels).map { it.id }
+        )
+        assertEquals(
+            listOf("complete"),
+            filterDownloads(downloads, "", DownloadStatusFilter.Completed, labels).map { it.id }
+        )
+        assertEquals(
+            listOf("failed", "canceled"),
+            filterDownloads(downloads, "", DownloadStatusFilter.FailedOrCanceled, labels).map { it.id }
+        )
+    }
+
+    @Test
     fun unfinishedOrMissingUriDownloadsDoNotOfferFileDelete() {
         assertFalse(
             downloadHasSavedFile(
@@ -92,14 +117,29 @@ class DownloadSearchTest {
         )
     }
 
+    @Test
+    fun statusFilterCombinesWithTextQuery() {
+        val downloads = listOf(
+            download(id = "failed-notes", name = "release-notes.pdf", status = DownloadStatus.Failed),
+            download(id = "failed-image", name = "image.png", status = DownloadStatus.Failed),
+            download(id = "complete-notes", name = "release-notes.pdf", status = DownloadStatus.Completed)
+        )
+
+        assertEquals(
+            listOf("failed-notes"),
+            filterDownloads(downloads, "notes", DownloadStatusFilter.FailedOrCanceled, labels).map { it.id }
+        )
+    }
+
     private fun download(
+        id: String = "download-1",
         name: String,
         sourceUrl: String = "https://example.com/download",
         status: DownloadStatus = DownloadStatus.Completed,
         error: String? = null,
         contentUri: String? = null
     ): BrowserDownloadEntry = BrowserDownloadEntry(
-        id = "download-1",
+        id = id,
         name = name,
         sourceUrl = sourceUrl,
         contentUri = contentUri,
