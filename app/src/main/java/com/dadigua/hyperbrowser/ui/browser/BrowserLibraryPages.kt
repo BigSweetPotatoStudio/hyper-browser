@@ -29,6 +29,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -51,7 +52,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.ClipEntry
@@ -82,6 +82,7 @@ import java.util.Locale
 private val LibraryActionBarHeight = 48.dp
 private val LibraryActionButtonSize = 40.dp
 private val LibraryActionIconSize = 24.sp
+private val LibraryRowActionButtonSize = 40.dp
 
 internal data class DownloadMetaLabels(
     val queued: String,
@@ -936,14 +937,16 @@ private fun BookmarkRow(
             onRemove = onRemove,
             onCopyUrl = onCopyUrl,
             trailing = {
-                TextButton(
+                IconButton(
                     onClick = onEdit,
-                    shape = RectangleShape,
-                    modifier = Modifier.semantics {
-                        contentDescription = editLabel
-                    }
+                    modifier = Modifier.size(LibraryRowActionButtonSize)
                 ) {
-                    Text("✎", fontSize = 20.sp, color = Color(0xFF5F6368))
+                    Icon(
+                        imageVector = Icons.Outlined.Edit,
+                        contentDescription = editLabel,
+                        modifier = Modifier.size(20.dp),
+                        tint = Color(0xFF5F6368)
+                    )
                 }
             }
         )
@@ -1021,7 +1024,7 @@ private fun LibraryRow(
             .then(rowGestureModifier)
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp)
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Box(
             modifier = Modifier
@@ -1045,14 +1048,22 @@ private fun LibraryRow(
                 Text(meta, color = Color(0xFF80868B), fontSize = 12.sp)
             }
         }
-        trailing?.invoke()
-        IconButton(onClick = onRemove) {
-            Text(
-                "×",
-                fontSize = 30.sp,
-                color = Color(0xFF5F6368),
-                modifier = Modifier.semantics { contentDescription = removeContentDescription }
-            )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(0.dp)
+        ) {
+            trailing?.invoke()
+            IconButton(
+                onClick = onRemove,
+                modifier = Modifier.size(LibraryRowActionButtonSize)
+            ) {
+                Text(
+                    "×",
+                    fontSize = 28.sp,
+                    color = Color(0xFF5F6368),
+                    modifier = Modifier.semantics { contentDescription = removeContentDescription }
+                )
+            }
         }
     }
 }
