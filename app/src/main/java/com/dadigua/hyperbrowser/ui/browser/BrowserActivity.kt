@@ -22,8 +22,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -57,6 +59,8 @@ import com.dadigua.hyperbrowser.browser.DownloadStatus
 import com.dadigua.hyperbrowser.browser.DownloadStore
 import com.dadigua.hyperbrowser.browser.FaviconRepository
 import com.dadigua.hyperbrowser.backup.BrowserBackupManager
+import com.dadigua.hyperbrowser.backup.BrowserBackupImportPreview
+import com.dadigua.hyperbrowser.backup.previewBrowserBackupImport
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.browser.BrowserMediaNotificationController
@@ -104,6 +108,11 @@ import java.util.UUID
 
 private const val BROWSER_ACTIVITY_TAG = "BrowserActivity"
 private const val WEB_DAV_SYNC_CLIENT_VERSION = "3"
+
+private data class PendingBackupImport(
+    val rawJson: String,
+    val preview: BrowserBackupImportPreview
+)
 
 class BrowserActivity : ComponentActivity() {
     private val externalIntents = MutableSharedFlow<ExternalBrowserIntent>(extraBufferCapacity = 1)
@@ -232,6 +241,7 @@ private fun BrowserScreen(
     var updateDownloadEntry by remember { mutableStateOf<BrowserDownloadEntry?>(null) }
     var updateInstallInFlight by remember { mutableStateOf(false) }
     var settingsUpdateMessage by remember { mutableStateOf<String?>(null) }
+    var pendingBackupImport by remember { mutableStateOf<PendingBackupImport?>(null) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
@@ -568,7 +578,7 @@ private fun BrowserScreen(
             return@rememberLauncherForActivityResult
         }
         scope.launch {
-            message = context.getString(R.string.backup_importing)
+            message = null
             runCatching {
                 val backupJson = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)
@@ -576,7 +586,23 @@ private fun BrowserScreen(
                         ?.use { reader -> reader.readText() }
                         ?: error(context.getString(R.string.backup_read_failed))
                 }
-                withContext(Dispatchers.IO) { backupManager.importJson(backupJson) }
+                val preview = withContext(Dispatchers.IO) { previewBrowserBackupImport(backupJson) }
+                PendingBackupImport(backupJson, preview)
+            }
+                .onSuccess { pending ->
+                    pendingBackupImport = pending
+                    message = null
+                }
+                .onFailure { message = it.message ?: context.getString(R.string.backup_import_failed) }
+        }
+    }
+
+    fun confirmBackupImport(pending: PendingBackupImport) {
+        pendingBackupImport = null
+        scope.launch {
+            message = context.getString(R.string.backup_importing)
+            runCatching {
+                withContext(Dispatchers.IO) { backupManager.importJson(pending.rawJson) }
             }
                 .onSuccess { result ->
                     message = context.getString(R.string.backup_import_result, result.bookmarks, result.webApps)
@@ -2070,6 +2096,39 @@ private fun BrowserScreen(
                 onChooseImage = { webAppIconImageLauncher.launch("image/*") },
                 onConfirm = { action -> confirmWebAppDetailsDialog(dialog, action) },
                 onDismiss = { dismissWebAppDetailsDialog() }
+            )
+        }
+        pendingBackupImport?.let { pending ->
+            AlertDialog(
+                onDismissRequest = {
+                    pendingBackupImport = null
+                    message = context.getString(R.string.backup_import_canceled)
+                },
+                title = { Text(stringResource(R.string.backup_import_confirm_title)) },
+                text = {
+                    Text(
+                        stringResource(
+                            R.string.backup_import_confirm_message,
+                            pending.preview.bookmarks,
+                            pending.preview.webApps
+                        )
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { confirmBackupImport(pending) }) {
+                        Text(stringResource(R.string.settings_import_json))
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            pendingBackupImport = null
+                            message = context.getString(R.string.backup_import_canceled)
+                        }
+                    ) {
+                        Text(stringResource(R.string.common_action_cancel))
+                    }
+                }
             )
         }
         if (!pageFullScreen) {
