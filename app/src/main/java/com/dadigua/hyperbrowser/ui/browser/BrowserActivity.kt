@@ -270,6 +270,13 @@ private fun BrowserScreen(
         entry.id != AppUpdateManager.APP_UPDATE_DOWNLOAD_ID &&
             (entry.status == DownloadStatus.Queued || entry.status == DownloadStatus.Running)
 
+    fun canDeleteDownloadFile(entry: BrowserDownloadEntry): Boolean =
+        if (entry.id == AppUpdateManager.APP_UPDATE_DOWNLOAD_ID) {
+            entry.status == DownloadStatus.Completed
+        } else {
+            downloadHasSavedFile(entry)
+        }
+
     fun canClearDownload(entry: BrowserDownloadEntry): Boolean =
         entry.id != AppUpdateManager.APP_UPDATE_DOWNLOAD_ID
 
@@ -1763,6 +1770,7 @@ private fun BrowserScreen(
                     onClearFinished = ::clearFinishedDownloads,
                     canRetry = ::canRetryDownload,
                     canCancel = ::canCancelDownload,
+                    canDeleteFile = ::canDeleteDownloadFile,
                     canClear = ::canClearDownload
                 )
             } else if (showExtensions) {

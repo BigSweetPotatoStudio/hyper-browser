@@ -108,6 +108,7 @@
     <string name="library_downloads_delete_title">Delete download</string>
     <string name="library_downloads_delete_message">Delete %1$s?</string>
     <string name="library_downloads_delete_file">Also delete file</string>
+    <string name="library_downloads_delete_record_only">Only the download record will be removed. No saved file is available.</string>
     <string name="library_downloads_clear_title">Clear download records</string>
     <string name="library_downloads_clear_message">Remove completed, failed, and canceled downloads from the list without deleting saved files. Active downloads are kept.</string>
     <string name="library_downloads_clear_action">Clear</string>
