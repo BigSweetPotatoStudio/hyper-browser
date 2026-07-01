@@ -75,6 +75,8 @@ internal fun WebAppDetailsDialog(
     onConfirm: (WebAppInstallAction) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val canSubmit = canSubmitWebAppDetails(state)
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -196,10 +198,16 @@ internal fun WebAppDetailsDialog(
         },
         confirmButton = {
             Row(horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = { onConfirm(WebAppInstallAction.Add) }) {
+                TextButton(
+                    enabled = canSubmit,
+                    onClick = { onConfirm(WebAppInstallAction.Add) }
+                ) {
                     Text(stringResource(R.string.common_action_add))
                 }
-                TextButton(onClick = { onConfirm(WebAppInstallAction.InstallAndPin) }) {
+                TextButton(
+                    enabled = canSubmit,
+                    onClick = { onConfirm(WebAppInstallAction.InstallAndPin) }
+                ) {
                     Text(
                         stringResource(R.string.webapp_action_install_shortcut),
                         maxLines = 1,
@@ -215,6 +223,9 @@ internal fun WebAppDetailsDialog(
         }
     )
 }
+
+internal fun canSubmitWebAppDetails(state: WebAppDetailsDialogState): Boolean =
+    state.startUrl.isNotBlank()
 
 @Composable
 private fun selectedIconLabel(selection: WebAppIconSelection, hasSiteIcon: Boolean): String =
