@@ -99,6 +99,7 @@
     <string name="library_history_clear_title">清空历史记录？</string>
     <string name="library_history_clear_message">这会删除此设备上保存的全部浏览历史，书签和 WebApp 不会受影响。</string>
     <string name="library_history_clear_action">清空历史记录</string>
+    <string name="library_page_url_copied">已复制页面地址</string>
     <string name="library_downloads_title">下载内容</string>
     <string name="library_downloads_clear_records">清理记录</string>
     <string name="library_downloads_empty_title">还没有下载内容</string>
