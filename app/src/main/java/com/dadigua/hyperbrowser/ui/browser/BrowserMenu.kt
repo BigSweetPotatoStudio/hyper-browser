@@ -146,6 +146,15 @@ internal fun BrowserMenuPanel(
                         indent = 28.dp,
                         onClick = onShowExtensions
                     )
+                    if (shouldShowManageExtensionsEmptyState(enabledExtensions.size, installedExtensionCount)) {
+                        BrowserMenuRow(
+                            label = stringResource(R.string.menu_manage_extensions),
+                            leadingIconVector = Icons.Outlined.Tune,
+                            description = stringResource(R.string.menu_installed_count, installedExtensionCount),
+                            indent = 28.dp,
+                            onClick = onShowExtensions
+                        )
+                    }
                 } else {
                     enabledExtensions.forEach { extension ->
                         val action = extensionActions[extension.guid]
@@ -353,6 +362,9 @@ private fun ExtensionsMenuRow(
         onClick = onClick
     )
 }
+
+internal fun shouldShowManageExtensionsEmptyState(enabledCount: Int, installedCount: Int): Boolean =
+    enabledCount == 0 && installedCount > 0
 
 @Composable
 private fun BrowserMenuRow(
