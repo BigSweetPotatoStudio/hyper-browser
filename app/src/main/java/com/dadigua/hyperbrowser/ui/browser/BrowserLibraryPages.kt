@@ -185,6 +185,7 @@ internal fun HistoryPage(
     iconPathFor: (BrowserHistoryEntry) -> String?
 ) {
     var pendingClearHistory by remember { mutableStateOf(false) }
+    var pendingRemoveHistory by remember { mutableStateOf<BrowserHistoryEntry?>(null) }
     var query by remember { mutableStateOf("") }
     val visibleHistory = remember(history, query) { filterHistory(history, query) }
 
@@ -222,7 +223,7 @@ internal fun HistoryPage(
                                 iconPath = iconPathFor(entry),
                                 removeContentDescription = stringResource(R.string.library_history_remove_label),
                                 onOpen = { onOpen(entry.url) },
-                                onRemove = { onRemove(entry.url) }
+                                onRemove = { pendingRemoveHistory = entry }
                             )
                             HorizontalDivider(color = Color(0xFFE8EAED))
                         }
@@ -231,6 +232,36 @@ internal fun HistoryPage(
                 }
             }
         }
+    }
+
+    pendingRemoveHistory?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { pendingRemoveHistory = null },
+            title = { Text(stringResource(R.string.library_history_remove_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.library_history_remove_message,
+                        entry.title.ifBlank { entry.url }
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRemove(entry.url)
+                        pendingRemoveHistory = null
+                    }
+                ) {
+                    Text(stringResource(R.string.common_action_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemoveHistory = null }) {
+                    Text(stringResource(R.string.common_action_cancel))
+                }
+            }
+        )
     }
 
     if (pendingClearHistory) {
