@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
@@ -85,6 +86,11 @@ internal data class DownloadMetaLabels(
     val canceled: String,
     val unknownSize: String,
     val unknown: String
+)
+
+internal data class BookmarkEditPayload(
+    val title: String,
+    val url: String
 )
 
 @Composable
@@ -762,6 +768,11 @@ private fun BookmarkRow(
     var title by remember(bookmark.title) { mutableStateOf(bookmark.title) }
     var url by remember(bookmark.url) { mutableStateOf(bookmark.url) }
     val editLabel = stringResource(R.string.library_bookmarks_edit_label)
+    val editPayload = bookmarkEditPayload(title, url)
+
+    fun saveEdit() {
+        bookmarkEditPayload(title, url)?.let { onSave(it.title, it.url) }
+    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         LibraryRow(
@@ -805,6 +816,7 @@ private fun BookmarkRow(
                     onValueChange = { url = it },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { saveEdit() }),
                     label = { Text(stringResource(R.string.library_bookmarks_url_label)) },
                     isError = url.trim().isBlank(),
                     modifier = Modifier.fillMaxWidth()
@@ -818,8 +830,8 @@ private fun BookmarkRow(
                         Text(stringResource(R.string.common_action_cancel))
                     }
                     TextButton(
-                        enabled = url.trim().isNotBlank(),
-                        onClick = { onSave(title.trim(), url.trim()) }
+                        enabled = editPayload != null,
+                        onClick = { saveEdit() }
                     ) {
                         Text(stringResource(R.string.common_action_save))
                     }
@@ -969,6 +981,15 @@ internal fun downloadMatchesQuery(
         entry.sourceUrl,
         downloadMeta(entry, labels)
     ).any { field -> field.lowercase(Locale.ROOT).contains(normalizedQuery) }
+}
+
+internal fun bookmarkEditPayload(title: String, url: String): BookmarkEditPayload? {
+    val cleanUrl = url.trim()
+    if (cleanUrl.isBlank()) return null
+    return BookmarkEditPayload(
+        title = title.trim(),
+        url = cleanUrl
+    )
 }
 
 private fun formatBytes(bytes: Long, unknownLabel: String): String {
