@@ -16,6 +16,7 @@ import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
+import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
 import com.dadigua.hyperbrowser.ui.browser.BrowserActivity
 import kotlinx.coroutines.CoroutineScope
@@ -299,6 +300,11 @@ class BrowserDownloadService : Service() {
             .setAutoCancel(!isActive)
 
         if (isActive) {
+            builder.addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                getString(R.string.common_action_cancel),
+                cancelPendingIntent(entry)
+            )
             if (entry.totalBytes > 0L) {
                 val percent = ((entry.bytesDownloaded.toDouble() / entry.totalBytes) * 100)
                     .roundToInt()
@@ -319,6 +325,14 @@ class BrowserDownloadService : Service() {
             this,
             1201,
             BrowserActivity.downloadsIntent(this),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+    private fun cancelPendingIntent(entry: BrowserDownloadEntry): PendingIntent =
+        PendingIntent.getService(
+            this,
+            entry.notificationId(),
+            cancelIntent(this, entry.id),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
