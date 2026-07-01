@@ -96,11 +96,22 @@ internal fun BookmarksPage(
     onEdit: (oldUrl: String, title: String, url: String) -> Unit,
     iconPathFor: (BrowserBookmark) -> String?
 ) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var editingUrl by remember { mutableStateOf<String?>(null) }
     var pendingRemove by remember { mutableStateOf<BrowserBookmark?>(null) }
+    val pageUrlCopied = stringResource(R.string.library_page_url_copied)
     val orderedBookmarks = remember(bookmarks) { sortBookmarksByAddedOrder(bookmarks) }
     val visibleBookmarks = remember(orderedBookmarks, query) { filterBookmarks(orderedBookmarks, query) }
+
+    fun copyPageUrl(url: String) {
+        scope.launch {
+            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("page_url", url)))
+        }
+        Toast.makeText(context, pageUrlCopied, Toast.LENGTH_SHORT).show()
+    }
 
     BrowserLibraryScaffold(
         title = stringResource(R.string.library_bookmarks_title),
@@ -139,7 +150,8 @@ internal fun BookmarksPage(
                                     onEdit(bookmark.url, title, url)
                                     editingUrl = null
                                 },
-                                onRemove = { pendingRemove = bookmark }
+                                onRemove = { pendingRemove = bookmark },
+                                onCopyUrl = { copyPageUrl(bookmark.url) }
                             )
                             HorizontalDivider(color = Color(0xFFE8EAED))
                         }
@@ -184,9 +196,20 @@ internal fun HistoryPage(
     onClear: () -> Unit,
     iconPathFor: (BrowserHistoryEntry) -> String?
 ) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
     var pendingClearHistory by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    val pageUrlCopied = stringResource(R.string.library_page_url_copied)
     val visibleHistory = remember(history, query) { filterHistory(history, query) }
+
+    fun copyPageUrl(url: String) {
+        scope.launch {
+            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("page_url", url)))
+        }
+        Toast.makeText(context, pageUrlCopied, Toast.LENGTH_SHORT).show()
+    }
 
     BrowserLibraryScaffold(
         title = stringResource(R.string.library_history_title),
@@ -222,7 +245,8 @@ internal fun HistoryPage(
                                 iconPath = iconPathFor(entry),
                                 removeContentDescription = stringResource(R.string.library_history_remove_label),
                                 onOpen = { onOpen(entry.url) },
-                                onRemove = { onRemove(entry.url) }
+                                onRemove = { onRemove(entry.url) },
+                                onCopyUrl = { copyPageUrl(entry.url) }
                             )
                             HorizontalDivider(color = Color(0xFFE8EAED))
                         }
@@ -757,7 +781,8 @@ private fun BookmarkRow(
     onEdit: () -> Unit,
     onCancelEdit: () -> Unit,
     onSave: (title: String, url: String) -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    onCopyUrl: () -> Unit
 ) {
     var title by remember(bookmark.title) { mutableStateOf(bookmark.title) }
     var url by remember(bookmark.url) { mutableStateOf(bookmark.url) }
@@ -773,6 +798,7 @@ private fun BookmarkRow(
             removeContentDescription = stringResource(R.string.library_bookmarks_remove_label),
             onOpen = onOpen,
             onRemove = onRemove,
+            onCopyUrl = onCopyUrl,
             trailing = {
                 TextButton(
                     onClick = onEdit,
@@ -829,6 +855,7 @@ private fun BookmarkRow(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LibraryRow(
     title: String,
@@ -839,12 +866,22 @@ private fun LibraryRow(
     removeContentDescription: String,
     onOpen: () -> Unit,
     onRemove: () -> Unit,
+    onCopyUrl: (() -> Unit)? = null,
     trailing: @Composable (() -> Unit)? = null
 ) {
+    val rowGestureModifier = if (onCopyUrl == null) {
+        Modifier.clickable(onClick = onOpen)
+    } else {
+        Modifier.combinedClickable(
+            onClick = onOpen,
+            onLongClick = onCopyUrl
+        )
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onOpen)
+            .then(rowGestureModifier)
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp)
