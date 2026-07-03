@@ -1045,6 +1045,7 @@ private fun BrowserScreen(
     var activePanel by remember {
         mutableStateOf(if (initialShowDownloads) BrowserPanel.Downloads else BrowserPanel.None)
     }
+    var tabTrayMode by remember { mutableStateOf(TabTrayMode.Card) }
     val showSearch = activePanel == BrowserPanel.Search
     val showSettings = activePanel == BrowserPanel.Settings
     val showBookmarks = activePanel == BrowserPanel.Bookmarks
@@ -1831,6 +1832,8 @@ private fun BrowserScreen(
                     faviconStore = faviconStore,
                     selectedTabId = selectedTabId,
                     toolbarPosition = settings.toolbarPosition,
+                    mode = tabTrayMode,
+                    onModeChange = { tabTrayMode = it },
                     onBack = ::closePanel,
                     onSelect = {
                         selectedTabId = it

@@ -30,9 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,12 +65,13 @@ internal fun TabTray(
     faviconStore: FaviconRepository,
     selectedTabId: String,
     toolbarPosition: String,
+    mode: TabTrayMode,
+    onModeChange: (TabTrayMode) -> Unit,
     onBack: () -> Unit,
     onSelect: (String) -> Unit,
     onClose: (String) -> Unit,
     onNewTab: () -> Unit
 ) {
-    var mode by remember { mutableStateOf(TabTrayMode.Card) }
     val actionBarAtBottom = BrowserSettings.isBottomToolbarPosition(toolbarPosition)
     Box(
         modifier = Modifier
@@ -85,7 +84,7 @@ internal fun TabTray(
                     mode = mode,
                     actionBarAtBottom = false,
                     onBack = onBack,
-                    onModeChange = { mode = it },
+                    onModeChange = onModeChange,
                     onNewTab = onNewTab
                 )
             }
@@ -140,7 +139,7 @@ internal fun TabTray(
                     mode = mode,
                     actionBarAtBottom = true,
                     onBack = onBack,
-                    onModeChange = { mode = it },
+                    onModeChange = onModeChange,
                     onNewTab = onNewTab
                 )
             }
@@ -158,7 +157,7 @@ private fun tabPageState(tab: BrowserTabRuntime): GeckoPageState {
     return tab.snapshotPageState()
 }
 
-private enum class TabTrayMode {
+internal enum class TabTrayMode {
     Card,
     List
 }
