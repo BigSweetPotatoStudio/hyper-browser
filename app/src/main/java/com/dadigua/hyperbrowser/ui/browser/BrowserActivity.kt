@@ -22,8 +22,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -1073,6 +1075,7 @@ private fun BrowserScreen(
     var installingAddonGuid by remember { mutableStateOf<String?>(null) }
     var currentIconPath by remember { mutableStateOf<String?>(null) }
     var webAppDetailsDialog by remember { mutableStateOf<WebAppDetailsDialogState?>(null) }
+    var pendingWebAppUninstall by remember { mutableStateOf<WebAppDefinition?>(null) }
     val webAppIconImageLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri ->
@@ -1423,6 +1426,7 @@ private fun BrowserScreen(
     BackHandler {
         when {
             pageFullScreen -> controller.exitFullScreen()
+            pendingWebAppUninstall != null -> pendingWebAppUninstall = null
             webAppDetailsDialog != null -> dismissWebAppDetailsDialog()
             extensionPopup != null -> app.extensions.closePopup()
             activePanel != BrowserPanel.None -> closePanel()
@@ -1946,7 +1950,7 @@ private fun BrowserScreen(
                         onFloatingDotPositionChange = profileStore::updateFloatingDotPosition,
                         onInstall = install@{
                             installedWebApp?.let { webApp ->
-                                deleteWebAppThroughBackground(webApp)
+                                pendingWebAppUninstall = webApp
                                 return@install
                             }
                             if (GeckoSessionController.isInternalUrl(pageState.url)) {
@@ -2059,6 +2063,30 @@ private fun BrowserScreen(
             GeckoPromptDialog(
                 prompt = request,
                 onFinished = { geckoPrompt = null }
+            )
+        }
+        pendingWebAppUninstall?.let { webApp ->
+            AlertDialog(
+                onDismissRequest = { pendingWebAppUninstall = null },
+                title = { Text(stringResource(R.string.webapp_uninstall_confirm_title)) },
+                text = {
+                    Text(stringResource(R.string.webapp_uninstall_confirm_message, webApp.name))
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            pendingWebAppUninstall = null
+                            deleteWebAppThroughBackground(webApp)
+                        }
+                    ) {
+                        Text(stringResource(R.string.menu_uninstall_webapp))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingWebAppUninstall = null }) {
+                        Text(stringResource(R.string.common_action_cancel))
+                    }
+                }
             )
         }
         webAppDetailsDialog?.let { dialog ->
