@@ -1,11 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import {
   DEFAULT_LAUNCHER_DOCK_ENTRY_IDS,
   LauncherPage,
   createLauncherLabels,
   createLauncherSystemEntries,
-  type LauncherApp,
   type LauncherPlatform,
   type LauncherSystemEntryTheme,
 } from "@hyper-launcher";
@@ -33,25 +32,6 @@ function HomePage() {
   []);
   const webDavLabels = useMemo(() => createLauncherWebDavSyncLabels(translate), [translate]);
   const launcherLabels = useMemo(() => createLauncherLabels(translate), [translate]);
-  const pendingDeleteResolver = useRef<((confirmed: boolean) => void) | null>(null);
-  const [pendingDeleteApp, setPendingDeleteApp] = useState<LauncherApp | null>(null);
-
-  useEffect(() => () => {
-    pendingDeleteResolver.current?.(false);
-    pendingDeleteResolver.current = null;
-  }, []);
-
-  const requestDeleteConfirmation = useCallback((app: LauncherApp) => new Promise<boolean>((resolve) => {
-    pendingDeleteResolver.current?.(false);
-    pendingDeleteResolver.current = resolve;
-    setPendingDeleteApp(app);
-  }), []);
-
-  const finishDeleteConfirmation = useCallback((confirmed: boolean) => {
-    pendingDeleteResolver.current?.(confirmed);
-    pendingDeleteResolver.current = null;
-    setPendingDeleteApp(null);
-  }, []);
 
   const saveSyncSettings = useCallback(async (values: SyncSettingsDialogValues): Promise<BrowserSettings> => {
     if (!isHttpUrl(values.webDavUrl.trim())) {
@@ -119,8 +99,6 @@ function HomePage() {
       if (action === "extensions") window.hyperBrowser.showExtensions();
     },
     deleteApp: async (app) => {
-      const confirmed = await requestDeleteConfirmation(app);
-      if (!confirmed) throw createAbortError();
       const items = await sendBackgroundCommand<WebAppItem[]>("webapps.delete", { id: app.id });
       return items;
     },
@@ -160,47 +138,8 @@ function HomePage() {
         variant="mobile"
       />
       {webDavSync.settingsDialog}
-      {pendingDeleteApp && (
-        <div className="confirm-scrim home-confirm-scrim" onClick={() => finishDeleteConfirmation(false)}>
-          <section
-            aria-describedby="home-delete-confirm-message"
-            aria-labelledby="home-delete-confirm-title"
-            aria-modal="true"
-            className="confirm-dialog"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-          >
-            <h2 id="home-delete-confirm-title">{t("home.deleteAppConfirmTitle")}</h2>
-            <p id="home-delete-confirm-message">
-              {t("home.deleteAppConfirmMessage", { name: displayAppName(pendingDeleteApp) })}
-            </p>
-            <div className="confirm-actions">
-              <button type="button" onClick={() => finishDeleteConfirmation(false)}>{t("common.cancel")}</button>
-              <button className="danger" type="button" onClick={() => finishDeleteConfirmation(true)}>
-                {t("home.deleteAppConfirmAction")}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
     </>
   );
-}
-
-function createAbortError(): Error {
-  const error = new Error("WebApp deletion canceled.");
-  error.name = "AbortError";
-  return error;
-}
-
-function displayAppName(app: LauncherApp): string {
-  const name = app.name.trim();
-  if (name) return name;
-  try {
-    return new URL(app.startUrl).hostname.replace(/^www\./, "") || app.startUrl;
-  } catch {
-    return app.startUrl;
-  }
 }
 
 function isWebDavConfigured(settings: BrowserSettings): boolean {

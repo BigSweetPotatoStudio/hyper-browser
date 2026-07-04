@@ -168,6 +168,9 @@ export type LauncherLabels = {
   appName: string;
   appUrl: string;
   deleteApp: string;
+  deleteAppConfirmTitle: string;
+  deleteAppConfirmMessage: string;
+  deleteAppConfirmAction: string;
   iconTitle: string;
   iconLetter: string;
   iconBackground: string;
@@ -242,6 +245,9 @@ export function createLauncherLabels(t: LauncherTranslate = translateEnglishLaun
     appName: t("common.name"),
     appUrl: t("common.url"),
     deleteApp: t("common.delete"),
+    deleteAppConfirmTitle: t("home.deleteAppConfirmTitle"),
+    deleteAppConfirmMessage: t("home.deleteAppConfirmMessage"),
+    deleteAppConfirmAction: t("home.deleteAppConfirmAction"),
     iconTitle: t("apps.editIcon"),
     iconLetter: t("apps.iconLetter"),
     iconBackground: t("apps.iconBackground"),
@@ -298,6 +304,9 @@ function translateEnglishLauncherLabel(key: string, values?: Record<string, unkn
     "home.moveToDesktop": "Move to desktop",
     "home.moveToDock": "Move to Dock",
     "home.dockFull": "Dock can hold up to 4 items.",
+    "home.deleteAppConfirmTitle": "Remove WebApp?",
+    "home.deleteAppConfirmMessage": "Remove {name} from Hyper Browser. Site data and browsing history are kept.",
+    "home.deleteAppConfirmAction": "Remove WebApp",
     "apps.loading": "Loading desktop...",
     "apps.empty": "This page is empty.",
     "apps.failed": "Unable to load WebApps.",
@@ -441,6 +450,7 @@ export function LauncherPage({
   const [toast, setToast] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [appEditor, setAppEditor] = useState<AppEntry | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<AppEntry | null>(null);
   const [openFolderId, setOpenFolderId] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -1165,6 +1175,17 @@ export function LauncherPage({
   function deleteApp(itemId: string) {
     const entry = availableEntries.get(itemId);
     if (!entry || entry.kind !== "app" || !platform.deleteApp) return;
+    setDeleteConfirmation(entry);
+    closeMenu();
+  }
+
+  function confirmDeleteApp() {
+    const entry = deleteConfirmation;
+    if (!entry || !platform.deleteApp) {
+      setDeleteConfirmation(null);
+      return;
+    }
+    setDeleteConfirmation(null);
     Promise.resolve(platform.deleteApp(entry.app))
       .then((nextApps) => {
         if (Array.isArray(nextApps)) {
@@ -1173,9 +1194,9 @@ export function LauncherPage({
           setApps((current) => current.filter((item) => item.id !== entry.app.id));
         }
         commitLayout((current) => withLayoutParts(current, {
-          cells: removeFromCells(desktopCellsFromLauncherLayout(current), itemId),
-          dockIds: launcherCellIds(current.dock).filter((id) => id !== itemId),
-          folders: removeChildFromFolders(launcherFolderLayouts(current.folders, labels.folder), itemId),
+          cells: removeFromCells(desktopCellsFromLauncherLayout(current), entry.id),
+          dockIds: launcherCellIds(current.dock).filter((id) => id !== entry.id),
+          folders: removeChildFromFolders(launcherFolderLayouts(current.folders, labels.folder), entry.id),
         }));
         closeMenu();
       })
@@ -1400,8 +1421,61 @@ export function LauncherPage({
           onSave={(changes) => saveApp(appEditor.app, changes)}
         />
       )}
+      {deleteConfirmation && (
+        <LauncherConfirmDialog
+          title={labels.deleteAppConfirmTitle}
+          message={formatLauncherLabel(labels.deleteAppConfirmMessage, { name: displayLauncherAppName(deleteConfirmation.app) })}
+          cancelLabel={labels.cancel}
+          confirmLabel={labels.deleteAppConfirmAction}
+          onCancel={() => setDeleteConfirmation(null)}
+          onConfirm={confirmDeleteApp}
+        />
+      )}
     </main>
   );
+}
+
+function LauncherConfirmDialog(props: {
+  title: string;
+  message: string;
+  cancelLabel: string;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="desktop-confirm-scrim" onClick={props.onCancel}>
+      <section
+        aria-describedby="desktop-confirm-message"
+        aria-labelledby="desktop-confirm-title"
+        aria-modal="true"
+        className="desktop-confirm-dialog"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <h2 id="desktop-confirm-title">{props.title}</h2>
+        <p id="desktop-confirm-message">{props.message}</p>
+        <div className="desktop-confirm-actions">
+          <button type="button" onClick={props.onCancel}>{props.cancelLabel}</button>
+          <button className="danger" type="button" onClick={props.onConfirm}>{props.confirmLabel}</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function formatLauncherLabel(template: string, values: Record<string, string>): string {
+  return template.replace(/\{(\w+)\}/g, (match, name) => values[name] ?? match);
+}
+
+function displayLauncherAppName(app: LauncherApp): string {
+  const name = app.name.trim();
+  if (name) return name;
+  try {
+    return new URL(app.startUrl).hostname.replace(/^www\./, "") || app.startUrl;
+  } catch {
+    return app.startUrl;
+  }
 }
 
 export function WebAppEditorDialog(props: {
