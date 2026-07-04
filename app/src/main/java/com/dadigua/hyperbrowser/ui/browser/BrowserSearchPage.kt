@@ -109,6 +109,7 @@ internal fun buildBrowserSearchSuggestions(
     }
     webApps.forEach { webApp ->
         if (webApp.id.isNotBlank() && webApp.startUrl.isNotBlank()) {
+            seenPageUrls.add(webApp.startUrl)
             suggestions += BrowserSearchSuggestion(
                 title = webApp.name,
                 url = webApp.startUrl,
