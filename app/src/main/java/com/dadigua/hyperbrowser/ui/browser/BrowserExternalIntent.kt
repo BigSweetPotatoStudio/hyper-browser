@@ -43,4 +43,14 @@ internal fun extractFirstHttpUrl(text: String): String? =
     Regex("""https?://\S+""")
         .find(text)
         ?.value
-        ?.trimEnd('.', ',', ';', ')', ']', '}', '"', '\'')
+        ?.trimSharedTextUrlSuffix()
+
+private val SharedTextUrlTrailingPunctuation = setOf(
+    '.', ',', ';', ')', ']', '}', '>', '"', '\'',
+    '\u3002', '\uFF0C', '\u3001', '\uFF1B', '\uFF01', '\uFF1F',
+    '\uFF09', '\u3011', '\u3009', '\u300B', '\u300D', '\u300F', '\uFF1E',
+    '\u2019', '\u201D'
+)
+
+private fun String.trimSharedTextUrlSuffix(): String =
+    trimEnd { it in SharedTextUrlTrailingPunctuation }
