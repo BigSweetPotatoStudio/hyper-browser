@@ -1179,7 +1179,13 @@ export function LauncherPage({
         }));
         closeMenu();
       })
-      .catch((deleteError) => showToast(deleteError instanceof Error ? deleteError.message : labels.deleteFailed));
+      .catch((deleteError) => {
+        if (isAbortError(deleteError)) {
+          closeMenu();
+          return;
+        }
+        showToast(deleteError instanceof Error ? deleteError.message : labels.deleteFailed);
+      });
   }
 
   function pinApp(itemId: string) {
@@ -1939,6 +1945,10 @@ function systemIconName(entry: LauncherSystemEntry): LauncherSystemIconName {
 
 function systemIconClass(name: LauncherSystemIconName): string {
   return `system-${name}`;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function SystemIconGlyph({ name, compact = false }: { name: LauncherSystemIconName; compact?: boolean }) {
