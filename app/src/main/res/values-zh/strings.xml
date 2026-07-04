@@ -201,6 +201,10 @@
     <string name="extensions_popup_unavailable">扩展弹窗不可用。</string>
     <string name="tabs_new_tab">新标签页</string>
     <string name="tabs_open_new_tab">打开新的标签页</string>
+    <string name="tabs_close_all">关闭全部标签页</string>
+    <string name="tabs_close_all_title">关闭全部标签页？</string>
+    <string name="tabs_close_all_message">关闭全部 %1$d 个标签页，并打开一个新的主页标签。</string>
+    <string name="tabs_close_all_action">全部关闭</string>
     <string name="tabs_restorable">可恢复</string>
     <string name="browser_opened_background_tab">已在后台标签页打开</string>
     <string name="browser_install_unknown_apps_required">请先允许 Hyper Browser 安装未知应用。</string>

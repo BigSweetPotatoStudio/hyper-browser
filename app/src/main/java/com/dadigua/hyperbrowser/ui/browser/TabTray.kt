@@ -21,16 +21,23 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,9 +77,12 @@ internal fun TabTray(
     onBack: () -> Unit,
     onSelect: (String) -> Unit,
     onClose: (String) -> Unit,
+    onCloseAll: () -> Unit,
     onNewTab: () -> Unit
 ) {
+    var showCloseAllConfirm by remember { mutableStateOf(false) }
     val actionBarAtBottom = BrowserSettings.isBottomToolbarPosition(toolbarPosition)
+    val closeAllEnabled = canCloseAllTabs(tabs.size)
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -85,6 +95,8 @@ internal fun TabTray(
                     actionBarAtBottom = false,
                     onBack = onBack,
                     onModeChange = onModeChange,
+                    closeAllEnabled = closeAllEnabled,
+                    onCloseAll = { showCloseAllConfirm = true },
                     onNewTab = onNewTab
                 )
             }
@@ -140,9 +152,33 @@ internal fun TabTray(
                     actionBarAtBottom = true,
                     onBack = onBack,
                     onModeChange = onModeChange,
+                    closeAllEnabled = closeAllEnabled,
+                    onCloseAll = { showCloseAllConfirm = true },
                     onNewTab = onNewTab
                 )
             }
+        }
+        if (showCloseAllConfirm) {
+            AlertDialog(
+                onDismissRequest = { showCloseAllConfirm = false },
+                title = { Text(stringResource(R.string.tabs_close_all_title)) },
+                text = { Text(stringResource(R.string.tabs_close_all_message, tabs.size)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showCloseAllConfirm = false
+                            onCloseAll()
+                        }
+                    ) {
+                        Text(stringResource(R.string.tabs_close_all_action))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCloseAllConfirm = false }) {
+                        Text(stringResource(R.string.common_action_cancel))
+                    }
+                }
+            )
         }
     }
 }
@@ -162,12 +198,16 @@ internal enum class TabTrayMode {
     List
 }
 
+internal fun canCloseAllTabs(tabCount: Int): Boolean = tabCount > 1
+
 @Composable
 private fun ChromeTabHeader(
     mode: TabTrayMode,
     actionBarAtBottom: Boolean,
     onBack: () -> Unit,
     onModeChange: (TabTrayMode) -> Unit,
+    closeAllEnabled: Boolean,
+    onCloseAll: () -> Unit,
     onNewTab: () -> Unit
 ) {
     Column(
@@ -222,13 +262,30 @@ private fun ChromeTabHeader(
                     Text("≡", fontSize = TabActionIconSize, color = Color(0xFF202124))
                 }
             }
-            IconButton(
-                onClick = onNewTab,
+            Row(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .size(TabActionButtonSize)
+                    .height(TabActionBarHeight),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                Text("+", fontSize = TabActionIconSize, color = Color(0xFF202124))
+                IconButton(
+                    onClick = onCloseAll,
+                    enabled = closeAllEnabled,
+                    modifier = Modifier.size(TabActionButtonSize)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.DeleteSweep,
+                        contentDescription = stringResource(R.string.tabs_close_all),
+                        tint = if (closeAllEnabled) Color(0xFF202124) else Color(0xFFB0B4BC)
+                    )
+                }
+                IconButton(
+                    onClick = onNewTab,
+                    modifier = Modifier.size(TabActionButtonSize)
+                ) {
+                    Text("+", fontSize = TabActionIconSize, color = Color(0xFF202124))
+                }
             }
         }
         if (!actionBarAtBottom) {
