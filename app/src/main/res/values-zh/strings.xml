@@ -309,6 +309,8 @@
     <string name="webapp_delete_failed">删除失败。</string>
     <string name="webapp_uninstalled">已卸载 %1$s。</string>
     <string name="webapp_uninstall_failed">卸载失败。</string>
+    <string name="webapp_uninstall_confirm_title">卸载 WebApp？</string>
+    <string name="webapp_uninstall_confirm_message">要从 Hyper Browser 中移除 %1$s 吗？之后仍可从网站页面重新安装。</string>
     <string name="webapp_open_page_before_install">请先打开网页，再安装为 WebApp。</string>
     <string name="webapp_install_dialog_title">安装 WebApp</string>
     <string name="webapp_edit_dialog_title">修改 WebApp</string>
