@@ -60,6 +60,23 @@ class BrowserSearchPageTest {
     }
 
     @Test
+    fun webAppSuppressesDuplicateHistorySuggestionForSameUrl() {
+        val suggestions = buildBrowserSearchSuggestions(
+            queryText = "mail",
+            history = listOf(history("https://mail.example/inbox", "Mail history")),
+            bookmarks = emptyList(),
+            webApps = listOf(webApp("mail", "Mail app", "https://mail.example/inbox")),
+            bookmarkSource = "Bookmark",
+            webAppSource = "WebApp",
+            historySource = "History"
+        )
+
+        assertEquals(1, suggestions.size)
+        assertEquals(BrowserSearchSuggestionKind.WebApp, suggestions.single().kind)
+        assertEquals("mail", suggestions.single().appId)
+    }
+
+    @Test
     fun internalHistoryUrlsAreNotSuggested() {
         val suggestions = buildBrowserSearchSuggestions(
             queryText = "settings",
