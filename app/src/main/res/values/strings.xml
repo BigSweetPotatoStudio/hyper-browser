@@ -190,6 +190,10 @@
     <string name="extensions_popup_unavailable">Extension popup unavailable.</string>
     <string name="tabs_new_tab">New tab</string>
     <string name="tabs_open_new_tab">Open a new tab</string>
+    <string name="tabs_close_all">Close all tabs</string>
+    <string name="tabs_close_all_title">Close all tabs?</string>
+    <string name="tabs_close_all_message">Close all %1$d tabs and open a new home tab.</string>
+    <string name="tabs_close_all_action">Close all</string>
     <string name="tabs_restorable">Restorable</string>
     <string name="browser_opened_background_tab">Opened in background tab</string>
     <string name="browser_install_unknown_apps_required">Allow Hyper Browser to install unknown apps first.</string>

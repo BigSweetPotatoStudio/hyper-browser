@@ -1240,6 +1240,22 @@ private fun BrowserScreen(
         persistBrowserTabs()
     }
 
+    fun closeAllBrowserTabs() {
+        val closingTabs = tabs.toList()
+        closingTabs.forEach { closing ->
+            closing.close()
+            profileStore.deleteTabSessionState(closing.id)
+            profileStore.deleteTabThumbnail(closing.id)
+        }
+        tabs.clear()
+        val replacement = createBrowserTab(GeckoSessionController.HOME_URL)
+        tabs.add(replacement)
+        selectedTabId = replacement.id
+        activePanel = BrowserPanel.None
+        message = null
+        persistBrowserTabs(replacement.id)
+    }
+
     closeTabById = { id -> closeBrowserTabById(id) }
     focusTabById = { id ->
         if (tabs.any { it.id == id }) {
@@ -1837,6 +1853,7 @@ private fun BrowserScreen(
                         closePanel()
                     },
                     onClose = { closeBrowserTabById(it, closePanelAfterClose = false) },
+                    onCloseAll = { closeAllBrowserTabs() },
                     onNewTab = {
                         val newTab = createBrowserTab(GeckoSessionController.HOME_URL)
                         tabs.add(newTab)
