@@ -45,6 +45,16 @@ The Android app may request or declare these permissions:
 
 Opened websites and installed extensions are separate third-party code and content. They may collect data under their own policies. Extension permissions are handled through GeckoView WebExtension APIs; users should install extensions only from sources they trust.
 
+## Chrome Companion Extension
+
+The Hyper Browser Companion extension stores its settings and synced browser data in Chrome extension local storage. This can include launcher layout, saved WebApp definitions, bookmark records, cached page icons, a generated device identifier, and optional WebDAV connection settings.
+
+When the user opens the extension popup or saves the current page, the extension reads the active tab title, URL, and page icon metadata so the page can be added as a WebApp or bookmark. It can also create and update bookmarks in a user-selected Hyper Browser bookmark folder.
+
+WebDAV sync is optional and uses a server configured by the user. If enabled, the extension sends synced WebApp, bookmark, and launcher JSON files to that WebDAV server and reads them back for merge. WebDAV usernames and passwords are stored locally in Chrome extension storage and are used only for requests to the configured WebDAV server.
+
+The project does not operate an analytics, advertising, telemetry, or account service for the companion extension. Data handled by the extension is not sent to the project maintainers unless the user separately shares it.
+
 ## Backups
 
 The app keeps browser profile files in private app storage. Review `app/src/main/res/xml/backup_rules.xml` and `app/src/main/res/xml/data_extraction_rules.xml` before changing backup behavior for a release.

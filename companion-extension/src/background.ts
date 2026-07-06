@@ -81,9 +81,6 @@ async function handleMessage(message: { type: string; payload?: unknown }): Prom
     case "open.home":
       await browser.tabs.create({ url: browser.runtime.getURL("/home.html") });
       return null;
-    case "open.webapps":
-      await browser.tabs.create({ url: browser.runtime.getURL("/webapps.html") });
-      return null;
     default:
       throw new Error("Unknown command.");
   }
