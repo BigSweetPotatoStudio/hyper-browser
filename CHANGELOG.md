@@ -6,6 +6,13 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+## 2.0.0-beta.1 - 2026-07-07
+
+- Added safer confirmation flows for WebApp deletion from the home launcher and browser menu.
+- Added a close-all-tabs action with confirmation, plus persisted Card/List tab-tray mode.
+- Improved shared URL cleanup and WebApp-first search suggestions.
+- Refined launcher delete confirmation wording and refreshed the bundled home page assets.
+
 ## 0.1.8-beta.3 - 2026-06-26
 
 - Reworked WebDAV sync around shared JSON and operation-log handling across Android built-in pages, launcher layout, bookmarks, WebApps, and the companion extension.
