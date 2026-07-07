@@ -1,28 +1,22 @@
 {
   "channel": "stable",
-  "versionCode": 14,
-  "versionName": "0.1.7",
+  "versionCode": 19,
+  "versionName": "2.0.0",
   "minSdk": 26,
-  "notes": "Added WebApp search results and direct WebApp launching from search.\nAdded download record search and Library shortcuts for bookmarks, history, downloads, and WebApps.\nAdded confirmation flows for deleting WebApps and bookmarks, clearing history, and uninstalling extensions.\nAdded HTTP authentication, Gecko prompt handling, and language settings for localized built-in pages.\nImproved fullscreen video rotation, X/Twitter Google sign-in compatibility, extension state persistence, and Android Autofill handling.\nImproved bookmark and WebApp editing with URL validation, explicit custom search save behavior, retry and clear actions, clearer search suggestion scope, and safer bridge handling.",
-  "releaseUrl": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/tag/v0.1.7",
+  "notes": "Added safer confirmation flows for WebApp deletion from the home launcher and browser menu.\nAdded a close-all-tabs action with confirmation, plus persisted Card/List tab-tray mode.\nImproved shared URL cleanup and WebApp-first search suggestions.\nRefined launcher delete confirmation wording and refreshed the bundled home page assets.",
+  "releaseUrl": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/tag/v2.0.0",
   "assets": [
     {
       "abi": "arm64-v8a",
-      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.7/HyperBrowser-arm64-v8a-release.apk",
-      "sha256": "b5c7bb9bdbe4ce16ffccd661bb7885141f4e365ccd8b727cfb01e3a06d49a94b",
-      "sizeBytes": 203822223
-    },
-    {
-      "abi": "armeabi-v7a",
-      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.7/HyperBrowser-armeabi-v7a-release.apk",
-      "sha256": "278ff8fc8362826fb2b0cee7d32d90841904a14f8619902d01f2b7c9b10c211d",
-      "sizeBytes": 166126763
+      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v2.0.0/HyperBrowser-arm64-v8a-release.apk",
+      "sha256": "f38514c2dfb729a5197114059fb5e618f0787e9e5df98b3fade24792da2396a9",
+      "sizeBytes": 204162080
     },
     {
       "abi": "x86_64",
-      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v0.1.7/HyperBrowser-x86_64-release.apk",
-      "sha256": "caa61698d7dff3a25733acf5434c093361300d54610e7236c458680a20a3ea37",
-      "sizeBytes": 222688357
+      "url": "https://github.com/BigSweetPotatoStudio/hyper-browser/releases/download/v2.0.0/HyperBrowser-x86_64-release.apk",
+      "sha256": "47d168b46cce2dddb048b4c4662906fb2fde7cfefbe9f37f7b4e0a48751b8acd",
+      "sizeBytes": 223024118
     }
   ]
 }
