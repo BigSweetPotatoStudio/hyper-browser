@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -30,8 +31,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxState
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -110,14 +115,19 @@ internal fun TabTray(
                     ) {
                         items(tabs, key = { it.id }) { tab ->
                             val pageState = tabPageState(tab)
-                            ChromeTabListRow(
-                                tab = tab,
-                                pageState = pageState,
-                                faviconStore = faviconStore,
-                                selected = tab.id == selectedTabId,
-                                onSelect = { onSelect(tab.id) },
+                            SwipeToCloseTab(
+                                cornerRadius = 18.dp,
                                 onClose = { onClose(tab.id) }
-                            )
+                            ) {
+                                ChromeTabListRow(
+                                    tab = tab,
+                                    pageState = pageState,
+                                    faviconStore = faviconStore,
+                                    selected = tab.id == selectedTabId,
+                                    onSelect = { onSelect(tab.id) },
+                                    onClose = { onClose(tab.id) }
+                                )
+                            }
                         }
                     }
                 } else {
@@ -131,17 +141,23 @@ internal fun TabTray(
                     ) {
                         items(tabs, key = { it.id }) { tab ->
                             val pageState = tabPageState(tab)
-                            ChromeTabCard(
-                                tab = tab,
-                                pageState = pageState,
-                                faviconStore = faviconStore,
-                                selected = tab.id == selectedTabId,
-                                onSelect = { onSelect(tab.id) },
+                            SwipeToCloseTab(
+                                cornerRadius = 24.dp,
                                 onClose = { onClose(tab.id) },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(TabCardHeight)
-                            )
+                            ) {
+                                ChromeTabCard(
+                                    tab = tab,
+                                    pageState = pageState,
+                                    faviconStore = faviconStore,
+                                    selected = tab.id == selectedTabId,
+                                    onSelect = { onSelect(tab.id) },
+                                    onClose = { onClose(tab.id) },
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
                         }
                     }
                 }
@@ -199,6 +215,62 @@ internal enum class TabTrayMode {
 }
 
 internal fun canCloseAllTabs(tabCount: Int): Boolean = tabCount > 1
+
+internal fun shouldCloseTabAfterSwipe(value: SwipeToDismissBoxValue): Boolean =
+    value != SwipeToDismissBoxValue.Settled
+
+@Composable
+private fun SwipeToCloseTab(
+    cornerRadius: Dp,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            shouldCloseTabAfterSwipe(value).also { shouldClose ->
+                if (shouldClose) onClose()
+            }
+        }
+    )
+    SwipeToDismissBox(
+        state = dismissState,
+        backgroundContent = {
+            TabSwipeCloseBackground(
+                state = dismissState,
+                cornerRadius = cornerRadius
+            )
+        },
+        modifier = modifier,
+        content = { content() }
+    )
+}
+
+@Composable
+private fun TabSwipeCloseBackground(
+    state: SwipeToDismissBoxState,
+    cornerRadius: Dp
+) {
+    val contentAlignment = if (state.dismissDirection == SwipeToDismissBoxValue.StartToEnd) {
+        Alignment.CenterStart
+    } else {
+        Alignment.CenterEnd
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(cornerRadius))
+            .background(Color(0xFFB3261E))
+            .padding(horizontal = 20.dp),
+        contentAlignment = contentAlignment
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Delete,
+            contentDescription = stringResource(R.string.common_action_delete),
+            tint = Color.White
+        )
+    }
+}
 
 @Composable
 private fun ChromeTabHeader(
