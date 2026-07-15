@@ -1000,7 +1000,8 @@ private fun BrowserScreen(
         input: String = url,
         title: String? = null,
         iconPath: String? = null,
-        loadImmediately: Boolean = true
+        loadImmediately: Boolean = true,
+        openerTabId: String? = null
     ): BrowserTabRuntime {
         val tabId = id ?: UUID.randomUUID().toString()
         val restoredSessionState = loadValidatedSessionState(id, url)
@@ -1009,6 +1010,7 @@ private fun BrowserScreen(
             app = app,
             url = url,
             id = tabId,
+            openerTabId = openerTabId,
             initialInput = input,
             initialTitle = title,
             initialIconPath = iconPath,
@@ -1230,7 +1232,7 @@ private fun BrowserScreen(
     }
 
     fun openLinkInBackgroundTab(url: String) {
-        tabs.add(createBrowserTab(url))
+        tabs.add(createBrowserTab(url, openerTabId = selectedTabId))
         pageContextMenu = null
         activePanel = BrowserPanel.None
         message = context.getString(R.string.browser_opened_background_tab)
@@ -1480,6 +1482,9 @@ private fun BrowserScreen(
             extensionPopup != null -> app.extensions.closePopup()
             activePanel != BrowserPanel.None -> closePanel()
             pageState.canGoBack -> controller.goBack()
+            openerTabForRootBack(tab.id, tab.openerTabId, tabs.map { it.id }) != null -> {
+                closeBrowserTabById(tab.id, closePanelAfterClose = false)
+            }
             else -> controller.goBack()
         }
     }
