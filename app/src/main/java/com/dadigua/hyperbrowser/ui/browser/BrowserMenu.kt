@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Icon
@@ -77,6 +78,7 @@ internal fun BrowserMenuPanel(
     onReload: () -> Unit,
     onTemporaryWebsiteDisplayModeChange: (String) -> Unit,
     onToggleBookmark: () -> Unit,
+    onFindInPage: () -> Unit,
     onShowBookmarks: () -> Unit,
     onShowHistory: () -> Unit,
     onShowSettings: () -> Unit,
@@ -129,6 +131,11 @@ internal fun BrowserMenuPanel(
                     )
                 }
             }
+            BrowserMenuRow(
+                label = stringResource(R.string.menu_find_in_page),
+                leadingIconVector = Icons.Outlined.Search,
+                onClick = onFindInPage
+            )
         }
         MenuGroupBox {
             ExtensionsMenuRow(
