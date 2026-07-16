@@ -40,6 +40,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,10 +53,12 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -67,12 +70,14 @@ import com.dadigua.hyperbrowser.browser.BrowserSettings
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.extensions.ExtensionMenuActionState
 import com.dadigua.hyperbrowser.gecko.GeckoPageState
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val ToolbarActionBarHeight = 44.dp
 private val ToolbarActionButtonSize = 36.dp
 private val ToolbarAddressBarHeight = 40.dp
 private val ToolbarActionIconSize = 24.sp
+private val AddressBarTabSwipeDistance = 56.dp
 private val FloatingDotSize = 54.dp
 private val FloatingDotInnerSize = 12.dp
 private val FloatingDotMargin = 18.dp
@@ -84,6 +89,18 @@ private val FloatingMoreMenuMargin = 16.dp
 
 internal fun browserAddressText(url: String, input: String, placeholder: String = ""): String {
     return url.ifBlank { input.ifBlank { placeholder } }
+}
+
+internal fun addressBarTabSwipeStep(
+    horizontalDrag: Float,
+    verticalDrag: Float,
+    minimumDistance: Float,
+    rightToLeft: Boolean
+): Int? {
+    val horizontalDistance = abs(horizontalDrag)
+    if (horizontalDistance < minimumDistance || horizontalDistance <= abs(verticalDrag)) return null
+    val leftToRightStep = if (horizontalDrag < 0f) 1 else -1
+    return if (rightToLeft) -leftToRightStep else leftToRightStep
 }
 
 internal enum class AddressSecurityLevel {
@@ -119,6 +136,7 @@ internal fun BrowserToolbar(
     onHome: () -> Unit,
     onShowTabs: () -> Unit,
     onNewTab: () -> Unit,
+    onSwipeToAdjacentTab: (Int) -> Unit,
     onToggleBookmark: () -> Unit,
     onFindInPage: () -> Unit,
     onShowBookmarks: () -> Unit,
@@ -139,6 +157,9 @@ internal fun BrowserToolbar(
     val currentTitle = pageState.title.trim().ifBlank { currentAddress.ifBlank { placeholder } }
     val normalizedCollapseFraction = collapseFraction.coerceIn(0f, 1f)
     val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    val currentOnSwipeToAdjacentTab by rememberUpdatedState(onSwipeToAdjacentTab)
+    val addressBarTabSwipeDistancePx = with(density) { AddressBarTabSwipeDistance.toPx() }
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val imeVisible = imeBottomPx > 0
     val enabledExtensions = installedExtensions.filter { it.enabled }
@@ -202,6 +223,29 @@ internal fun BrowserToolbar(
                     .height(ToolbarAddressBarHeight)
                     .clip(RoundedCornerShape(28.dp))
                     .background(Color(0xFFE9EAF1))
+                    .pointerInput(addressBarTabSwipeDistancePx, layoutDirection) {
+                        var horizontalDrag = 0f
+                        var verticalDrag = 0f
+                        detectDragGestures(
+                            onDragStart = {
+                                horizontalDrag = 0f
+                                verticalDrag = 0f
+                            },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                horizontalDrag += dragAmount.x
+                                verticalDrag += dragAmount.y
+                            },
+                            onDragEnd = {
+                                addressBarTabSwipeStep(
+                                    horizontalDrag = horizontalDrag,
+                                    verticalDrag = verticalDrag,
+                                    minimumDistance = addressBarTabSwipeDistancePx,
+                                    rightToLeft = layoutDirection == LayoutDirection.Rtl
+                                )?.let(currentOnSwipeToAdjacentTab)
+                            }
+                        )
+                    }
                     .clickable(onClick = onOpenSearchPage)
                     .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically

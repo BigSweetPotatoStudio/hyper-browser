@@ -208,6 +208,13 @@ private enum class BrowserPanel {
 private const val TAB_THUMBNAIL_PAGE_STOP_REFRESH_DELAY_MS = 700L
 private val ToolbarAutoHideDragRange = 72.dp
 
+internal fun adjacentTabId(tabIds: List<String>, selectedTabId: String, step: Int): String? {
+    if (step != -1 && step != 1) return null
+    val selectedIndex = tabIds.indexOf(selectedTabId)
+    if (selectedIndex < 0) return null
+    return tabIds.getOrNull(selectedIndex + step)
+}
+
 @Composable
 private fun BrowserScreen(
     activity: BrowserActivity,
@@ -2043,6 +2050,16 @@ private fun BrowserScreen(
                             selectedTabId = newTab.id
                             closePanel()
                             message = null
+                        },
+                        onSwipeToAdjacentTab = { step ->
+                            adjacentTabId(
+                                tabIds = tabs.map { it.id },
+                                selectedTabId = selectedTabId,
+                                step = step
+                            )?.let { targetTabId ->
+                                selectedTabId = targetTabId
+                                message = null
+                            }
                         },
                         onHome = {
                             tab.input = GeckoSessionController.HOME_URL
