@@ -1109,6 +1109,9 @@ private fun BrowserScreen(
     var currentIconPath by remember { mutableStateOf<String?>(null) }
     var webAppDetailsDialog by remember { mutableStateOf<WebAppDetailsDialogState?>(null) }
     var pendingWebAppUninstall by remember { mutableStateOf<WebAppDefinition?>(null) }
+    var findInPageVisible by remember { mutableStateOf(false) }
+    var findInPageState by remember { mutableStateOf(FindInPageUiState()) }
+    var findInPageRequestId by remember { mutableStateOf(0) }
     val webAppIconImageLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri ->
@@ -1129,6 +1132,7 @@ private fun BrowserScreen(
     val toolbarCollapseRangePx = with(density) { ToolbarAutoHideDragRange.toPx() }
     val canAutoCollapseToolbar = !pageFullScreen &&
         activePanel == BrowserPanel.None &&
+        !findInPageVisible &&
         BrowserSettings.isDynamicBottomToolbarPosition(settings.toolbarPosition)
     val animatedToolbarCollapseFraction by animateFloatAsState(
         targetValue = toolbarCollapseFraction,
@@ -1150,6 +1154,53 @@ private fun BrowserScreen(
 
     fun handlePageContentScrollDelta(deltaY: Float) {
         updateToolbarCollapse(deltaY)
+    }
+
+    fun closeFindInPage() {
+        findInPageRequestId += 1
+        controller.clearFindInPage()
+        findInPageVisible = false
+        findInPageState = FindInPageUiState()
+        focusManager.clearFocus(force = true)
+    }
+
+    fun findInPage(searchString: String?, backwards: Boolean = false) {
+        val query = searchString ?: findInPageState.query
+        if (query.isBlank()) {
+            findInPageRequestId += 1
+            controller.clearFindInPage()
+            findInPageState = FindInPageUiState(query = query)
+            return
+        }
+        findInPageRequestId += 1
+        val requestId = findInPageRequestId
+        findInPageState = findInPageState.copy(
+            query = query,
+            found = false,
+            current = 0,
+            total = 0,
+            searching = true
+        )
+        controller.findInPage(
+            searchString = searchString,
+            backwards = backwards,
+            onResult = { result ->
+                if (findInPageVisible && requestId == findInPageRequestId) {
+                    findInPageState = FindInPageUiState(
+                        query = query,
+                        found = result.found,
+                        current = result.current,
+                        total = result.total,
+                        searching = false
+                    )
+                }
+            },
+            onFailure = {
+                if (findInPageVisible && requestId == findInPageRequestId) {
+                    findInPageState = FindInPageUiState(query = query)
+                }
+            }
+        )
     }
 
     fun openWebAppInCurrentTab(webAppId: String, closeCurrentPanel: Boolean = false) {
@@ -1222,6 +1273,7 @@ private fun BrowserScreen(
     }
 
     fun showPanel(panel: BrowserPanel) {
+        if (findInPageVisible) closeFindInPage()
         activePanel = panel
     }
 
@@ -1358,7 +1410,20 @@ private fun BrowserScreen(
     }
 
     val pageCanOwnFocus = pageFullScreen ||
-        (activePanel == BrowserPanel.None && extensionPopup == null && pageContextMenu == null)
+        (activePanel == BrowserPanel.None &&
+            !findInPageVisible &&
+            extensionPopup == null &&
+            pageContextMenu == null)
+
+    DisposableEffect(controller) {
+        onDispose {
+            controller.clearFindInPage()
+        }
+    }
+
+    LaunchedEffect(selectedTabId, pageState.url, pageFullScreen) {
+        if (findInPageVisible) closeFindInPage()
+    }
 
     LaunchedEffect(selectedTabId, tabs.map { Triple(it.id, it.openerTabId, it.controller) }, pageCanOwnFocus) {
         val openPopupOpenerIds = tabs.mapNotNull { it.openerTabId }.toSet()
@@ -1478,6 +1543,7 @@ private fun BrowserScreen(
             pendingWebAppUninstall != null -> pendingWebAppUninstall = null
             webAppDetailsDialog != null -> dismissWebAppDetailsDialog()
             extensionPopup != null -> app.extensions.closePopup()
+            findInPageVisible -> closeFindInPage()
             activePanel != BrowserPanel.None -> closePanel()
             pageState.canGoBack -> controller.goBack()
             else -> controller.goBack()
@@ -1991,6 +2057,12 @@ private fun BrowserScreen(
                                 }
                             }
                         },
+                        onFindInPage = {
+                            findInPageRequestId += 1
+                            findInPageState = FindInPageUiState()
+                            findInPageVisible = true
+                            message = null
+                        },
                         onShowBookmarks = {
                             showPanel(BrowserPanel.Bookmarks)
                             message = null
@@ -2027,21 +2099,35 @@ private fun BrowserScreen(
                         }
                     )
                 }
+                val pageContent: @Composable (Modifier) -> Unit = { modifier ->
+                    Column(modifier = modifier) {
+                        if (findInPageVisible) {
+                            FindInPageBar(
+                                state = findInPageState,
+                                onQueryChange = { query -> findInPage(query) },
+                                onPrevious = { findInPage(searchString = null, backwards = true) },
+                                onNext = { findInPage(searchString = null) },
+                                onClose = ::closeFindInPage
+                            )
+                        }
+                        BrowserContent(
+                            controller = controller,
+                            tabId = tab.id,
+                            extensionPopup = extensionPopup,
+                            onClosePopup = app.extensions::closePopup,
+                            modifier = Modifier.weight(1f),
+                            onContentTouchStarted = ::handlePageContentTouchStarted,
+                            onContentScrollDelta = ::handlePageContentScrollDelta
+                        )
+                    }
+                }
                 if (BrowserSettings.isFloatingDotToolbarPosition(settings.toolbarPosition)) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
                     ) {
-                        BrowserContent(
-                            controller = controller,
-                            tabId = tab.id,
-                            extensionPopup = extensionPopup,
-                            onClosePopup = app.extensions::closePopup,
-                            modifier = Modifier.fillMaxSize(),
-                            onContentTouchStarted = ::handlePageContentTouchStarted,
-                            onContentScrollDelta = ::handlePageContentScrollDelta
-                        )
+                        pageContent(Modifier.fillMaxSize())
                         toolbar()
                     }
                 } else if (canAutoCollapseToolbar) {
@@ -2050,15 +2136,7 @@ private fun BrowserScreen(
                             .weight(1f)
                             .fillMaxWidth()
                     ) {
-                        BrowserContent(
-                            controller = controller,
-                            tabId = tab.id,
-                            extensionPopup = extensionPopup,
-                            onClosePopup = app.extensions::closePopup,
-                            modifier = Modifier.fillMaxSize(),
-                            onContentTouchStarted = ::handlePageContentTouchStarted,
-                            onContentScrollDelta = ::handlePageContentScrollDelta
-                        )
+                        pageContent(Modifier.fillMaxSize())
                         Box(
                             modifier = Modifier.align(
                                 if (BrowserSettings.isBottomToolbarPosition(settings.toolbarPosition)) {
@@ -2072,27 +2150,11 @@ private fun BrowserScreen(
                         }
                     }
                 } else if (BrowserSettings.isBottomToolbarPosition(settings.toolbarPosition)) {
-                    BrowserContent(
-                        controller = controller,
-                        tabId = tab.id,
-                        extensionPopup = extensionPopup,
-                        onClosePopup = app.extensions::closePopup,
-                        modifier = Modifier.weight(1f),
-                        onContentTouchStarted = ::handlePageContentTouchStarted,
-                        onContentScrollDelta = ::handlePageContentScrollDelta
-                    )
+                    pageContent(Modifier.weight(1f))
                     toolbar()
                 } else {
                     toolbar()
-                    BrowserContent(
-                        controller = controller,
-                        tabId = tab.id,
-                        extensionPopup = extensionPopup,
-                        onClosePopup = app.extensions::closePopup,
-                        modifier = Modifier.weight(1f),
-                        onContentTouchStarted = ::handlePageContentTouchStarted,
-                        onContentScrollDelta = ::handlePageContentScrollDelta
-                    )
+                    pageContent(Modifier.weight(1f))
                 }
             }
         }

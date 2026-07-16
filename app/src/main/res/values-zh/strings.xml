@@ -159,6 +159,12 @@
     <string name="menu_downloads">下载内容</string>
     <string name="menu_downloading_count">%1$d 个下载中</string>
     <string name="menu_files_count">%1$d 个文件</string>
+    <string name="menu_find_in_page">在页面中查找</string>
+    <string name="find_in_page_hint">在页面中查找</string>
+    <string name="find_in_page_no_matches">无匹配项</string>
+    <string name="find_in_page_previous">上一个匹配项</string>
+    <string name="find_in_page_next">下一个匹配项</string>
+    <string name="find_in_page_close">关闭页面内查找</string>
     <string name="menu_settings">设置</string>
     <string name="menu_back">后退</string>
     <string name="menu_forward">前进</string>

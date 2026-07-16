@@ -339,6 +339,12 @@ enum class GeckoSessionCloseResult {
     DetachedForPlayback
 }
 
+data class GeckoFindInPageResult(
+    val found: Boolean,
+    val current: Int,
+    val total: Int
+)
+
 class GeckoSessionController(
     context: Context,
     initialUrl: String,
@@ -1056,6 +1062,46 @@ class GeckoSessionController(
         applyWebsiteDisplayModeForUrl(currentRecoveryTarget())
         runCatching { session.reload(GeckoSession.LOAD_FLAGS_BYPASS_CACHE) }
             .onFailure { recoverSession(force = true) }
+    }
+
+    fun findInPage(
+        searchString: String?,
+        backwards: Boolean = false,
+        onResult: (GeckoFindInPageResult) -> Unit,
+        onFailure: () -> Unit = {}
+    ) {
+        runCatching {
+            val finder = session.finder
+            if (searchString != null) {
+                finder.clear()
+            }
+            finder.setDisplayFlags(GeckoSession.FINDER_DISPLAY_HIGHLIGHT_ALL)
+            finder.find(
+                searchString,
+                if (backwards) GeckoSession.FINDER_FIND_BACKWARDS else GeckoSession.FINDER_FIND_FORWARD
+            ).accept(
+                { result ->
+                    if (result == null) {
+                        onFailure()
+                    } else {
+                        onResult(
+                            GeckoFindInPageResult(
+                                found = result.found,
+                                current = result.current,
+                                total = result.total
+                            )
+                        )
+                    }
+                },
+                { onFailure() }
+            )
+        }.onFailure {
+            onFailure()
+        }
+    }
+
+    fun clearFindInPage() {
+        runCatching { session.finder.clear() }
     }
 
     fun flushSessionState() {
