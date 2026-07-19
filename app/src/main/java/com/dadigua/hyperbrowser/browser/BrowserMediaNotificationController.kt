@@ -27,6 +27,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
     private val notifications = NotificationManagerCompat.from(appContext)
     private val faviconStore = FaviconRepository(appContext)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var pendingServiceStop: Runnable? = null
 
     private val owners = linkedMapOf<GeckoSession, PlaybackOwnerState>()
     private var primaryOwner: GeckoSession? = null
@@ -310,7 +311,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         }
         owners.clear()
         primaryOwner = null
-        BrowserMediaPlaybackService.stop(appContext, removeNotification = true)
+        stopPlaybackServiceImmediately(removeNotification = true)
     }
 
     fun clearIfOwner(owner: GeckoSession) {
@@ -366,9 +367,10 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         }
         if (!posted) return
         if (hasActivePlayback) {
+            cancelPendingServiceStop()
             BrowserMediaPlaybackService.refresh(appContext)
         } else {
-            BrowserMediaPlaybackService.stop(appContext)
+            schedulePlaybackServiceStop()
         }
     }
 
@@ -378,6 +380,22 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         ensureNotificationChannel()
         updateAndroidMediaSession(state)
         return ForegroundMediaNotification(state.notificationId, mediaNotification(state))
+    }
+
+    fun startingForegroundNotification(): ForegroundMediaNotification {
+        ensureNotificationChannel()
+        return ForegroundMediaNotification(
+            STARTING_FOREGROUND_NOTIFICATION_ID,
+            NotificationCompat.Builder(appContext, MEDIA_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("Hyper Browser")
+                .setContentText("Updating media playback")
+                .setOnlyAlertOnce(true)
+                .setShowWhen(false)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                .build()
+        )
     }
 
     private fun updateAndroidMediaSession(state: PlaybackOwnerState) {
@@ -561,10 +579,34 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         }
         if (owners.isEmpty() || owners.values.none { it.active }) {
             primaryOwner = null
-            BrowserMediaPlaybackService.stop(appContext, removeNotification = true)
+            stopPlaybackServiceImmediately(removeNotification = true)
         } else {
             publishIfNeeded(force = true)
         }
+    }
+
+    private fun schedulePlaybackServiceStop() {
+        cancelPendingServiceStop()
+        val task = Runnable {
+            pendingServiceStop = null
+            if (hasActivePlayback) {
+                BrowserMediaPlaybackService.refresh(appContext)
+            } else {
+                BrowserMediaPlaybackService.stop(appContext)
+            }
+        }
+        pendingServiceStop = task
+        mainHandler.postDelayed(task, MEDIA_PAUSE_SERVICE_GRACE_MS)
+    }
+
+    private fun stopPlaybackServiceImmediately(removeNotification: Boolean) {
+        cancelPendingServiceStop()
+        BrowserMediaPlaybackService.stop(appContext, removeNotification)
+    }
+
+    private fun cancelPendingServiceStop() {
+        pendingServiceStop?.let(mainHandler::removeCallbacks)
+        pendingServiceStop = null
     }
 
     private fun maybeResumeBackgroundPause(state: PlaybackOwnerState, mediaSession: MediaSession) {
@@ -838,6 +880,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
     companion object {
         private const val MEDIA_NOTIFICATION_ID_BASE = 390100
         private const val MEDIA_NOTIFICATION_ID_MASK = 0x0000ffff
+        private const val STARTING_FOREGROUND_NOTIFICATION_ID = MEDIA_NOTIFICATION_ID_BASE - 1
         private const val MEDIA_CHANNEL_ID = "media_playback"
         private const val MEDIA_DEBUG_TAG = "HyperMediaDebug"
         private const val FALLBACK_MEDIA_KIND_WEBRTC_AUDIO = "webrtc-audio"
@@ -846,6 +889,7 @@ class BrowserMediaNotificationController private constructor(context: Context) {
         private const val BACKGROUND_RESUME_DELAY_MS = 700L
         private const val BACKGROUND_RESUME_MAX_ATTEMPTS = 3
         private const val EXPLICIT_PAUSE_SUPPRESS_MS = 4_000L
+        private const val MEDIA_PAUSE_SERVICE_GRACE_MS = 2_000L
 
         @Volatile
         private var instance: BrowserMediaNotificationController? = null
