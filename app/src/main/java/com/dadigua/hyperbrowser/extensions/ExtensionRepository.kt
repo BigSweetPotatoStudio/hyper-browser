@@ -2,6 +2,7 @@ package com.dadigua.hyperbrowser.extensions
 
 import android.content.Context
 import android.graphics.Bitmap
+import com.dadigua.hyperbrowser.data.AtomicFileWriter
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.gecko.GeckoRuntimeProvider
 import kotlinx.coroutines.Dispatchers
@@ -460,7 +461,7 @@ class ExtensionRepository(
                     .put("installedAt", item.installedAt)
             )
         }
-        storeFile.writeText(array.toString())
+        AtomicFileWriter.writeText(storeFile, array.toString())
     }
 
     private fun loadInstalled(): List<InstalledExtensionState> {

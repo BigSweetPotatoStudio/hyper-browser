@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.dadigua.hyperbrowser.notification.notifyIfAllowed
 import com.dadigua.hyperbrowser.ui.browser.BrowserActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -82,7 +83,7 @@ class AppUpdateDownloadService : Service() {
             if (isActive(state)) {
                 startForeground(AppUpdateManager.UPDATE_NOTIFICATION_ID, notification)
             } else {
-                notifications.notify(AppUpdateManager.UPDATE_NOTIFICATION_ID, notification)
+                notifications.notifyIfAllowed(this, AppUpdateManager.UPDATE_NOTIFICATION_ID, notification)
             }
         }
     }
@@ -152,7 +153,11 @@ class AppUpdateDownloadService : Service() {
     private fun finishForegroundNotification(update: AvailableUpdate, state: UpdateDownloadState) {
         removeForegroundNotification()
         runCatching {
-            notifications.notify(AppUpdateManager.UPDATE_NOTIFICATION_ID, buildNotification(update, state))
+            notifications.notifyIfAllowed(
+                this,
+                AppUpdateManager.UPDATE_NOTIFICATION_ID,
+                buildNotification(update, state),
+            )
         }
     }
 

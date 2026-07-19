@@ -18,6 +18,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
 import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
+import com.dadigua.hyperbrowser.notification.notifyIfAllowed
 import com.dadigua.hyperbrowser.ui.browser.BrowserActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
@@ -253,7 +254,7 @@ class BrowserDownloadService : Service() {
             foregroundEntryId = entry.id
             startForeground(entry.notificationId(), notification)
         } else {
-            notifications.notify(entry.notificationId(), notification)
+            notifications.notifyIfAllowed(this, entry.notificationId(), notification)
         }
     }
 
@@ -262,7 +263,7 @@ class BrowserDownloadService : Service() {
             removeForegroundNotification()
             foregroundEntryId = null
         }
-        notifications.notify(entry.notificationId(), buildNotification(entry))
+        notifications.notifyIfAllowed(this, entry.notificationId(), buildNotification(entry))
     }
 
     private fun promoteNextForeground() {

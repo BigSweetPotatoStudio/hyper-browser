@@ -1,6 +1,7 @@
 package com.dadigua.hyperbrowser.update
 
 import android.content.Context
+import com.dadigua.hyperbrowser.data.AtomicFileWriter
 import org.json.JSONObject
 import java.io.File
 
@@ -39,11 +40,12 @@ class UpdateSettingsStore(context: Context) {
     }
 
     private fun save(settings: UpdateSettings) {
-        settingsFile.writeText(
+        AtomicFileWriter.writeText(
+            settingsFile,
             JSONObject()
                 .put("skippedVersionCode", settings.skippedVersionCode)
                 .put("lastCheckedAt", settings.lastCheckedAt)
-                .toString()
+                .toString(),
         )
     }
 }

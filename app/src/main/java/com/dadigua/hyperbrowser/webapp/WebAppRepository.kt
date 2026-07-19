@@ -17,6 +17,7 @@ import android.util.Base64
 import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.browser.BrowserIconComposer
 import com.dadigua.hyperbrowser.browser.FaviconRepository
+import com.dadigua.hyperbrowser.data.AtomicFileWriter
 import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.ui.webapp.WebAppActivity
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,7 +40,7 @@ class WebAppRepository(
 
     fun saveSyncJson(json: JSONObject) {
         val previousById = state.value.associateBy { it.id }
-        storeFile.writeText(json.deepCopy().toString())
+        AtomicFileWriter.writeText(storeFile, json.deepCopy().toString())
         val next = loadFromSyncFile(storeFile).sortedByDescending { it.lastOpenedAt }
         val nextIds = next.map { it.id }.toSet()
         previousById.values

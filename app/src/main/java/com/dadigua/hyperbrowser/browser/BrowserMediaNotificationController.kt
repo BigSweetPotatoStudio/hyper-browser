@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.media.app.NotificationCompat.MediaStyle
 import com.dadigua.hyperbrowser.R
+import com.dadigua.hyperbrowser.notification.notifyIfAllowed
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.MediaSession
 import org.mozilla.geckoview.MediaSession.Feature
@@ -355,7 +356,8 @@ class BrowserMediaNotificationController private constructor(context: Context) {
                     "force=$force notificationId=${state.notificationId} style=${if (primary) "media" else "secondary"}"
                 )
                 runCatching {
-                    notifications.notify(
+                    notifications.notifyIfAllowed(
+                        appContext,
                         state.notificationId,
                         if (primary) mediaNotification(state) else secondaryNotification(state)
                     )

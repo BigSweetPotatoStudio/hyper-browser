@@ -1,5 +1,6 @@
 package com.dadigua.hyperbrowser.browser
 
+import com.dadigua.hyperbrowser.data.AtomicFileWriter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
@@ -199,7 +200,7 @@ class DownloadStore(context: android.content.Context) {
                     .put("error", it.error)
             )
         }
-        file.writeText(array.toString())
+        AtomicFileWriter.writeText(file, array.toString())
     }
 }
 

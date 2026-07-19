@@ -3,6 +3,7 @@ package com.dadigua.hyperbrowser.browser
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import com.dadigua.hyperbrowser.data.AtomicFileWriter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
@@ -198,7 +199,7 @@ class BrowserProfileStore(context: Context) {
     }
 
     fun saveBookmarksSyncJson(json: JSONObject) {
-        bookmarksFile.writeText(json.deepCopy().toString())
+        AtomicFileWriter.writeText(bookmarksFile, json.deepCopy().toString())
         bookmarksState.value = loadBookmarksFromSyncFile(bookmarksFile).distinctBy { it.url }
     }
 
@@ -208,7 +209,7 @@ class BrowserProfileStore(context: Context) {
     }
 
     fun saveTabs(state: SavedBrowserTabs) {
-        tabsFile.writeText(BrowserTabPersistenceCodec.encode(state))
+        AtomicFileWriter.writeText(tabsFile, BrowserTabPersistenceCodec.encode(state))
     }
 
     fun loadLauncherLayout(): JSONObject? {
@@ -220,7 +221,7 @@ class BrowserProfileStore(context: Context) {
         readJSONObject(launcherLayoutFile)?.let { normalizeLauncherJson(it) }
 
     fun saveLauncherSyncJson(json: JSONObject) {
-        launcherLayoutFile.writeText(json.deepCopy().toString())
+        AtomicFileWriter.writeText(launcherLayoutFile, json.deepCopy().toString())
     }
 
     fun loadTabSessionState(tabId: String): String? {
@@ -236,7 +237,7 @@ class BrowserProfileStore(context: Context) {
             return
         }
         tabSessionStateDir.mkdirs()
-        file.writeText(state)
+        AtomicFileWriter.writeText(file, state)
     }
 
     fun deleteTabSessionState(tabId: String) {
@@ -529,11 +530,12 @@ class BrowserProfileStore(context: Context) {
                     .put("iconPath", it.iconPath)
             )
         }
-        historyFile.writeText(array.toString())
+        AtomicFileWriter.writeText(historyFile, array.toString())
     }
 
     private fun saveSettings(settings: BrowserSettings) {
-        settingsFile.writeText(
+        AtomicFileWriter.writeText(
+            settingsFile,
             JSONObject()
                 .put("searchEngineId", settings.searchEngineId)
                 .put("customSearchUrl", settings.customSearchUrl)
@@ -555,7 +557,7 @@ class BrowserProfileStore(context: Context) {
                 .put("webDavSyncDeviceName", settings.webDavSyncDeviceName)
                 .put("webDavSyncDeviceId", settings.webDavSyncDeviceId)
                 .put("privacySettingsVersion", CURRENT_PRIVACY_SETTINGS_VERSION)
-                .toString()
+                .toString(),
         )
     }
 

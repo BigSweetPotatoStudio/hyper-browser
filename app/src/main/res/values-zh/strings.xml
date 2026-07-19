@@ -232,8 +232,11 @@
     <string name="backup_import_result">已恢复 %1$d 个书签和 %2$d 个 WebApp。</string>
     <string name="backup_import_failed">备份导入失败。</string>
     <string name="backup_read_failed">无法读取备份文件。</string>
+    <string name="backup_import_confirm_title">导入备份？</string>
+    <string name="backup_import_confirm_message">这将使用备份中的 %1$d 个书签和 %2$d 个 WebApp 替换当前书签、WebApp 和启动器布局。</string>
     <string name="backup_choose_save_location">请选择 JSON 备份保存位置。</string>
     <string name="backup_choose_file">请选择 Hyper Browser JSON 备份。</string>
+    <string name="webdav_sync_failed">WebDAV 同步失败。</string>
     <string name="settings_title">设置</string>
     <string name="settings_search_placeholder">搜索设置</string>
     <string name="settings_no_matches">没有匹配的设置。</string>
@@ -310,6 +313,7 @@
     <string name="settings_update_skip_cleared">已清除跳过版本。</string>
     <string name="webapp_updated">已更新 %1$s。</string>
     <string name="webapp_not_found">未找到 WebApp。</string>
+    <string name="webapp_icon_failed">无法保存 WebApp 图标。</string>
     <string name="webapp_update_failed">更新失败。</string>
     <string name="webapp_deleted">WebApp 已删除。</string>
     <string name="webapp_delete_failed">删除失败。</string>

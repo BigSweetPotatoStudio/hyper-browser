@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.browser.BrowserSettings
+import com.dadigua.hyperbrowser.data.AtomicFileWriter
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
@@ -194,7 +195,7 @@ object GeckoRuntimeProvider {
         val file = File(context.filesDir, GECKO_CONFIG_FILE)
         val desired = geckoConfigContent(settings)
         if (!file.exists() || runCatching { file.readText() }.getOrNull() != desired) {
-            file.writeText(desired)
+            AtomicFileWriter.writeText(file, desired)
         }
         return file
     }

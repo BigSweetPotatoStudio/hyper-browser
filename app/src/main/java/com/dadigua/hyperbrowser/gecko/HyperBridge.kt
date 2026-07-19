@@ -1,6 +1,8 @@
 package com.dadigua.hyperbrowser.gecko
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoResult
@@ -121,14 +123,16 @@ object HyperBridge {
                     Log.e(TAG, "Internal extension install returned null")
                     return@accept
                 }
-                installed.setMessageDelegate(messageDelegate, NATIVE_APP)
-                val callbacks = synchronized(this) {
-                    extension = installed
-                    installing = false
-                    pendingReady.toList().also { pendingReady.clear() }
+                Handler(Looper.getMainLooper()).post {
+                    installed.setMessageDelegate(messageDelegate, NATIVE_APP)
+                    val callbacks = synchronized(this) {
+                        extension = installed
+                        installing = false
+                        pendingReady.toList().also { pendingReady.clear() }
+                    }
+                    handlers.keys.forEach { attachSessionDelegate(it, installed) }
+                    callbacks.forEach { it(installed) }
                 }
-                handlers.keys.forEach { attachSessionDelegate(it, installed) }
-                callbacks.forEach { it(installed) }
             }, { throwable ->
                 synchronized(this) {
                     installing = false

@@ -2,7 +2,6 @@ package com.dadigua.hyperbrowser.update
 
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -13,6 +12,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.dadigua.hyperbrowser.browser.BrowserDownloadEntry
 import com.dadigua.hyperbrowser.browser.DownloadStatus
+import com.dadigua.hyperbrowser.data.AtomicFileWriter
+import com.dadigua.hyperbrowser.notification.notifyIfAllowed
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -303,9 +304,9 @@ class AppUpdateManager(context: Context, private val settingsStore: UpdateSettin
     }
 
     fun notifyUpdateError(update: AvailableUpdate, error: String) {
-        if (!canPostNotifications()) return
         ensureNotificationChannel()
-        notifications.notify(
+        notifications.notifyIfAllowed(
+            appContext,
             UPDATE_NOTIFICATION_ID,
             NotificationCompat.Builder(appContext, UPDATE_CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_error)
@@ -413,13 +414,6 @@ class AppUpdateManager(context: Context, private val settingsStore: UpdateSettin
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
-    private fun canPostNotifications(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(
-                appContext,
-                android.Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-
     private fun ensureNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val channel = android.app.NotificationChannel(
@@ -459,7 +453,7 @@ class AppUpdateManager(context: Context, private val settingsStore: UpdateSettin
     }
 
     private fun saveDownloadRecord(record: UpdateDownloadRecord) {
-        downloadStateFile.writeText(record.toJson().toString())
+        AtomicFileWriter.writeText(downloadStateFile, record.toJson().toString())
     }
 
     private fun sha256(file: File): String {

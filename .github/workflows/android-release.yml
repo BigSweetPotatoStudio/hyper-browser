@@ -102,6 +102,9 @@ jobs:
       - name: Check internal page TypeScript
         run: pnpm --dir internal-pages typecheck
 
+      - name: Run sync tests
+        run: pnpm test:sync
+
       - name: Install companion extension dependencies
         run: pnpm --dir companion-extension install --frozen-lockfile
 
@@ -119,6 +122,9 @@ jobs:
 
       - name: Run Android unit tests
         run: ./gradlew :app:testDebugUnitTest --console=plain
+
+      - name: Run Android lint
+        run: ./gradlew :app:lintRelease --console=plain
 
       - name: Build unsigned release APKs
         run: ./gradlew :app:assembleRelease --console=plain
