@@ -6,6 +6,15 @@ This project uses GitHub Releases for packaged APKs. The changelog should match 
 
 ## Unreleased
 
+## 2.1.0-beta.1 - 2026-07-20
+
+- Added Find in Page with previous/next match navigation and live result counts.
+- Added address-bar swipe gestures for switching adjacent tabs, plus bidirectional swipe-to-close in Card and List tab views.
+- Added a five-second undo action for accidentally swiped-away tabs, including safe handling for consecutive closes.
+- Improved tab navigation so child tabs return to their opener, while Gecko focus requests and extension actions stay with the correct tab.
+- Improved background media playback and notification reliability across browser tabs and WebApps.
+- Hardened local browser state, download, and update persistence with atomic writes and clearer failure handling.
+
 ## 2.0.0 - 2026-07-07
 
 - Added safer confirmation flows for WebApp deletion from the home launcher and browser menu.

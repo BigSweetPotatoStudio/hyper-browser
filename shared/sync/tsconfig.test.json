@@ -11,7 +11,7 @@
     "rootDir": ".",
     "outDir": "../../build/sync-tests",
     "types": ["node"],
-    "typeRoots": ["../../companion-extension/node_modules/@types"]
+    "typeRoots": ["../../internal-pages/node_modules/@types"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }
