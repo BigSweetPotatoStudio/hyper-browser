@@ -8,7 +8,7 @@
       "args": [
         "exec",
         "zx",
-        "${workspaceFolder}\\scripts\\install-all-adb-and-package-extension.ts",
+        "${workspaceFolder}/scripts/install-all-adb-and-package-extension.ts",
         "--skip-extension-install",
         "--skip-extension-typecheck",
         "--skip-extension-zip"
@@ -29,7 +29,7 @@
       "args": [
         "exec",
         "zx",
-        "${workspaceFolder}\\scripts\\install-all-adb-and-package-extension.ts",
+        "${workspaceFolder}/scripts/install-all-adb-and-package-extension.ts",
         "--skip-android-build",
         "--skip-android-install"
       ],
