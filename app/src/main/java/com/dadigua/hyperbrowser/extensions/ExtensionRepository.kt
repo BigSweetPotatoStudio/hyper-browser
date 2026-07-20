@@ -45,6 +45,9 @@ data class ExtensionNewTabRequest(
     val session: GeckoSession
 )
 
+internal fun shouldAcceptExtensionAction(actionSession: Any?, activeSession: Any?): Boolean =
+    actionSession == null || actionSession === activeSession
+
 class ExtensionRepository(
     private val context: Context
 ) {
@@ -59,6 +62,8 @@ class ExtensionRepository(
     private val popupState = MutableStateFlow<ExtensionPopupState?>(null)
     private val newTabRequestState = MutableStateFlow<ExtensionNewTabRequest?>(null)
     private val menuActions = mutableMapOf<String, WebExtension.Action>()
+    private var activeMenuSession: GeckoSession? = null
+    private var menuActionGeneration = 0L
 
     fun observeInstalled(): StateFlow<List<InstalledExtensionState>> = installedState
 
@@ -138,6 +143,17 @@ class ExtensionRepository(
 
     suspend fun refreshMenuActions(activeSession: GeckoSession) {
         withContext(Dispatchers.Main.immediate) {
+            val controller = GeckoRuntimeProvider.get(context).webExtensionController
+            val previousSession = activeMenuSession
+            if (previousSession !== activeSession) {
+                activeMenuSession = activeSession
+                menuActionGeneration += 1
+                menuActions.clear()
+                menuActionState.value = emptyMap()
+                previousSession?.let { session ->
+                    runCatching { controller.setTabActive(session, false) }
+                }
+            }
             listRuntimeExtensions().forEach { extension ->
                 extension.setTabDelegate(
                     object : WebExtension.TabDelegate {
@@ -164,7 +180,9 @@ class ExtensionRepository(
                             session: GeckoSession?,
                             action: WebExtension.Action
                         ) {
-                            updateMenuAction(extension, action)
+                            if (shouldAcceptExtensionAction(session, activeMenuSession)) {
+                                updateMenuAction(extension, action)
+                            }
                         }
 
                         override fun onPageAction(
@@ -172,7 +190,10 @@ class ExtensionRepository(
                             session: GeckoSession?,
                             action: WebExtension.Action
                         ) {
-                            if (action.enabled == true) {
+                            if (
+                                action.enabled == true &&
+                                shouldAcceptExtensionAction(session, activeMenuSession)
+                            ) {
                                 updateMenuAction(extension, action)
                             }
                         }
@@ -204,7 +225,7 @@ class ExtensionRepository(
                     }
                 )
             }
-            GeckoRuntimeProvider.get(context).webExtensionController.setTabActive(activeSession, true)
+            controller.setTabActive(activeSession, true)
         }
     }
 
@@ -376,6 +397,7 @@ class ExtensionRepository(
     }
 
     private fun updateMenuAction(extension: WebExtension, action: WebExtension.Action) {
+        val generation = menuActionGeneration
         val title = action.title?.takeIf { it.isNotBlank() }
             ?: extension.metaData.name
             ?: extension.id
@@ -390,13 +412,14 @@ class ExtensionRepository(
                 icon = previous?.icon
             )
         )
-        loadMenuIcon(extension.id, action)
+        loadMenuIcon(extension.id, action, generation)
     }
 
-    private fun loadMenuIcon(guid: String, action: WebExtension.Action) {
+    private fun loadMenuIcon(guid: String, action: WebExtension.Action, generation: Long) {
         val icon = action.icon ?: return
         icon.getBitmap(48).accept(
             { bitmap ->
+                if (generation != menuActionGeneration) return@accept
                 val current = menuActionState.value[guid] ?: return@accept
                 menuActionState.value = menuActionState.value + (guid to current.copy(icon = bitmap))
             },
