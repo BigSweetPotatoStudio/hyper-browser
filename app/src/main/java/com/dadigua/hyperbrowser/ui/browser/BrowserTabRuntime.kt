@@ -31,6 +31,7 @@ import java.util.UUID
 internal class BrowserTabRuntime private constructor(
     val id: String,
     val openerTabId: String? = null,
+    val isPopupSession: Boolean = false,
     private val app: HyperBrowserApp,
     private val controllerFactory: (
         initialUrl: String,
@@ -436,6 +437,7 @@ internal class BrowserTabRuntime private constructor(
             return BrowserTabRuntime(
                 id = id,
                 openerTabId = openerTabId,
+                isPopupSession = true,
                 app = app,
                 controllerFactory = controllerFactory,
                 mediaOwnerInfo = mediaOwnerInfo,

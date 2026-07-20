@@ -215,6 +215,19 @@ internal fun adjacentTabId(tabIds: List<String>, selectedTabId: String, step: In
     return tabIds.getOrNull(selectedIndex + step)
 }
 
+internal fun shouldSwitchToFocusedTab(
+    requestedTabId: String,
+    requestedOpenerTabId: String?,
+    requestedIsPopupSession: Boolean,
+    selectedTabId: String,
+    selectedOpenerTabId: String?,
+    selectedIsPopupSession: Boolean
+): Boolean {
+    if (requestedTabId == selectedTabId) return false
+    return (requestedIsPopupSession && requestedOpenerTabId == selectedTabId) ||
+        (selectedIsPopupSession && selectedOpenerTabId == requestedTabId)
+}
+
 @Composable
 private fun BrowserScreen(
     activity: BrowserActivity,
@@ -1355,7 +1368,20 @@ private fun BrowserScreen(
 
     closeTabById = { id -> closeBrowserTabById(id) }
     focusTabById = { id ->
-        if (tabs.any { it.id == id }) {
+        val requestedTab = tabs.firstOrNull { it.id == id }
+        val selectedTab = tabs.firstOrNull { it.id == selectedTabId }
+        if (
+            requestedTab != null &&
+            selectedTab != null &&
+            shouldSwitchToFocusedTab(
+                requestedTabId = requestedTab.id,
+                requestedOpenerTabId = requestedTab.openerTabId,
+                requestedIsPopupSession = requestedTab.isPopupSession,
+                selectedTabId = selectedTab.id,
+                selectedOpenerTabId = selectedTab.openerTabId,
+                selectedIsPopupSession = selectedTab.isPopupSession
+            )
+        ) {
             selectedTabId = id
             activePanel = BrowserPanel.None
         }
