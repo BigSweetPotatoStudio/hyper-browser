@@ -109,11 +109,25 @@ import java.util.UUID
 
 private const val BROWSER_ACTIVITY_TAG = "BrowserActivity"
 private const val WEB_DAV_SYNC_CLIENT_VERSION = "3"
+private const val TAB_CLOSE_UNDO_TIMEOUT_MS = 5_000L
 
 private data class PendingBackupImport(
     val rawJson: String,
     val preview: BrowserBackupImportPreview
 )
+
+private data class PendingSwipeClosedTab(
+    val tab: BrowserTabRuntime,
+    val originalIndex: Int,
+    val selectedTabIdBeforeClose: String,
+    val temporaryReplacementTabId: String?,
+    val requestToken: UUID
+)
+
+internal fun isCurrentPendingSwipeClose(
+    expectedToken: UUID,
+    currentToken: UUID?
+): Boolean = currentToken == expectedToken
 
 class BrowserActivity : ComponentActivity() {
     private val externalIntents = MutableSharedFlow<ExternalBrowserIntent>(extraBufferCapacity = 1)
@@ -1098,6 +1112,7 @@ private fun BrowserScreen(
             }
         )
     }
+    var pendingSwipeClosedTab by remember { mutableStateOf<PendingSwipeClosedTab?>(null) }
     var activePanel by remember {
         mutableStateOf(if (initialShowDownloads) BrowserPanel.Downloads else BrowserPanel.None)
     }
@@ -1299,10 +1314,6 @@ private fun BrowserScreen(
         activePanel = panel
     }
 
-    fun closePanel() {
-        activePanel = BrowserPanel.None
-    }
-
     fun openLinkInBackgroundTab(url: String) {
         tabs.add(createBrowserTab(url, openerTabId = selectedTabId))
         pageContextMenu = null
@@ -1322,12 +1333,35 @@ private fun BrowserScreen(
                 tabs = tabs.mapNotNull { it.toSavedTab() }.take(50)
             )
         )
-        val keptTabIds = tabs.map { it.id }.toSet()
+        val keptTabIds = buildSet {
+            tabs.forEach { add(it.id) }
+            pendingSwipeClosedTab?.let { add(it.tab.id) }
+        }
         profileStore.pruneTabSessionStates(keptTabIds)
         profileStore.pruneTabThumbnails(keptTabIds)
     }
 
+    fun finalizePendingSwipeClose(expectedToken: UUID? = null) {
+        val pending = pendingSwipeClosedTab ?: return
+        if (
+            expectedToken != null &&
+            !isCurrentPendingSwipeClose(expectedToken, pending.requestToken)
+        ) {
+            return
+        }
+        pendingSwipeClosedTab = null
+        pending.tab.close()
+        profileStore.deleteTabSessionState(pending.tab.id)
+        profileStore.deleteTabThumbnail(pending.tab.id)
+    }
+
+    fun closePanel() {
+        finalizePendingSwipeClose()
+        activePanel = BrowserPanel.None
+    }
+
     fun closeBrowserTabById(id: String, closePanelAfterClose: Boolean = true) {
+        finalizePendingSwipeClose()
         val closing = tabs.firstOrNull { it.id == id } ?: return
         val oldIndex = tabs.indexOf(closing)
         closing.close()
@@ -1350,7 +1384,56 @@ private fun BrowserScreen(
         persistBrowserTabs()
     }
 
+    fun stageBrowserTabCloseAfterSwipe(id: String) {
+        finalizePendingSwipeClose()
+        val closing = tabs.firstOrNull { it.id == id } ?: return
+        val oldIndex = tabs.indexOf(closing)
+        val selectedTabIdBeforeClose = selectedTabId
+        closing.flushSessionState()
+        closing.controller?.setVisible(visible = false, focused = false)
+        tabs.remove(closing)
+        var temporaryReplacementTabId: String? = null
+        if (tabs.isEmpty()) {
+            val replacement = createBrowserTab(GeckoSessionController.HOME_URL)
+            tabs.add(replacement)
+            selectedTabId = replacement.id
+            temporaryReplacementTabId = replacement.id
+        } else if (selectedTabId == id) {
+            selectedTabId = closing.openerTabId
+                ?.takeIf { openerId -> tabs.any { it.id == openerId } }
+                ?: tabs[(oldIndex - 1).coerceIn(0, tabs.lastIndex)].id
+        }
+        pendingSwipeClosedTab = PendingSwipeClosedTab(
+            tab = closing,
+            originalIndex = oldIndex,
+            selectedTabIdBeforeClose = selectedTabIdBeforeClose,
+            temporaryReplacementTabId = temporaryReplacementTabId,
+            requestToken = UUID.randomUUID()
+        )
+        message = null
+        persistBrowserTabs()
+    }
+
+    fun undoPendingSwipeClose() {
+        val pending = pendingSwipeClosedTab ?: return
+        pendingSwipeClosedTab = null
+        pending.temporaryReplacementTabId?.let { replacementId ->
+            tabs.firstOrNull { it.id == replacementId }?.let { replacement ->
+                tabs.remove(replacement)
+                replacement.close()
+                profileStore.deleteTabSessionState(replacement.id)
+                profileStore.deleteTabThumbnail(replacement.id)
+            }
+        }
+        tabs.add(pending.originalIndex.coerceIn(0, tabs.size), pending.tab)
+        selectedTabId = pending.selectedTabIdBeforeClose
+            .takeIf { previousId -> tabs.any { it.id == previousId } }
+            ?: pending.tab.id
+        persistBrowserTabs()
+    }
+
     fun closeAllBrowserTabs() {
+        finalizePendingSwipeClose()
         val closingTabs = tabs.toList()
         closingTabs.forEach { closing ->
             closing.close()
@@ -1364,6 +1447,13 @@ private fun BrowserScreen(
         activePanel = BrowserPanel.None
         message = null
         persistBrowserTabs(replacement.id)
+    }
+
+    val pendingSwipeCloseToken = pendingSwipeClosedTab?.requestToken
+    LaunchedEffect(pendingSwipeCloseToken) {
+        val expectedToken = pendingSwipeCloseToken ?: return@LaunchedEffect
+        delay(TAB_CLOSE_UNDO_TIMEOUT_MS)
+        finalizePendingSwipeClose(expectedToken)
     }
 
     closeTabById = { id -> closeBrowserTabById(id) }
@@ -1705,6 +1795,11 @@ private fun BrowserScreen(
         onDispose {
             persistBrowserTabs()
             tabs.forEach { it.close(closeActivePlayback = false) }
+            pendingSwipeClosedTab?.tab?.let { pendingTab ->
+                pendingTab.close(closeActivePlayback = false)
+                profileStore.deleteTabSessionState(pendingTab.id)
+                profileStore.deleteTabThumbnail(pendingTab.id)
+            }
         }
     }
 
@@ -2008,6 +2103,7 @@ private fun BrowserScreen(
                         closePanel()
                     },
                     onClose = { closeBrowserTabById(it, closePanelAfterClose = false) },
+                    onSwipeClose = ::stageBrowserTabCloseAfterSwipe,
                     onCloseAll = { closeAllBrowserTabs() },
                     onNewTab = {
                         val newTab = createBrowserTab(GeckoSessionController.HOME_URL)
@@ -2309,8 +2405,18 @@ private fun BrowserScreen(
         }
         if (!pageFullScreen) {
             BrowserTip(
-                message = message,
+                message = if (pendingSwipeClosedTab != null) {
+                    stringResource(R.string.tabs_closed)
+                } else {
+                    message
+                },
                 toolbarPosition = settings.toolbarPosition,
+                actionLabel = if (pendingSwipeClosedTab != null) {
+                    stringResource(R.string.tabs_undo_close)
+                } else {
+                    null
+                },
+                onAction = ::undoPendingSwipeClose,
                 modifier = Modifier.align(Alignment.BottomCenter)
             )
         }

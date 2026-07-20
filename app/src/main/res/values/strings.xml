@@ -211,6 +211,8 @@
     <string name="tabs_close_all_title">Close all tabs?</string>
     <string name="tabs_close_all_message">Close all %1$d tabs and open a new home tab.</string>
     <string name="tabs_close_all_action">Close all</string>
+    <string name="tabs_closed">Tab closed</string>
+    <string name="tabs_undo_close">Undo</string>
     <string name="tabs_restorable">Restorable</string>
     <string name="browser_opened_background_tab">Opened in background tab</string>
     <string name="browser_install_unknown_apps_required">Allow Hyper Browser to install unknown apps first.</string>

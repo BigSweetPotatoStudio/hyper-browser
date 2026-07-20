@@ -2,6 +2,7 @@ package com.dadigua.hyperbrowser.ui.browser
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -11,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -84,6 +86,8 @@ private fun TopPageLoadingProgressBar(
 internal fun BrowserTip(
     message: String?,
     toolbarPosition: String,
+    actionLabel: String? = null,
+    onAction: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (message == null) return
@@ -95,16 +99,26 @@ internal fun BrowserTip(
             .padding(start = 18.dp, end = 18.dp, bottom = bottomPadding),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = message,
-            color = Color.White,
-            style = MaterialTheme.typography.bodyMedium,
+        Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(999.dp))
                 .background(Color(0xE6202124))
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
+                .padding(start = 16.dp, end = if (actionLabel == null) 16.dp else 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = message,
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(vertical = 10.dp),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (actionLabel != null) {
+                TextButton(onClick = onAction) {
+                    Text(actionLabel)
+                }
+            }
+        }
     }
 }

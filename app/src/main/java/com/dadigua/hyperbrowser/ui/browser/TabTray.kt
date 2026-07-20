@@ -82,6 +82,7 @@ internal fun TabTray(
     onBack: () -> Unit,
     onSelect: (String) -> Unit,
     onClose: (String) -> Unit,
+    onSwipeClose: (String) -> Unit,
     onCloseAll: () -> Unit,
     onNewTab: () -> Unit
 ) {
@@ -117,7 +118,7 @@ internal fun TabTray(
                             val pageState = tabPageState(tab)
                             SwipeToCloseTab(
                                 cornerRadius = 18.dp,
-                                onClose = { onClose(tab.id) }
+                                onClose = { onSwipeClose(tab.id) }
                             ) {
                                 ChromeTabListRow(
                                     tab = tab,
@@ -143,7 +144,7 @@ internal fun TabTray(
                             val pageState = tabPageState(tab)
                             SwipeToCloseTab(
                                 cornerRadius = 24.dp,
-                                onClose = { onClose(tab.id) },
+                                onClose = { onSwipeClose(tab.id) },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(TabCardHeight)
