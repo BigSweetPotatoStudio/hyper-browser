@@ -68,6 +68,8 @@ import com.dadigua.hyperbrowser.browser.SavedBrowserTabs
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.data.WebAppDefinition
 import com.dadigua.hyperbrowser.extensions.AmoAddonListing
+import com.dadigua.hyperbrowser.extensions.ExtensionTabCommand
+import com.dadigua.hyperbrowser.extensions.extensionTabInsertionIndex
 import com.dadigua.hyperbrowser.gecko.GeckoAuthPromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoCertificatePromptRequest
 import com.dadigua.hyperbrowser.gecko.GeckoContextMenuTarget
@@ -103,6 +105,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import java.util.UUID
@@ -1139,6 +1142,7 @@ private fun BrowserScreen(
     val extensionActions by app.extensions.observeMenuActions().collectAsState()
     val extensionPopup by app.extensions.observePopup().collectAsState()
     val extensionNewTabRequest by app.extensions.observeNewTabRequests().collectAsState()
+    val extensionTabCommandRequest by app.extensions.observeTabCommandRequests().collectAsState()
     var extensionQuery by remember { mutableStateOf("ublock") }
     var extensionResults by remember { mutableStateOf<List<AmoAddonListing>>(emptyList()) }
     var extensionMessage by remember { mutableStateOf<String?>(null) }
@@ -1721,11 +1725,37 @@ private fun BrowserScreen(
                 onSharePrompt = ::handleSharePrompt,
                 onDownload = ::saveGeckoDownload
             )
-            tabs.add(newTab)
-            selectedTabId = newTab.id
+            tabs.add(extensionTabInsertionIndex(request.index, tabs.size), newTab)
+            if (request.active) {
+                selectedTabId = newTab.id
+            }
             closePanel()
             message = "Opened ${request.title}."
             app.extensions.consumeNewTabRequest()
+        }
+    }
+
+    LaunchedEffect(extensionTabCommandRequest) {
+        extensionTabCommandRequest?.let { request ->
+            val targetTab = tabs.firstOrNull { it.controller?.session === request.session }
+            when (request.command) {
+                ExtensionTabCommand.Activate -> {
+                    if (targetTab != null) {
+                        selectedTabId = targetTab.id
+                        closePanel()
+                    }
+                }
+
+                ExtensionTabCommand.Close -> {
+                    if (targetTab != null) {
+                        closeBrowserTabById(targetTab.id, closePanelAfterClose = false)
+                        request.closeResult?.complete(AllowOrDeny.ALLOW)
+                    } else {
+                        request.closeResult?.complete(AllowOrDeny.DENY)
+                    }
+                }
+            }
+            app.extensions.consumeTabCommandRequest()
         }
     }
 

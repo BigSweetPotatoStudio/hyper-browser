@@ -2,6 +2,8 @@ package com.dadigua.hyperbrowser.extensions
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
 import com.dadigua.hyperbrowser.data.AtomicFileWriter
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.gecko.GeckoRuntimeProvider
@@ -42,11 +44,29 @@ data class ExtensionNewTabRequest(
     val guid: String,
     val title: String,
     val url: String,
-    val session: GeckoSession
+    val session: GeckoSession,
+    val active: Boolean,
+    val index: Int?
+)
+
+enum class ExtensionTabCommand {
+    Activate,
+    Close
+}
+
+data class ExtensionTabCommandRequest(
+    val command: ExtensionTabCommand,
+    val session: GeckoSession,
+    val closeResult: GeckoResult<AllowOrDeny>? = null
 )
 
 internal fun shouldAcceptExtensionAction(actionSession: Any?, activeSession: Any?): Boolean =
     actionSession == null || actionSession === activeSession
+
+internal fun shouldActivateExtensionTab(active: Boolean?): Boolean = active != false
+
+internal fun extensionTabInsertionIndex(requestedIndex: Int?, tabCount: Int): Int =
+    requestedIndex?.coerceIn(0, tabCount) ?: tabCount
 
 class ExtensionRepository(
     private val context: Context
@@ -61,7 +81,9 @@ class ExtensionRepository(
     private val menuActionState = MutableStateFlow<Map<String, ExtensionMenuActionState>>(emptyMap())
     private val popupState = MutableStateFlow<ExtensionPopupState?>(null)
     private val newTabRequestState = MutableStateFlow<ExtensionNewTabRequest?>(null)
+    private val tabCommandRequestState = MutableStateFlow<ExtensionTabCommandRequest?>(null)
     private val menuActions = mutableMapOf<String, WebExtension.Action>()
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var activeMenuSession: GeckoSession? = null
     private var menuActionGeneration = 0L
 
@@ -73,8 +95,14 @@ class ExtensionRepository(
 
     fun observeNewTabRequests(): StateFlow<ExtensionNewTabRequest?> = newTabRequestState
 
+    fun observeTabCommandRequests(): StateFlow<ExtensionTabCommandRequest?> = tabCommandRequestState
+
     fun consumeNewTabRequest() {
         newTabRequestState.value = null
+    }
+
+    fun consumeTabCommandRequest() {
+        tabCommandRequestState.value = null
     }
 
     suspend fun refreshInstalledFromRuntime(): List<InstalledExtensionState> {
@@ -106,24 +134,87 @@ class ExtensionRepository(
         popupState.value = null
     }
 
-    private fun openExtensionTab(extension: WebExtension, url: String): GeckoSession {
+    private fun configureExtensionTabSession(session: GeckoSession, extension: WebExtension) {
+        session.webExtensionController.setTabDelegate(
+            extension,
+            object : WebExtension.SessionTabDelegate {
+                override fun onCloseTab(
+                    source: WebExtension?,
+                    session: GeckoSession
+                ): GeckoResult<AllowOrDeny> {
+                    val result = GeckoResult<AllowOrDeny>()
+                    tabCommandRequestState.value = ExtensionTabCommandRequest(
+                        command = ExtensionTabCommand.Close,
+                        session = session,
+                        closeResult = result
+                    )
+                    return result
+                }
+
+                override fun onUpdateTab(
+                    extension: WebExtension,
+                    session: GeckoSession,
+                    details: WebExtension.UpdateTabDetails
+                ): GeckoResult<AllowOrDeny> {
+                    if (details.active == true || details.highlighted == true) {
+                        tabCommandRequestState.value = ExtensionTabCommandRequest(
+                            command = ExtensionTabCommand.Activate,
+                            session = session
+                        )
+                    }
+                    return GeckoResult.fromValue(AllowOrDeny.ALLOW)
+                }
+            }
+        )
+    }
+
+    private fun createGeckoManagedExtensionTab(
+        extension: WebExtension,
+        url: String,
+        active: Boolean,
+        index: Int?
+    ): GeckoSession {
         val newSession = GeckoSession()
-        newSession.open(GeckoRuntimeProvider.get(context))
-        newSession.loadUri(url)
-        closePopup()
+        configureExtensionTabSession(newSession, extension)
         newTabRequestState.value = ExtensionNewTabRequest(
             guid = extension.id,
             title = extension.metaData.name ?: extension.id,
             url = url,
-            session = newSession
+            session = newSession,
+            active = active,
+            index = index
         )
         return newSession
     }
 
+    private fun openAppManagedExtensionTab(extension: WebExtension, url: String): GeckoSession {
+        closePopup()
+        return createGeckoManagedExtensionTab(
+            extension = extension,
+            url = url,
+            active = true,
+            index = null
+        ).also { session ->
+            session.open(GeckoRuntimeProvider.get(context))
+            session.loadUri(url)
+        }
+    }
+
     private fun configurePopupSession(popupSession: GeckoSession, extension: WebExtension) {
         popupSession.navigationDelegate = object : GeckoSession.NavigationDelegate {
-            override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession> =
-                GeckoResult.fromValue(openExtensionTab(extension, uri))
+            override fun onNewSession(
+                session: GeckoSession,
+                uri: String
+            ): GeckoResult<GeckoSession> {
+                val newSession = createGeckoManagedExtensionTab(
+                    extension = extension,
+                    url = uri,
+                    active = true,
+                    index = null
+                )
+                mainHandler.post(::closePopup)
+                return GeckoResult.fromValue(newSession)
+            }
 
             override fun onLoadRequest(
                 session: GeckoSession,
@@ -133,7 +224,7 @@ class ExtensionRepository(
                 val uriWithoutFragment = request.uri.substringBefore("#")
                 val optionsWithoutFragment = optionsPageUrl.substringBefore("#")
                 if (uriWithoutFragment == optionsWithoutFragment) {
-                    openExtensionTab(extension, request.uri)
+                    openAppManagedExtensionTab(extension, request.uri)
                     return GeckoResult.fromValue(AllowOrDeny.DENY)
                 }
                 return null
@@ -155,6 +246,7 @@ class ExtensionRepository(
                 }
             }
             listRuntimeExtensions().forEach { extension ->
+                configureExtensionTabSession(activeSession, extension)
                 extension.setTabDelegate(
                     object : WebExtension.TabDelegate {
                         override fun onNewTab(
@@ -164,12 +256,20 @@ class ExtensionRepository(
                             val url = createDetails.url?.takeIf { it.isNotBlank() }
                                 ?: extension.metaData.optionsPageUrl
                                 ?: extension.metaData.baseUrl
-                            return GeckoResult.fromValue(openExtensionTab(extension, url))
+                            closePopup()
+                            return GeckoResult.fromValue(
+                                createGeckoManagedExtensionTab(
+                                    extension = extension,
+                                    url = url,
+                                    active = shouldActivateExtensionTab(createDetails.active),
+                                    index = createDetails.index
+                                )
+                            )
                         }
 
                         override fun onOpenOptionsPage(extension: WebExtension) {
                             val url = extension.metaData.optionsPageUrl ?: return
-                            openExtensionTab(extension, url)
+                            openAppManagedExtensionTab(extension, url)
                         }
                     }
                 )
@@ -204,6 +304,7 @@ class ExtensionRepository(
                         ): GeckoResult<GeckoSession> {
                             val popupSession = GeckoSession()
                             configurePopupSession(popupSession, extension)
+                            configureExtensionTabSession(popupSession, extension)
                             popupSession.open(GeckoRuntimeProvider.get(context))
                             popupState.value = ExtensionPopupState(
                                 guid = extension.id,
