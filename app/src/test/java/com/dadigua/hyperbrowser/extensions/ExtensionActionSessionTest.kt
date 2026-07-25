@@ -11,6 +11,7 @@ class ExtensionActionSessionTest {
         val activeSession = Any()
 
         assertTrue(shouldAcceptExtensionAction(null, activeSession))
+        assertTrue(shouldAcceptExtensionAction(Any(), null))
         assertTrue(shouldAcceptExtensionAction(activeSession, activeSession))
     }
 
@@ -32,5 +33,23 @@ class ExtensionActionSessionTest {
         assertEquals(0, extensionTabInsertionIndex(-1, 3))
         assertEquals(1, extensionTabInsertionIndex(1, 3))
         assertEquals(3, extensionTabInsertionIndex(8, 3))
+    }
+
+    @Test
+    fun rejectsTabUpdatesThatTheHostCannotRepresent() {
+        assertTrue(supportsExtensionTabUpdate(null, null, null))
+        assertFalse(supportsExtensionTabUpdate(true, null, null))
+        assertFalse(supportsExtensionTabUpdate(null, true, null))
+        assertFalse(supportsExtensionTabUpdate(null, null, false))
+    }
+
+    @Test
+    fun acceptsOnlyDefaultNonSpecialExtensionTabs() {
+        assertTrue(supportsExtensionTabCreate(null, null, null, null))
+        assertTrue(supportsExtensionTabCreate("firefox-default", false, false, false))
+        assertFalse(supportsExtensionTabCreate("firefox-container-1", false, false, false))
+        assertFalse(supportsExtensionTabCreate(null, true, false, false))
+        assertFalse(supportsExtensionTabCreate(null, false, true, false))
+        assertFalse(supportsExtensionTabCreate(null, false, false, true))
     }
 }

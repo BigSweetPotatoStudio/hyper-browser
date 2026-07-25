@@ -40,6 +40,10 @@
             android:name=".browser.BrowserMediaActionReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".browser.WebNotificationDismissReceiver"
+            android:exported="false" />
+
         <service
             android:name=".browser.BrowserMediaPlaybackService"
             android:exported="false"

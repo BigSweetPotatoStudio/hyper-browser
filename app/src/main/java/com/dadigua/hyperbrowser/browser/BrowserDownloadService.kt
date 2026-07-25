@@ -16,6 +16,7 @@ import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
+import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.R
 import com.dadigua.hyperbrowser.gecko.GeckoDownloadRequest
 import com.dadigua.hyperbrowser.notification.notifyIfAllowed
@@ -47,7 +48,7 @@ class BrowserDownloadService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        store = DownloadStore(applicationContext)
+        store = (application as HyperBrowserApp).downloads
         notifications = NotificationManagerCompat.from(this)
         ensureNotificationChannel()
     }
@@ -93,7 +94,10 @@ class BrowserDownloadService : Service() {
                 } else {
                     store.markFailed(entry.id, throwable.message ?: "Download failed.")
                 }
-                store.observeDownloads().value.firstOrNull { it.id == entry.id }?.let { publishFinal(it) }
+                store.observeDownloads().value.firstOrNull { it.id == entry.id }?.let {
+                    WebExtensionDownloadRegistry.update(it)
+                    publishFinal(it)
+                }
             }
             calls.remove(entryId)
             jobs.remove(entryId)
@@ -138,7 +142,10 @@ class BrowserDownloadService : Service() {
         val entry = store.observeDownloads().value.firstOrNull { it.id == entryId }
         if (entry != null && (entry.status == DownloadStatus.Queued || entry.status == DownloadStatus.Running)) {
             store.markCanceled(entryId)
-            store.observeDownloads().value.firstOrNull { it.id == entryId }?.let { publishFinal(it) }
+            store.observeDownloads().value.firstOrNull { it.id == entryId }?.let {
+                WebExtensionDownloadRegistry.update(it)
+                publishFinal(it)
+            }
         }
         if (foregroundEntryId == entryId) {
             foregroundEntryId = null
@@ -187,16 +194,25 @@ class BrowserDownloadService : Service() {
                     val now = System.currentTimeMillis()
                     if (now - lastProgressAt > 250L) {
                         store.updateProgress(entry.id, bytesCopied, totalBytes)
-                        store.observeDownloads().value.firstOrNull { it.id == entry.id }?.let { publish(it) }
+                        store.observeDownloads().value.firstOrNull { it.id == entry.id }?.let {
+                            WebExtensionDownloadRegistry.update(it)
+                            publish(it)
+                        }
                         lastProgressAt = now
                     }
                     read = input.read(buffer)
                 }
             }
             target.finish()
-            val normalizedTotal = totalBytes.takeIf { it > 0L } ?: bytesCopied
+            val normalizedTotal = maxOf(
+                totalBytes.takeIf { it > 0L } ?: bytesCopied,
+                bytesCopied
+            )
             store.markCompleted(entry.id, savedUri.toString(), bytesCopied, normalizedTotal)
-            store.observeDownloads().value.firstOrNull { it.id == entry.id }?.let { publishFinal(it) }
+            store.observeDownloads().value.firstOrNull { it.id == entry.id }?.let {
+                WebExtensionDownloadRegistry.update(it)
+                publishFinal(it)
+            }
         }.getOrElse { throwable ->
             savedUri?.let { runCatching { contentResolver.delete(it, null, null) } }
             throw throwable

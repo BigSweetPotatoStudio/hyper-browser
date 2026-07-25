@@ -142,6 +142,17 @@ class DownloadStore(context: android.content.Context) {
         return current.size - next.size
     }
 
+    fun clearSince(since: Long): Int {
+        val current = state.value
+        val next = current.filter { entry ->
+            val active = entry.status == DownloadStatus.Queued || entry.status == DownloadStatus.Running
+            active || since > 0L && entry.createdAt < since
+        }
+        if (next.size == current.size) return 0
+        update(next)
+        return current.size - next.size
+    }
+
     private fun updateEntry(id: String, transform: (BrowserDownloadEntry) -> BrowserDownloadEntry) {
         val next = state.value.map { if (it.id == id) transform(it) else it }
         update(next)

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import com.dadigua.hyperbrowser.browser.BrowserProfileStore
 import com.dadigua.hyperbrowser.browser.BrowserSettings
+import com.dadigua.hyperbrowser.browser.BrowserWebNotificationController
 import com.dadigua.hyperbrowser.data.AtomicFileWriter
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.AllowOrDeny
@@ -30,6 +31,9 @@ object GeckoRuntimeProvider {
                     .configFilePath(ensureGeckoConfig(appContext, browserSettings).absolutePath)
                     .build()
             ).also { createdRuntime ->
+                createdRuntime.setWebNotificationDelegate(
+                    BrowserWebNotificationController(appContext)
+                )
                 createdRuntime.webExtensionController.promptDelegate =
                     object : WebExtensionController.PromptDelegate {
                         override fun onInstallPromptRequest(

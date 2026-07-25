@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import com.dadigua.hyperbrowser.HyperBrowserApp
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.mozilla.geckoview.AllowOrDeny
@@ -399,19 +400,41 @@ class GeckoSessionController(
         configureSession(session)
         registerBridgeHandler(session)
         applyWebsiteDisplayModeForUrl(initialUrl)
+        val initialSession = session
         if (existingSession == null) {
-            session.open(runtime)
-            HyperBridge.ensureInstalled(appContext) {
-                val restored = restoredSessionState?.takeIf { loadInitialUrl }?.let { state ->
-                    runCatching {
-                        session.restoreState(GeckoSession.SessionState(state))
-                        true
-                    }.getOrDefault(false)
-                } ?: false
-                if (!restored && loadInitialUrl) {
-                    load(initialUrl)
+            openAfterExtensionBinding(initialSession) {
+                HyperBridge.ensureInstalled(appContext) {
+                    val restored = restoredSessionState?.takeIf { loadInitialUrl }?.let { state ->
+                        runCatching {
+                            initialSession.restoreState(GeckoSession.SessionState(state))
+                            true
+                        }.getOrDefault(false)
+                    } ?: false
+                    if (session === initialSession && !restored && loadInitialUrl) {
+                        load(initialUrl)
+                    }
                 }
             }
+        } else {
+            (appContext as? HyperBrowserApp)?.extensions?.bindSession(initialSession)
+        }
+    }
+
+    private fun openAfterExtensionBinding(
+        targetSession: GeckoSession,
+        afterOpen: () -> Unit
+    ) {
+        val open = {
+            if (!targetSession.isOpen) {
+                targetSession.open(runtime)
+            }
+            afterOpen()
+        }
+        val app = appContext as? HyperBrowserApp
+        if (app == null) {
+            open()
+        } else {
+            app.extensions.bindSession(targetSession, open)
         }
     }
 
@@ -1419,6 +1442,7 @@ class GeckoSessionController(
         val preservePlayback = mediaNotifications.ownsActivePlayback(session)
         if (!preservePlayback) {
             HyperBridge.unregister(session)
+            (appContext as? HyperBrowserApp)?.extensions?.releaseSession(session)
             mediaNotifications.clearIfOwner(session)
             runCatching { session.close() }
         }
@@ -1426,13 +1450,16 @@ class GeckoSessionController(
         waitingForInitialLocation = true
         configureSession(session)
         registerBridgeHandler(session)
-        session.open(runtime)
-        view?.setSession(session)
-        _sessionChangeVersion.value = _sessionChangeVersion.value + 1
-        sessionCrashed = false
-        load(target)
-        if (!force) {
-            automaticRecoveryTarget = target
+        val recoveringSession = session
+        openAfterExtensionBinding(recoveringSession) {
+            if (session !== recoveringSession) return@openAfterExtensionBinding
+            view?.setSession(recoveringSession)
+            _sessionChangeVersion.value = _sessionChangeVersion.value + 1
+            sessionCrashed = false
+            load(target)
+            if (!force) {
+                automaticRecoveryTarget = target
+            }
         }
     }
 

@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.content.IntentCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -97,6 +98,7 @@ import com.dadigua.hyperbrowser.webapp.WebAppIconPresets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -108,6 +110,7 @@ import org.json.JSONObject
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.WebNotification
 import java.util.UUID
 
 private const val BROWSER_ACTIVITY_TAG = "BrowserActivity"
@@ -142,6 +145,7 @@ class BrowserActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        consumeWebNotificationIntent(intent)
         val initialIntent = intent.toExternalBrowserIntent()
         val initialUrl = if (initialIntent?.download == false && initialIntent.url != null) {
             initialIntent.url
@@ -150,7 +154,7 @@ class BrowserActivity : ComponentActivity() {
         }
         setContent {
             val app = application as HyperBrowserApp
-            val profileStore = remember { BrowserProfileStore(app) }
+            val profileStore = remember { app.profileStore }
             HyperBrowserTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     BrowserScreen(
@@ -171,7 +175,9 @@ class BrowserActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        intent.toExternalBrowserIntent()?.let { externalIntents.tryEmit(it) }
+        if (!consumeWebNotificationIntent(intent)) {
+            intent.toExternalBrowserIntent()?.let { externalIntents.tryEmit(it) }
+        }
     }
 
     override fun onResume() {
@@ -184,11 +190,30 @@ class BrowserActivity : ComponentActivity() {
         BrowserMediaNotificationController.get(this).allowBackgroundPlaybackResume()
     }
 
+    private fun consumeWebNotificationIntent(intent: Intent): Boolean {
+        val notification = IntentCompat.getParcelableExtra(
+            intent,
+            EXTRA_WEB_NOTIFICATION,
+            WebNotification::class.java
+        ) ?: return false
+        val action = intent.getStringExtra(EXTRA_WEB_NOTIFICATION_ACTION)
+        if (action.isNullOrBlank()) {
+            notification.click()
+        } else {
+            notification.click(action)
+        }
+        intent.removeExtra(EXTRA_WEB_NOTIFICATION)
+        intent.removeExtra(EXTRA_WEB_NOTIFICATION_ACTION)
+        return true
+    }
+
     companion object {
         const val EXTRA_URL = "extra_url"
         const val EXTRA_SHOW_DOWNLOADS = "extra_show_downloads"
         const val EXTRA_SELECT_TAB_ID = "extra_select_tab_id"
         const val EXTRA_OPEN_IN_NEW_TAB = "extra_open_in_new_tab"
+        private const val EXTRA_WEB_NOTIFICATION = "extra_web_notification"
+        private const val EXTRA_WEB_NOTIFICATION_ACTION = "extra_web_notification_action"
 
         fun intent(context: Context, url: String): Intent =
             Intent(context, BrowserActivity::class.java).putExtra(EXTRA_URL, url)
@@ -208,6 +233,24 @@ class BrowserActivity : ComponentActivity() {
             Intent(context, BrowserActivity::class.java)
                 .putExtra(EXTRA_SHOW_DOWNLOADS, true)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+
+        fun webNotificationIntent(
+            context: Context,
+            notification: WebNotification,
+            action: String?
+        ): Intent =
+            Intent(context, BrowserActivity::class.java)
+                .putExtra(EXTRA_WEB_NOTIFICATION, notification)
+                .apply {
+                    if (!action.isNullOrBlank()) {
+                        putExtra(EXTRA_WEB_NOTIFICATION_ACTION, action)
+                    }
+                }
+                .addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
     }
 }
 
@@ -268,7 +311,7 @@ private fun BrowserScreen(
     val faviconStore = remember { FaviconRepository(app) }
     val backupManager = remember { BrowserBackupManager(profileStore, app.webApps) }
     val webDavLocalSyncAdapter = remember { WebDavLocalSyncAdapter(profileStore, app.webApps) }
-    val downloadStore = remember { DownloadStore(app) }
+    val downloadStore = remember { app.downloads }
     val downloadHandler = remember { DownloadHandler(app, downloadStore) }
     val updateManager = remember { AppUpdateManager(app, UpdateSettingsStore(app)) }
     val scope = rememberCoroutineScope()
@@ -1141,8 +1184,6 @@ private fun BrowserScreen(
     val installedExtensions by app.extensions.observeInstalled().collectAsState()
     val extensionActions by app.extensions.observeMenuActions().collectAsState()
     val extensionPopup by app.extensions.observePopup().collectAsState()
-    val extensionNewTabRequest by app.extensions.observeNewTabRequests().collectAsState()
-    val extensionTabCommandRequest by app.extensions.observeTabCommandRequests().collectAsState()
     var extensionQuery by remember { mutableStateOf("ublock") }
     var extensionResults by remember { mutableStateOf<List<AmoAddonListing>>(emptyList()) }
     var extensionMessage by remember { mutableStateOf<String?>(null) }
@@ -1710,8 +1751,8 @@ private fun BrowserScreen(
         runCatching { app.extensions.refreshMenuActions(controller.session) }
     }
 
-    LaunchedEffect(extensionNewTabRequest) {
-        extensionNewTabRequest?.let { request ->
+    LaunchedEffect(app.extensions) {
+        app.extensions.observeNewTabRequests().collect { request ->
             val newTab = BrowserTabRuntime.fromExtensionRequest(
                 app = app,
                 request = request,
@@ -1731,12 +1772,11 @@ private fun BrowserScreen(
             }
             closePanel()
             message = "Opened ${request.title}."
-            app.extensions.consumeNewTabRequest()
         }
     }
 
-    LaunchedEffect(extensionTabCommandRequest) {
-        extensionTabCommandRequest?.let { request ->
+    LaunchedEffect(app.extensions) {
+        app.extensions.observeTabCommandRequests().collect { request ->
             val targetTab = tabs.firstOrNull { it.controller?.session === request.session }
             when (request.command) {
                 ExtensionTabCommand.Activate -> {
@@ -1755,7 +1795,6 @@ private fun BrowserScreen(
                     }
                 }
             }
-            app.extensions.consumeTabCommandRequest()
         }
     }
 

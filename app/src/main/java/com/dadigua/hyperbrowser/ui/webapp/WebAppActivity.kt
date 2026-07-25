@@ -158,7 +158,7 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
     val linkCopiedText = stringResource(R.string.browser_toast_link_copied)
     val openImageInBrowserLabel = stringResource(R.string.browser_context_open_image_browser)
     val openLinkInBrowserLabel = stringResource(R.string.browser_context_open_link_browser)
-    val downloadStore = remember { DownloadStore(app) }
+    val downloadStore = remember { app.downloads }
     val downloadHandler = remember { DownloadHandler(app, downloadStore) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -322,7 +322,11 @@ private fun WebAppScreen(activity: WebAppActivity, app: HyperBrowserApp, webAppI
     }
 
     DisposableEffect(current.id) {
-        onDispose { controller.close(closeActivePlayback = false) }
+        app.extensions.bindSession(controller.session)
+        onDispose {
+            app.extensions.releaseSession(controller.session)
+            controller.close(closeActivePlayback = false)
+        }
     }
 
     BackHandler {

@@ -29,7 +29,11 @@ class DownloadHandler(context: Context, private val store: DownloadStore) {
         store.refreshFromDisk()
     }
 
-    suspend fun saveResponse(request: GeckoDownloadRequest, showNotification: Boolean): BrowserDownloadEntry =
+    suspend fun saveResponse(
+        request: GeckoDownloadRequest,
+        showNotification: Boolean,
+        onPrepared: (BrowserDownloadEntry) -> Unit = {}
+    ): BrowserDownloadEntry =
         withContext(Dispatchers.IO) {
             val entry = store.create(
                 name = safeFileName(request.fileName),
@@ -37,6 +41,7 @@ class DownloadHandler(context: Context, private val store: DownloadStore) {
                 status = DownloadStatus.Queued,
                 totalBytes = request.contentLength
             )
+            onPrepared(entry)
             BrowserDownloadQueue.putGeckoRequest(entry.id, request)
             ContextCompat.startForegroundService(appContext, BrowserDownloadService.geckoIntent(appContext, entry.id))
             entry

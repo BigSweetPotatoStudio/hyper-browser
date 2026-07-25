@@ -4,12 +4,16 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import com.dadigua.hyperbrowser.HyperBrowserApp
 import com.dadigua.hyperbrowser.data.AtomicFileWriter
 import com.dadigua.hyperbrowser.data.InstalledExtensionState
 import com.dadigua.hyperbrowser.gecko.GeckoRuntimeProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -21,7 +25,10 @@ import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.WebExtension
+import org.mozilla.geckoview.WebExtensionController
 import java.io.File
+import java.util.Collections
+import java.util.WeakHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -61,12 +68,29 @@ data class ExtensionTabCommandRequest(
 )
 
 internal fun shouldAcceptExtensionAction(actionSession: Any?, activeSession: Any?): Boolean =
-    actionSession == null || actionSession === activeSession
+    actionSession == null || activeSession == null || actionSession === activeSession
 
 internal fun shouldActivateExtensionTab(active: Boolean?): Boolean = active != false
 
 internal fun extensionTabInsertionIndex(requestedIndex: Int?, tabCount: Int): Int =
     requestedIndex?.coerceIn(0, tabCount) ?: tabCount
+
+internal fun supportsExtensionTabUpdate(
+    muted: Boolean?,
+    pinned: Boolean?,
+    autoDiscardable: Boolean?
+): Boolean = muted == null && pinned == null && autoDiscardable == null
+
+internal fun supportsExtensionTabCreate(
+    cookieStoreId: String?,
+    discarded: Boolean?,
+    openInReaderMode: Boolean?,
+    pinned: Boolean?
+): Boolean =
+    (cookieStoreId == null || cookieStoreId == "firefox-default") &&
+        discarded != true &&
+        openInReaderMode != true &&
+        pinned != true
 
 class ExtensionRepository(
     private val context: Context
@@ -80,12 +104,33 @@ class ExtensionRepository(
     private val installedState = MutableStateFlow(loadInstalled())
     private val menuActionState = MutableStateFlow<Map<String, ExtensionMenuActionState>>(emptyMap())
     private val popupState = MutableStateFlow<ExtensionPopupState?>(null)
-    private val newTabRequestState = MutableStateFlow<ExtensionNewTabRequest?>(null)
-    private val tabCommandRequestState = MutableStateFlow<ExtensionTabCommandRequest?>(null)
+    private val newTabRequests = Channel<ExtensionNewTabRequest>(Channel.UNLIMITED)
+    private val tabCommandRequests = Channel<ExtensionTabCommandRequest>(Channel.UNLIMITED)
+    private val downloadController = ExtensionDownloadController(context)
+    private val browsingDataDelegate = createBrowsingDataDelegate()
     private val menuActions = mutableMapOf<String, WebExtension.Action>()
+    private val boundSessions = Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
     private val mainHandler = Handler(Looper.getMainLooper())
     private var activeMenuSession: GeckoSession? = null
     private var menuActionGeneration = 0L
+
+    init {
+        val initialize: () -> Unit = {
+            val controller = GeckoRuntimeProvider.get(context).webExtensionController
+            controller.setAddonManagerDelegate(createAddonManagerDelegate())
+            controller.list().accept(
+                { extensions ->
+                    extensions.orEmpty().forEach(::configureExtensionAndSessions)
+                },
+                { }
+            )
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            initialize()
+        } else {
+            mainHandler.post(initialize)
+        }
+    }
 
     fun observeInstalled(): StateFlow<List<InstalledExtensionState>> = installedState
 
@@ -93,17 +138,9 @@ class ExtensionRepository(
 
     fun observePopup(): StateFlow<ExtensionPopupState?> = popupState
 
-    fun observeNewTabRequests(): StateFlow<ExtensionNewTabRequest?> = newTabRequestState
+    fun observeNewTabRequests(): Flow<ExtensionNewTabRequest> = newTabRequests.receiveAsFlow()
 
-    fun observeTabCommandRequests(): StateFlow<ExtensionTabCommandRequest?> = tabCommandRequestState
-
-    fun consumeNewTabRequest() {
-        newTabRequestState.value = null
-    }
-
-    fun consumeTabCommandRequest() {
-        tabCommandRequestState.value = null
-    }
+    fun observeTabCommandRequests(): Flow<ExtensionTabCommandRequest> = tabCommandRequests.receiveAsFlow()
 
     suspend fun refreshInstalledFromRuntime(): List<InstalledExtensionState> {
         val runtimeExtensions = withContext(Dispatchers.Main.immediate) {
@@ -130,11 +167,45 @@ class ExtensionRepository(
     }
 
     fun closePopup() {
-        popupState.value?.session?.close()
+        popupState.value?.session?.let { session ->
+            session.close()
+            releaseSession(session)
+        }
         popupState.value = null
     }
 
-    private fun configureExtensionTabSession(session: GeckoSession, extension: WebExtension) {
+    fun bindSession(session: GeckoSession, onBound: () -> Unit = {}) {
+        val bind: () -> Unit = {
+            boundSessions.add(session)
+            GeckoRuntimeProvider.get(context).webExtensionController.list().accept(
+                { extensions ->
+                    extensions.orEmpty().forEach { extension ->
+                        configureExtension(extension)
+                        configureExtensionSession(session, extension)
+                    }
+                    onBound()
+                },
+                { onBound() }
+            )
+            Unit
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            bind()
+        } else {
+            mainHandler.post(bind)
+        }
+    }
+
+    fun releaseSession(session: GeckoSession) {
+        mainHandler.post {
+            boundSessions.remove(session)
+            if (activeMenuSession === session) {
+                activeMenuSession = null
+            }
+        }
+    }
+
+    private fun configureExtensionSession(session: GeckoSession, extension: WebExtension) {
         session.webExtensionController.setTabDelegate(
             extension,
             object : WebExtension.SessionTabDelegate {
@@ -143,11 +214,16 @@ class ExtensionRepository(
                     session: GeckoSession
                 ): GeckoResult<AllowOrDeny> {
                     val result = GeckoResult<AllowOrDeny>()
-                    tabCommandRequestState.value = ExtensionTabCommandRequest(
-                        command = ExtensionTabCommand.Close,
-                        session = session,
-                        closeResult = result
+                    val queued = tabCommandRequests.trySend(
+                        ExtensionTabCommandRequest(
+                            command = ExtensionTabCommand.Close,
+                            session = session,
+                            closeResult = result
+                        )
                     )
+                    if (queued.isFailure) {
+                        result.complete(AllowOrDeny.DENY)
+                    }
                     return result
                 }
 
@@ -156,16 +232,22 @@ class ExtensionRepository(
                     session: GeckoSession,
                     details: WebExtension.UpdateTabDetails
                 ): GeckoResult<AllowOrDeny> {
+                    if (!supportsExtensionTabUpdate(details.muted, details.pinned, details.autoDiscardable)) {
+                        return GeckoResult.fromValue(AllowOrDeny.DENY)
+                    }
                     if (details.active == true || details.highlighted == true) {
-                        tabCommandRequestState.value = ExtensionTabCommandRequest(
-                            command = ExtensionTabCommand.Activate,
-                            session = session
+                        tabCommandRequests.trySend(
+                            ExtensionTabCommandRequest(
+                                command = ExtensionTabCommand.Activate,
+                                session = session
+                            )
                         )
                     }
                     return GeckoResult.fromValue(AllowOrDeny.ALLOW)
                 }
             }
         )
+        session.webExtensionController.setActionDelegate(extension, createActionDelegate())
     }
 
     private fun createGeckoManagedExtensionTab(
@@ -175,14 +257,17 @@ class ExtensionRepository(
         index: Int?
     ): GeckoSession {
         val newSession = GeckoSession()
-        configureExtensionTabSession(newSession, extension)
-        newTabRequestState.value = ExtensionNewTabRequest(
-            guid = extension.id,
-            title = extension.metaData.name ?: extension.id,
-            url = url,
-            session = newSession,
-            active = active,
-            index = index
+        boundSessions.add(newSession)
+        configureExtensionSession(newSession, extension)
+        newTabRequests.trySend(
+            ExtensionNewTabRequest(
+                guid = extension.id,
+                title = extension.metaData.name ?: extension.id,
+                url = url,
+                session = newSession,
+                active = active,
+                index = index
+            )
         )
         return newSession
     }
@@ -232,6 +317,176 @@ class ExtensionRepository(
         }
     }
 
+    private fun configureExtension(extension: WebExtension) {
+        extension.setTabDelegate(
+            object : WebExtension.TabDelegate {
+                override fun onNewTab(
+                    extension: WebExtension,
+                    createDetails: WebExtension.CreateTabDetails
+                ): GeckoResult<GeckoSession> {
+                    if (
+                        !supportsExtensionTabCreate(
+                            createDetails.cookieStoreId,
+                            createDetails.discarded,
+                            createDetails.openInReaderMode,
+                            createDetails.pinned
+                        )
+                    ) {
+                        return GeckoResult.fromException(
+                            UnsupportedOperationException(
+                                "Pinned, discarded, reader-mode, and container extension tabs are unsupported."
+                            )
+                        )
+                    }
+                    val url = createDetails.url?.takeIf { it.isNotBlank() }
+                        ?: extension.metaData.optionsPageUrl
+                        ?: extension.metaData.baseUrl
+                    closePopup()
+                    return GeckoResult.fromValue(
+                        createGeckoManagedExtensionTab(
+                            extension = extension,
+                            url = url,
+                            active = shouldActivateExtensionTab(createDetails.active),
+                            index = createDetails.index
+                        )
+                    )
+                }
+
+                override fun onOpenOptionsPage(extension: WebExtension) {
+                    val url = extension.metaData.optionsPageUrl ?: return
+                    openAppManagedExtensionTab(extension, url)
+                }
+            }
+        )
+        extension.setActionDelegate(createActionDelegate())
+        extension.setDownloadDelegate(downloadController)
+        extension.setBrowsingDataDelegate(browsingDataDelegate)
+    }
+
+    private fun createBrowsingDataDelegate(): WebExtension.BrowsingDataDelegate =
+        object : WebExtension.BrowsingDataDelegate {
+            private val supportedTypes =
+                WebExtension.BrowsingDataDelegate.Type.HISTORY or
+                    WebExtension.BrowsingDataDelegate.Type.DOWNLOADS
+
+            override fun onGetSettings(): GeckoResult<WebExtension.BrowsingDataDelegate.Settings> =
+                GeckoResult.fromValue(
+                    WebExtension.BrowsingDataDelegate.Settings(
+                        0,
+                        supportedTypes,
+                        supportedTypes
+                    )
+                )
+
+            override fun onClearHistory(since: Long): GeckoResult<Void> {
+                (context.applicationContext as HyperBrowserApp).profileStore.clearHistorySince(since)
+                return GeckoResult.fromValue(null)
+            }
+
+            override fun onClearDownloads(since: Long): GeckoResult<Void> {
+                (context.applicationContext as HyperBrowserApp).downloads.clearSince(since)
+                return GeckoResult.fromValue(null)
+            }
+        }
+
+    private fun configureExtensionAndSessions(extension: WebExtension) {
+        configureExtension(extension)
+        boundSessions.toList().forEach { session ->
+            configureExtensionSession(session, extension)
+        }
+    }
+
+    private fun createAddonManagerDelegate(): WebExtensionController.AddonManagerDelegate =
+        object : WebExtensionController.AddonManagerDelegate {
+            override fun onOptionalPermissionsChanged(extension: WebExtension) {
+                updateInstalledFromLifecycle(extension)
+            }
+
+            override fun onDisabled(extension: WebExtension) {
+                updateInstalledFromLifecycle(extension)
+            }
+
+            override fun onEnabled(extension: WebExtension) {
+                configureExtensionAndSessions(extension)
+                updateInstalledFromLifecycle(extension)
+            }
+
+            override fun onUninstalled(extension: WebExtension) {
+                saveInstalled(installedState.value.filterNot { it.guid == extension.id })
+                menuActions.remove(extension.id)
+                menuActionState.value = menuActionState.value - extension.id
+            }
+
+            override fun onInstalled(extension: WebExtension) {
+                configureExtensionAndSessions(extension)
+                updateInstalledFromLifecycle(extension)
+            }
+
+            override fun onReady(extension: WebExtension) {
+                configureExtensionAndSessions(extension)
+                updateInstalledFromLifecycle(extension)
+            }
+        }
+
+    private fun updateInstalledFromLifecycle(extension: WebExtension) {
+        if (extension.isBuiltIn || extension.id == INTERNAL_EXTENSION_ID) return
+        val existing = installedState.value.firstOrNull { it.guid == extension.id }
+        upsertInstalled(extension.toInstalledState(existing))
+    }
+
+    private fun createActionDelegate(): WebExtension.ActionDelegate =
+        object : WebExtension.ActionDelegate {
+            override fun onBrowserAction(
+                extension: WebExtension,
+                session: GeckoSession?,
+                action: WebExtension.Action
+            ) {
+                if (shouldAcceptExtensionAction(session, activeMenuSession)) {
+                    updateMenuAction(extension, action)
+                }
+            }
+
+            override fun onPageAction(
+                extension: WebExtension,
+                session: GeckoSession?,
+                action: WebExtension.Action
+            ) {
+                if (
+                    action.enabled == true &&
+                    shouldAcceptExtensionAction(session, activeMenuSession)
+                ) {
+                    updateMenuAction(extension, action)
+                }
+            }
+
+            override fun onOpenPopup(
+                extension: WebExtension,
+                action: WebExtension.Action
+            ): GeckoResult<GeckoSession> {
+                val popupSession = GeckoSession()
+                boundSessions.add(popupSession)
+                configurePopupSession(popupSession, extension)
+                configureExtensionSession(popupSession, extension)
+                popupSession.open(GeckoRuntimeProvider.get(context))
+                popupState.value = ExtensionPopupState(
+                    guid = extension.id,
+                    title = action.title?.takeIf { it.isNotBlank() }
+                        ?: extension.metaData.name
+                        ?: extension.id,
+                    session = popupSession
+                )
+                return GeckoResult.fromValue(popupSession)
+            }
+
+            override fun onTogglePopup(
+                extension: WebExtension,
+                action: WebExtension.Action
+            ): GeckoResult<GeckoSession> {
+                closePopup()
+                return onOpenPopup(extension, action)
+            }
+        }
+
     suspend fun refreshMenuActions(activeSession: GeckoSession) {
         withContext(Dispatchers.Main.immediate) {
             val controller = GeckoRuntimeProvider.get(context).webExtensionController
@@ -239,93 +494,19 @@ class ExtensionRepository(
             if (previousSession !== activeSession) {
                 activeMenuSession = activeSession
                 menuActionGeneration += 1
-                menuActions.clear()
-                menuActionState.value = emptyMap()
+                if (previousSession != null) {
+                    menuActions.clear()
+                    menuActionState.value = emptyMap()
+                }
                 previousSession?.let { session ->
                     runCatching { controller.setTabActive(session, false) }
                 }
             }
             listRuntimeExtensions().forEach { extension ->
-                configureExtensionTabSession(activeSession, extension)
-                extension.setTabDelegate(
-                    object : WebExtension.TabDelegate {
-                        override fun onNewTab(
-                            extension: WebExtension,
-                            createDetails: WebExtension.CreateTabDetails
-                        ): GeckoResult<GeckoSession> {
-                            val url = createDetails.url?.takeIf { it.isNotBlank() }
-                                ?: extension.metaData.optionsPageUrl
-                                ?: extension.metaData.baseUrl
-                            closePopup()
-                            return GeckoResult.fromValue(
-                                createGeckoManagedExtensionTab(
-                                    extension = extension,
-                                    url = url,
-                                    active = shouldActivateExtensionTab(createDetails.active),
-                                    index = createDetails.index
-                                )
-                            )
-                        }
-
-                        override fun onOpenOptionsPage(extension: WebExtension) {
-                            val url = extension.metaData.optionsPageUrl ?: return
-                            openAppManagedExtensionTab(extension, url)
-                        }
-                    }
-                )
-                extension.setActionDelegate(
-                    object : WebExtension.ActionDelegate {
-                        override fun onBrowserAction(
-                            extension: WebExtension,
-                            session: GeckoSession?,
-                            action: WebExtension.Action
-                        ) {
-                            if (shouldAcceptExtensionAction(session, activeMenuSession)) {
-                                updateMenuAction(extension, action)
-                            }
-                        }
-
-                        override fun onPageAction(
-                            extension: WebExtension,
-                            session: GeckoSession?,
-                            action: WebExtension.Action
-                        ) {
-                            if (
-                                action.enabled == true &&
-                                shouldAcceptExtensionAction(session, activeMenuSession)
-                            ) {
-                                updateMenuAction(extension, action)
-                            }
-                        }
-
-                        override fun onOpenPopup(
-                            extension: WebExtension,
-                            action: WebExtension.Action
-                        ): GeckoResult<GeckoSession> {
-                            val popupSession = GeckoSession()
-                            configurePopupSession(popupSession, extension)
-                            configureExtensionTabSession(popupSession, extension)
-                            popupSession.open(GeckoRuntimeProvider.get(context))
-                            popupState.value = ExtensionPopupState(
-                                guid = extension.id,
-                                title = action.title?.takeIf { it.isNotBlank() }
-                                    ?: extension.metaData.name
-                                    ?: extension.id,
-                                session = popupSession
-                            )
-                            return GeckoResult.fromValue(popupSession)
-                        }
-
-                        override fun onTogglePopup(
-                            extension: WebExtension,
-                            action: WebExtension.Action
-                        ): GeckoResult<GeckoSession> {
-                            closePopup()
-                            return onOpenPopup(extension, action)
-                        }
-                    }
-                )
+                configureExtension(extension)
+                configureExtensionSession(activeSession, extension)
             }
+            boundSessions.add(activeSession)
             controller.setTabActive(activeSession, true)
         }
     }

@@ -139,11 +139,13 @@ internal class BrowserTabRuntime private constructor(
     }
 
     fun close(closeActivePlayback: Boolean = true) {
+        val closingSession = controller?.session
         val result = controller?.close(closeActivePlayback) ?: GeckoSessionCloseResult.Closed
         if (closeActivePlayback) {
             closeDetachedPlaybackForOwner()
         }
         if (result == GeckoSessionCloseResult.Closed) {
+            closingSession?.let(app.extensions::releaseSession)
             controller = null
         }
     }
