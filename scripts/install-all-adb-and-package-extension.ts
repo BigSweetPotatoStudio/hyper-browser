@@ -1,5 +1,5 @@
 #!/usr/bin/env zx
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { $, cd, chalk, usePowerShell } from "zx";
@@ -16,6 +16,11 @@ type ScriptOptions = {
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const apkOutputDir = join(repoRoot, "app", "build", "outputs", "apk", "debug");
 const packageName = "com.dadigua.hyperbrowser";
+const isWsl = process.platform === "linux" && (
+  Boolean(process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) ||
+  readFileSync("/proc/sys/kernel/osrelease", "utf8").toLowerCase().includes("microsoft")
+);
+const adbCommand = isWsl ? "adb.exe" : "adb";
 
 $.verbose = true;
 if (process.platform === "win32") {
@@ -54,7 +59,7 @@ async function requireCommand(name: string): Promise<void> {
 }
 
 async function getAdbDevices(): Promise<string[]> {
-  const output = await $({ quiet: true })`adb devices`;
+  const output = await $({ quiet: true })`${adbCommand} devices`;
   return output.stdout
     .split(/\r?\n/)
     .slice(1)
@@ -63,7 +68,7 @@ async function getAdbDevices(): Promise<string[]> {
 }
 
 async function getApkForDevice(device: string): Promise<string> {
-  const abiOutput = await $({ quiet: true })`adb -s ${device} shell getprop ro.product.cpu.abi`;
+  const abiOutput = await $({ quiet: true })`${adbCommand} -s ${device} shell getprop ro.product.cpu.abi`;
   const abi = abiOutput.stdout.trim();
   const apk = abi === "x86_64"
     ? join(apkOutputDir, "app-x86_64-debug.apk")
@@ -78,6 +83,19 @@ async function getApkForDevice(device: string): Promise<string> {
     throw new Error(`APK not found for device '${device}': ${apk}`);
   }
   return apk;
+}
+
+async function getAdbInstallPath(apk: string): Promise<string> {
+  if (!isWsl) {
+    return apk;
+  }
+
+  const output = await $({ quiet: true })`wslpath -w ${apk}`;
+  const windowsPath = output.stdout.trim();
+  if (!windowsPath) {
+    throw new Error(`Could not convert APK path for Windows ADB: ${apk}`);
+  }
+  return windowsPath;
 }
 
 async function buildAndroidDebug(): Promise<void> {
@@ -97,12 +115,13 @@ async function installAndroidOnAllDevices(launchAfterInstall: boolean): Promise<
 
   for (const device of devices) {
     const apk = await getApkForDevice(device);
+    const installPath = await getAdbInstallPath(apk);
     console.log(`Installing ${apk} on ${device}`);
-    await $`adb -s ${device} install -r ${apk}`;
+    await $`${adbCommand} -s ${device} install -r ${installPath}`;
 
     if (launchAfterInstall) {
       console.log(`Launching ${packageName} on ${device}`);
-      await $`adb -s ${device} shell monkey -p ${packageName} 1`;
+      await $`${adbCommand} -s ${device} shell monkey -p ${packageName} 1`;
     }
   }
 }
@@ -140,7 +159,8 @@ async function main(): Promise<void> {
     await requireCommand("pnpm");
   }
   if (!options.skipAndroidInstall) {
-    await requireCommand("adb");
+    await requireCommand(adbCommand);
+    console.log(`Using ${isWsl ? "Windows ADB from WSL" : "ADB"}: ${adbCommand}`);
   }
 
   if (!options.skipAndroidBuild) {
