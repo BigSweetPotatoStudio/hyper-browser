@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.AddToHomeScreen
+import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.Add
@@ -73,11 +74,14 @@ internal fun BrowserMenuPanel(
     temporaryWebsiteDisplayMode: String?,
     displayModeExpanded: Boolean,
     onDisplayModeExpandedChange: (Boolean) -> Unit,
+    readerModeAvailable: Boolean,
+    readerModeActive: Boolean,
     onBack: () -> Unit,
     onForward: () -> Unit,
     onReload: () -> Unit,
     onTemporaryWebsiteDisplayModeChange: (String) -> Unit,
     onToggleBookmark: () -> Unit,
+    onToggleReaderMode: () -> Unit,
     onFindInPage: () -> Unit,
     onShowBookmarks: () -> Unit,
     onShowHistory: () -> Unit,
@@ -130,6 +134,15 @@ internal fun BrowserMenuPanel(
                         onSelect = onTemporaryWebsiteDisplayModeChange
                     )
                 }
+            }
+            if (readerModeAvailable || readerModeActive) {
+                BrowserMenuRow(
+                    label = stringResource(
+                        if (readerModeActive) R.string.menu_exit_reader_mode else R.string.menu_reader_mode
+                    ),
+                    leadingIconVector = Icons.AutoMirrored.Outlined.Article,
+                    onClick = onToggleReaderMode
+                )
             }
             BrowserMenuRow(
                 label = stringResource(R.string.menu_find_in_page),

@@ -380,6 +380,8 @@ class GeckoSessionController(
     private val runtime = GeckoRuntimeProvider.get(context)
     private val _state = MutableStateFlow(pageStateForUrl(initialUrl))
     private val _fullScreen = MutableStateFlow(false)
+    private val _readerModeActive = MutableStateFlow(false)
+    private var readerModeDesired = false
     private val _sessionChangeVersion = MutableStateFlow(0)
     private var currentRawUrl: String = initialUrl
     private var lastLoadTarget: String = initialUrl
@@ -394,6 +396,7 @@ class GeckoSessionController(
     private var pullRefreshGestureStartedAt = 0L
     val state: StateFlow<GeckoPageState> = _state
     val fullScreen: StateFlow<Boolean> = _fullScreen
+    val readerModeActive: StateFlow<Boolean> = _readerModeActive
     val sessionChangeVersion: StateFlow<Int> = _sessionChangeVersion
 
     init {
@@ -851,6 +854,7 @@ class GeckoSessionController(
             override fun onPageStart(session: GeckoSession, url: String) {
                 applyWebsiteDisplayModeForUrl(semanticUrlForRawUrl(url))
                 resetContentTouchState()
+                _readerModeActive.value = false
                 _state.value = _state.value.copy(isLoading = true, loadProgress = 0)
             }
 
@@ -1087,6 +1091,38 @@ class GeckoSessionController(
             .onFailure { recoverSession(force = true) }
     }
 
+    fun toggleReaderMode(): GeckoResult<Boolean> =
+        sendReaderCommand("reader.toggle")
+
+    fun exitReaderMode(): GeckoResult<Boolean> =
+        sendReaderCommand("reader.exit")
+
+    private fun sendReaderCommand(type: String): GeckoResult<Boolean> {
+        val result = GeckoResult<Boolean>()
+        HyperBridge.sendSessionCommand(session, type)
+            .accept(
+                { response ->
+                    val active = response
+                        ?.optJSONObject("data")
+                        ?.optBoolean("active", false)
+                        ?: false
+                    _readerModeActive.value = active
+                    readerModeDesired = when (type) {
+                        "reader.exit" -> false
+                        "reader.toggle" -> active
+                        else -> readerModeDesired && active
+                    }
+                    result.complete(active)
+                },
+                { throwable ->
+                    result.completeExceptionally(
+                        throwable ?: IllegalStateException("reader.failed")
+                    )
+                }
+            )
+        return result
+    }
+
     fun findInPage(
         searchString: String?,
         backwards: Boolean = false,
@@ -1321,6 +1357,35 @@ class GeckoSessionController(
                         .put("ok", true)
                         .put("data", org.json.JSONObject().put("enabled", enabled))
                 )
+            }
+            "reader.state" -> {
+                val active = payload.optBoolean("active", false)
+                _readerModeActive.value = active
+                readerModeDesired = active
+                return bridgeResult(org.json.JSONObject().put("ok", true))
+            }
+            "reader.ready" -> {
+                if (readerModeDesired && ownerSession === session) {
+                    mainHandler.post {
+                        if (!readerModeDesired || ownerSession !== session) return@post
+                        HyperBridge.sendSessionCommand(ownerSession, "reader.open")
+                            .accept(
+                                { response ->
+                                    val active = response
+                                        ?.optJSONObject("data")
+                                        ?.optBoolean("active", false)
+                                        ?: false
+                                    _readerModeActive.value = active
+                                    if (!active) readerModeDesired = false
+                                },
+                                {
+                                    _readerModeActive.value = false
+                                    readerModeDesired = false
+                                }
+                            )
+                    }
+                }
+                return bridgeResult(org.json.JSONObject().put("ok", true))
             }
         }
         return onHyperBridgeMessage?.invoke(message)

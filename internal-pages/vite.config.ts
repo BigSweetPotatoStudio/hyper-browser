@@ -4,7 +4,19 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   base: "./",
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "wrap-reader-content-iife",
+      generateBundle(_options, bundle) {
+        Object.values(bundle).forEach((output) => {
+          if (output.type === "chunk" && output.isEntry && output.name === "reader-content") {
+            output.code = `(() => {\n${output.code}\n})();\n`;
+          }
+        });
+      },
+    },
+  ],
   publicDir: "public",
   resolve: {
     alias: {
@@ -25,7 +37,13 @@ export default defineConfig({
     rollupOptions: {
       input: {
         background: resolve(__dirname, "background.html"),
-        home: resolve(__dirname, "home.html")
+        home: resolve(__dirname, "home.html"),
+        "reader-content": resolve(__dirname, "src/reader-content.ts")
+      },
+      output: {
+        entryFileNames: (chunk) => chunk.name === "reader-content"
+          ? "reader-content.js"
+          : "internal/[name]-[hash].js"
       }
     }
   }

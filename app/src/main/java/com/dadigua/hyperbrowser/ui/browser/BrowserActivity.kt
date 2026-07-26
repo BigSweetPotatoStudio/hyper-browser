@@ -1176,6 +1176,7 @@ private fun BrowserScreen(
     val controller = tab.ensureController()
     val pageState by controller.state.collectAsState()
     val pageFullScreen by controller.fullScreen.collectAsState()
+    val readerModeActive by controller.readerModeActive.collectAsState()
     val history by profileStore.observeHistory().collectAsState()
     val bookmarks by profileStore.observeBookmarks().collectAsState()
     val downloads by downloadStore.observeDownloads().collectAsState()
@@ -2185,6 +2186,8 @@ private fun BrowserScreen(
                 val toolbar = @Composable {
                     val currentPageUrl = pageState.url.ifBlank { tab.input }
                     val currentPageIsInternal = GeckoSessionController.isInternalUrl(currentPageUrl)
+                    val readerModeAvailable = currentPageUrl.startsWith("http://") ||
+                        currentPageUrl.startsWith("https://")
                     val storedPageBookmarked = !currentPageIsInternal && profileStore.isBookmarked(currentPageUrl)
                     val currentPageBookmarked = optimisticBookmarkState
                         ?.takeIf { it.first == currentPageUrl }
@@ -2214,6 +2217,8 @@ private fun BrowserScreen(
                         websiteDisplayModeAvailable = !currentPageIsInternal,
                         websiteDisplayMode = tab.currentWebsiteDisplayMode(settings.websiteDisplayMode),
                         temporaryWebsiteDisplayMode = tab.temporaryWebsiteDisplayMode,
+                        readerModeAvailable = readerModeAvailable,
+                        readerModeActive = readerModeActive,
                         collapseFraction = animatedToolbarCollapseFraction,
                         downloads = downloads,
                         addressSecurityLevel = addressSecurityLevel(pageState.securityLevel, settings),
@@ -2269,6 +2274,23 @@ private fun BrowserScreen(
                                     optimisticBookmarkState = currentPageUrl to currentPageBookmarked
                                 }
                             }
+                        },
+                        onToggleReaderMode = {
+                            controller.toggleReaderMode().accept(
+                                { active ->
+                                    message = context.getString(
+                                        if (active == true) {
+                                            R.string.reader_mode_enabled
+                                        } else {
+                                            R.string.reader_mode_disabled
+                                        }
+                                    )
+                                },
+                                { throwable ->
+                                    Log.w(BROWSER_ACTIVITY_TAG, "Failed to toggle reader mode", throwable)
+                                    message = context.getString(R.string.reader_mode_not_available)
+                                }
+                            )
                         },
                         onFindInPage = {
                             findInPageRequestId += 1

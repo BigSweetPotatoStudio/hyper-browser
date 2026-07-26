@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reader navigation signals</title>
+    <script>
+      window.readerTestResponses = [];
+      window.browser = {
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async () => {},
+          },
+        },
+        runtime: {
+          sendNativeMessage: async () => "{}",
+          connectNative: () => ({
+            postMessage: (message) => window.readerTestResponses.push(message),
+            onMessage: {
+              addListener: (listener) => {
+                window.readerTestListener = listener;
+              },
+            },
+            onDisconnect: {
+              addListener: () => {},
+            },
+          }),
+        },
+      };
+      const attachShadow = Element.prototype.attachShadow;
+      Element.prototype.attachShadow = function (init) {
+        return attachShadow.call(this, { ...init, mode: "open" });
+      };
+    </script>
+  </head>
+  <body>
+    <main>
+      <article>
+        <h1>Reader navigation test article</h1>
+        <p>
+          This deliberately long article exercises reader extraction while the navigation controls use no rel
+          attributes. The previous control exposes its meaning through aria-label, the contents control through
+          title, and the next control only through its icon class. The paragraph is repeated in meaning so that
+          article extraction has enough real text to select this element as the primary readable content.
+        </p>
+        <p>
+          A robust reader should preserve useful chapter navigation without depending on one website convention.
+          It should accept accessibility metadata, structural names, icon semantics, normal links, JavaScript
+          links, and button-driven navigation while avoiding carousel and gallery controls that happen to use the
+          same words. These controls provide a compact browser-level regression fixture for those expectations.
+        </p>
+      </article>
+      <div class="chapter-controls">
+        <button aria-label="Previous chapter" onclick="location.hash='previous'">◀</button>
+        <a title="Table of contents" href="#contents">☰</a>
+        <a
+          id="goToNextChapter"
+          href="javascript:location.href='/manual-tests/reader-navigation.html?chapter=next'"
+        ><span class="fa-forward">▶</span></a>
+      </div>
+    </main>
+    <script src="../app/src/main/assets/reader-content.js"></script>
+    <script>
+      window.readerTestListener({
+        target: "hyper.internal.sessionCommand",
+        requestId: "reader-navigation-test",
+        type: "reader.toggle",
+      });
+    </script>
+  </body>
+</html>

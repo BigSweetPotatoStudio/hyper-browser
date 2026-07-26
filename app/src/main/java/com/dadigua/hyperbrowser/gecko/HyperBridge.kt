@@ -16,6 +16,8 @@ object HyperBridge {
     private const val EXTENSION_ID = "hyper-browser-internal@dadigua.com"
     private const val NATIVE_APP = "hyperBrowser"
     private const val NATIVE_COMMAND_PORT_TARGET = "hyper.internal.nativeCommandPort"
+    private const val SESSION_COMMAND_PORT_TARGET = "hyper.internal.sessionCommand"
+    private const val SESSION_COMMAND_TIMEOUT_MS = 10_000L
     private val INTERNAL_PAGE_MESSAGE_TYPES = setOf(
         "data.home",
         "data.bookmarks",
@@ -57,7 +59,9 @@ object HyperBridge {
         "media.keepAlive.start",
         "media.keepAlive.pause",
         "media.keepAlive.stop",
-        "settings.backgroundVideoEnhancement.enabled"
+        "settings.backgroundVideoEnhancement.enabled",
+        "reader.state",
+        "reader.ready"
     )
 
     @Volatile
@@ -71,6 +75,12 @@ object HyperBridge {
     private var backgroundPort: WebExtension.Port? = null
     private val pendingBackgroundCommands = mutableMapOf<String, GeckoResult<JSONObject>>()
     private val pendingBackgroundPortActions = mutableListOf<() -> Unit>()
+    private val sessionPorts = mutableMapOf<GeckoSession, WebExtension.Port>()
+    private data class PendingSessionCommand(
+        val session: GeckoSession,
+        val result: GeckoResult<JSONObject>
+    )
+    private val pendingSessionCommands = mutableMapOf<String, PendingSessionCommand>()
     private val backgroundPortDelegate = object : WebExtension.PortDelegate {
         override fun onPortMessage(message: Any, port: WebExtension.Port) {
             handleBackgroundPortMessage(message)
@@ -93,7 +103,14 @@ object HyperBridge {
         ): GeckoResult<Any> = handleNativeMessage(nativeApp, message, sender)
 
         override fun onConnect(port: WebExtension.Port) {
-            handleBackgroundPortConnect(port)
+            when {
+                isInternalPageUrl(port.sender.url) -> handleBackgroundPortConnect(port)
+                isTrustedContentScriptPort(port) -> handleSessionPortConnect(port)
+                else -> {
+                    Log.w(TAG, "Rejected native port name=${port.name} sender=${port.sender.url}")
+                    port.disconnect()
+                }
+            }
         }
     }
 
@@ -156,6 +173,18 @@ object HyperBridge {
     fun unregister(session: GeckoSession) {
         handlers.remove(session)
         fallbackEligibleHandlers.remove(session)
+        val (sessionPort, pendingForSession) = synchronized(this) {
+            val port = sessionPorts.remove(session)
+            val pending = pendingSessionCommands
+                .filterValues { it.session === session }
+                .toList()
+                .also { entries -> entries.forEach { pendingSessionCommands.remove(it.first) } }
+            port to pending
+        }
+        sessionPort?.disconnect()
+        pendingForSession.forEach { (_, pending) ->
+            pending.result.completeExceptionally(IllegalStateException("Hyper session closed."))
+        }
         if (fallbackSession == session) {
             val fallback = fallbackEligibleHandlers.entries.lastOrNull()
             fallbackSession = fallback?.key
@@ -195,6 +224,45 @@ object HyperBridge {
         if (shouldEnsureInstalled) {
             ensureInstalled(context.applicationContext)
         }
+        return result
+    }
+
+    fun sendSessionCommand(
+        session: GeckoSession,
+        type: String,
+        payload: JSONObject = JSONObject()
+    ): GeckoResult<JSONObject> {
+        val result = GeckoResult<JSONObject>()
+        val port = synchronized(this) { sessionPorts[session] }
+        if (port == null) {
+            result.completeExceptionally(IllegalStateException("reader.notReady"))
+            return result
+        }
+        val requestId = UUID.randomUUID().toString()
+        synchronized(this) {
+            pendingSessionCommands[requestId] = PendingSessionCommand(session, result)
+        }
+        runCatching {
+            port.postMessage(
+                JSONObject()
+                    .put("target", SESSION_COMMAND_PORT_TARGET)
+                    .put("requestId", requestId)
+                    .put("type", type)
+                    .put("payload", payload)
+            )
+        }.onFailure { throwable ->
+            synchronized(this) {
+                pendingSessionCommands.remove(requestId)
+            }
+            result.completeExceptionally(throwable)
+            return result
+        }
+        Handler(Looper.getMainLooper()).postDelayed({
+            val pending = synchronized(this) {
+                pendingSessionCommands.remove(requestId)
+            } ?: return@postDelayed
+            pending.result.completeExceptionally(IllegalStateException("reader.timeout"))
+        }, SESSION_COMMAND_TIMEOUT_MS)
         return result
     }
 
@@ -248,6 +316,73 @@ object HyperBridge {
         }
         port.setDelegate(backgroundPortDelegate)
         actions.forEach { it.invoke() }
+    }
+
+    private fun isTrustedContentScriptPort(port: WebExtension.Port): Boolean =
+        port.name == NATIVE_APP &&
+            port.sender.environmentType == WebExtension.MessageSender.ENV_TYPE_CONTENT_SCRIPT &&
+            port.sender.isTopLevel &&
+            port.sender.session != null &&
+            (port.sender.url.startsWith("https://") || port.sender.url.startsWith("http://"))
+
+    private fun handleSessionPortConnect(port: WebExtension.Port) {
+        val session = port.sender.session ?: run {
+            port.disconnect()
+            return
+        }
+        val previous = synchronized(this) {
+            sessionPorts.put(session, port)
+        }
+        if (previous !== port) {
+            previous?.disconnect()
+        }
+        port.setDelegate(object : WebExtension.PortDelegate {
+            override fun onPortMessage(message: Any, messagePort: WebExtension.Port) {
+                handleSessionPortMessage(session, messagePort, message)
+            }
+
+            override fun onDisconnect(disconnectedPort: WebExtension.Port) {
+                val pendingForSession = synchronized(this@HyperBridge) {
+                    if (sessionPorts[session] !== disconnectedPort) {
+                        emptyList()
+                    } else {
+                        sessionPorts.remove(session)
+                        pendingSessionCommands
+                            .filterValues { it.session === session }
+                            .toList()
+                            .also { entries -> entries.forEach { pendingSessionCommands.remove(it.first) } }
+                    }
+                }
+                pendingForSession.forEach { (_, pending) ->
+                    pending.result.completeExceptionally(IllegalStateException("reader.disconnected"))
+                }
+            }
+        })
+    }
+
+    private fun handleSessionPortMessage(
+        session: GeckoSession,
+        port: WebExtension.Port,
+        message: Any
+    ) {
+        if (synchronized(this) { sessionPorts[session] } !== port) return
+        val response = message as? JSONObject ?: return
+        if (response.optString("target") != SESSION_COMMAND_PORT_TARGET) return
+        val requestId = response.optString("requestId")
+        val pending = synchronized(this) {
+            pendingSessionCommands.remove(requestId)
+        } ?: return
+        if (pending.session !== session) {
+            pending.result.completeExceptionally(IllegalStateException("reader.sessionMismatch"))
+            return
+        }
+        if (response.optBoolean("ok", false)) {
+            pending.result.complete(response)
+        } else {
+            pending.result.completeExceptionally(
+                IllegalStateException(response.optString("error", "reader.failed"))
+            )
+        }
     }
 
     private fun postBackgroundCommand(type: String, payload: JSONObject, result: GeckoResult<JSONObject>) {

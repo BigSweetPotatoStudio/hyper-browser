@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Hyper Browser Internal Pages",
-  "version": "1.33",
+  "version": "1.38",
   "browser_specific_settings": {
     "gecko": {
       "id": "hyper-browser-internal@dadigua.com"
@@ -55,6 +55,17 @@
       ],
       "run_at": "document_start",
       "all_frames": true
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "reader-content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ]
 }

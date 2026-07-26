@@ -11,6 +11,7 @@ Review Gradle and pnpm metadata for the exact dependency graph:
 ## Major Runtime Dependencies
 
 - Mozilla GeckoView: browser engine and WebExtension runtime.
+- Mozilla Readability (Apache-2.0): article extraction for reader mode.
 - AndroidX and Jetpack Compose: Android UI and app framework libraries.
 - Kotlin and kotlinx.coroutines: Kotlin runtime and coroutine support.
 - OkHttp: HTTP client used by app services.

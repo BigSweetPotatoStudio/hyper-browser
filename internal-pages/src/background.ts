@@ -54,6 +54,8 @@ const contentScriptMessageTypes = new Set([
   "media.keepAlive.pause",
   "media.keepAlive.stop",
   "settings.backgroundVideoEnhancement.enabled",
+  "reader.state",
+  "reader.ready",
 ]);
 
 let fallbackRemoteCheckTimer: ReturnType<typeof setInterval> | null = null;
